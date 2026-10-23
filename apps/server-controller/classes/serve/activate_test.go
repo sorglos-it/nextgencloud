@@ -273,6 +273,13 @@ func TestEveryServedActionIsOneOfTheContract(t *testing.T) {
 // API runs out of credit after the first wire.DefaultWindow bytes and link
 // ends the channel: TestAPackageLargerThanOneWindowGetsThrough is what holds
 // chanReader.give.
+//
+// The API side PAYS here (dataPaid) instead of pushing all six frames at
+// once. Pushing them was a race against give rather than a measurement of it,
+// and it lost 5 of 20 runs on Linux under load - point 70 of V1.2 has the
+// numbers. Waiting for the credit is what a peer of this contract does, and a
+// give that stopped paying now shows up as a wait that never ends instead of
+// as the same E_PROTOCOL a busy machine produces.
 func TestAPackageLargerThanOneWindowGetsThrough(t *testing.T) {
 	w := newWorld(t)
 	f := &fakeInstaller{}
@@ -287,9 +294,13 @@ func TestAPackageLargerThanOneWindowGetsThrough(t *testing.T) {
 			frames*size, wire.DefaultWindow)
 	}
 	ended := w.tunnel(t, func(a *apiSide) {
-		a.open(1, activateOpen(t, w, 0x33, activateParams()))
+		// The credit of the first GRANT is kept and paid down, and where it
+		// runs out the next GRANT is waited for. That is what every real API
+		// does, and what makes this case about give instead of about the
+		// machine - see dataPaid.
+		credit, _ := a.open(1, activateOpen(t, w, 0x33, activateParams()))
 		for i := 0; i < frames; i++ {
-			a.data(1, bytes.Repeat([]byte{byte(i)}, size))
+			credit = a.dataPaid(1, bytes.Repeat([]byte{byte(i)}, size), credit)
 		}
 		a.eof(1)
 		out, cl := a.result(1)

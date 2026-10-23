@@ -3019,6 +3019,1004 @@ Abruf um eine volle Stunde. Eine Anlage, an der gearbeitet wird, holt also nie e
 auf die Frage, die ein Verwalter in diesem Augenblick wirklich hat. **Gemessen ist der Befund,
 nicht der Vorschlag.**
 
+## Punkt 67: Rust für NGC — ein Vertrag ist bitgleich nachgebaut, und genau das ist das Argument dagegen
+
+Thomas hat ein Entscheidungspapier bestellt: kein Umbau, keine Meinung, sondern ein Versuch mit
+Zahlen. Der steht hier. **Alles unter „Gemessen" ist gemessen; alles unter „Abgewogen" ist nicht
+gemessen und als Abwägung gekennzeichnet.** Der Vorschlag am Ende ist eine Abwägung.
+
+### Der Versuch
+
+`shared/sign` ist der kleinste abgeschlossene Vertrag mit echter Krypto: 136 Zeilen Go, Ed25519,
+SHA-256, base64url, strenges JSON — und er hat eine Vektordatei, aus der heute **beide**
+bestehenden Fassungen prüfen (`shared/testdata/sign.json`). Deshalb er und nicht `enc` (zu
+grundlegend, kein eigener Vektor) oder `task` (hängt an `wire`).
+
+Er ist in Rust nachgebaut und gegen dieselbe Datei gerechnet — `versuch-rust/sign/`, Beleg und
+kein Bestandteil. **Gemessen am 20.10.2026, Debian 13 unter WSL, rustc 1.99.1:**
+
+```
+32 OK, 0 FAIL
+```
+
+Darunter die harte Zeile: **die Vektordatei aus Rust neu gebaut ist Byte für Byte die Datei, die
+Gos Golden-Test geschrieben hat.** Schlüssel aus dem Seed, Kennung, Nachrichtenbytes,
+Unterschrift, JSON-Form — alles gleich. Dazu die **vollständige Ablehnungstabelle** aus
+`shared/sign/sign_test.go` (18 Fälle: unbekanntes Mitglied, doppeltes Mitglied, Mitglied in
+anderer Schreibweise, `null`, Daten dahinter, Polsterung im base64, Budget überschritten …) —
+alle 18 lehnt Rust ab wie Go.
+
+**Bitgleichheit ist also kein Problem.** Wer dagegen argumentiert, dass Rust auseinanderläuft,
+argumentiert gegen eine Messung.
+
+### Der Preis, in Zahlen
+
+**Gemessen.** `cargo vendor` für diesen **einen** 136-Zeilen-Vertrag:
+
+| | Kisten | Dateien | Bytes | Rust-Zeilen |
+|---|---|---|---|---|
+| Rust, nur `shared/sign` | **41** | 1 733 | 22 018 383 | **577 163** |
+| Go, ganzes NGC heute | 12 | 692 | 16 616 004 | — |
+
+Die vier größten: `libc` 133 739, `fiat-crypto` 83 364, `syn` 67 002 und ein **zweites** `syn`
+(2.0.119) 65 391 Zeilen — zwei Fassungen desselben Makro-Übersetzers im selben Baum. Go bringt
+Ed25519, SHA-256, base64url und JSON in der Standardbibliothek mit: für `shared/sign` ist die
+Zahl **null**.
+
+Das ist die Stelle, an der die Hausregel bricht. „Fremdcode wird ins Repo kopiert und selbst
+gepflegt" (`CLAUDE.md`, `THIRD-PARTY.md`) ist heute tragbar, weil es 12 Module sind und das
+Aufräumen am 18.10.2026 drei MB herausgeholt hat. 41 Kisten mit 577 000 Zeilen für einen Vertrag
+pflegt niemand selbst. Lizenzen wären kein Hindernis (alles MIT/Apache/BSD, AGPL-verträglich) —
+die Menge ist es.
+
+### Die zweite Umsetzung: wie wird heute gleichgehalten?
+
+**Gemessen.** Der Weg existiert und ist schmal:
+
+- `shared/testdata/` hält die Vektoren, `shared/internal/golden/golden.go` schreibt und prüft sie
+  aus Go, `apps/web/tests/fixtures/vectors.js` liest **dieselben Dateien** aus dem Repo
+  („The shared test data is the common truth for Go and JavaScript").
+- 27 Prüfdateien unter `apps/web/tests/contracts/` stehen gegen die Go-Pakete.
+
+**Und der Weg trägt die Verträge nicht allein.** `apps/web/tests/contracts/sign.spec.js` sagt es
+selbst: `sign.json` *„is the only vector there is for this contract, and it says nothing about
+what has to be refused, so the cases below spell that out from the Go source"*. Die Vektoren
+beweisen, was **angenommen** wird. Was **abgelehnt** wird, ist je Sprache von Hand nachgeschrieben
+— 847 Zeilen in `sign.spec.js` gegen 339 Zeilen `sign_test.go`.
+
+Die zweite Fassung ist auch keine Übersetzung. `sign.js` sind 420 Zeilen gegen 136 in Go, und der
+Überhang ist **kein** Rauschen: er verteidigt gegen ein Bedrohungsmodell, das Go nicht hat (ein
+Aufrufer, dessen `length`-Getter Code ist). Rust hätte dieses Problem so wenig wie Go — eine
+Rust-Fassung wäre also die **dritte** Lesart von `sign`, nicht die zweite Kopie der ersten.
+
+Und eine Lücke ist gemessen, die genau da sitzt, wo die großen Verträge stehen. Gos
+`enc.DecodeStrict` lehnt ein doppeltes Mitglied **in jeder Tiefe** ab, auch innerhalb einer
+`json.RawMessage`. Beide Seiten gemessen, derselbe Eingabestring `{"inner":{"a":1,"a":2}}`:
+
+| | flach | eine Ebene tiefer |
+|---|---|---|
+| Go `enc.DecodeStrict` | abgelehnt | **abgelehnt** (`duplicate object member name "a" within "/inner"`) |
+| Rust `serde_json` | abgelehnt | **genommen**, `inner = {"a":2}` — der letzte gewinnt |
+
+`core`, `store` und `wire` ruhen auf dieser Zusage. Rust bekäme sie nicht aus `serde_json`; sie
+wäre zu bauen. Dazu kommt `wire.ValidText`: `shared/wire/wire.go`, Zeile 282 bindet den Vertrag
+ausdrücklich an *„Go's: Unicode 17.0 with Go 1.27"*. Eine Rust-Fassung bringt ihre eigenen
+Unicode-Tabellen mit — eine **dritte** Tabellenfassung, die gleichzuhalten ist.
+
+### Bauen und Ausliefern
+
+**Gemessen, Go heute** (eigener `GOCACHE`, damit kein fremder Lauf gestört wird; drei
+Binärdateien `cli`, `server-api`, `server-controller`):
+
+| | kalt | warm (3 Läufe) |
+|---|---|---|
+| `linux/amd64` | 17,983 s | 2,143 / 1,796 / 1,699 s |
+| `linux/arm64` | 17,850 s | — |
+| `./shared/...` allein | 8,629 s | — |
+| `go test ./shared/...` | 15,340 s | — |
+
+**Gemessen, Rust:** der erste Bau dieses einen Vertrags mit 41 Kisten: **10,25 s**; `target/`
+danach **682 MB**. Statische Binärdatei `x86_64-unknown-linux-musl`: 834 312 Bytes, auf Anhieb.
+
+**Der arm64-Befund:** `aarch64-unknown-linux-musl` scheitert im Standardfall am Binder
+(`collect2: error: ld returned 1 exit status`). Mit
+`-C linker=rust-lld -C link-self-contained=yes` baut er — 811 040 Bytes, 5,5 s. Also **ein
+Schalter, kein Kreuz-gcc**. Go braucht für dasselbe `GOARCH=arm64` und sonst nichts.
+
+**Der Windows-Befund ist härter:** auf diesem Rechner ist **kein Rust installiert und kein
+C-Übersetzer vorhanden** — kein Visual Studio, kein gcc. Der ganze Versuch läuft deshalb in der
+Debian-WSL. Go baut hier beide Ziele direkt aus PowerShell. Rust auf Windows hieße: MSVC-Build-Tools
+oder MinGW dazu, oder jeder Bau geht durch WSL.
+
+Die Werkzeugkette selbst: 11,4 s Installation, **613 MB**, mit beiden Zielen **1,0 GB**.
+
+**Nicht gemessen, Abwägung:** 90 Fuzz-Ziele laufen heute mit `go test -fuzz` und null
+Zusatzwerkzeug. Rust braucht dafür `cargo-fuzz` (nightly, libFuzzer) oder AFL. Was das an
+CI-Zeit und an Pflege kostet, ist nicht gemessen.
+
+### Welche Teile kämen in Frage?
+
+**Gemessen** (Zeilen ohne Tests): `apps/server-api` 15 435, `apps/server-controller` 15 336,
+`apps/server-db` 7 210, `apps/cli` 2 258, `shared/` 9 468 — zusammen **49 707** Zeilen Go, dazu
+92 640 Zeilen Tests und 1 791 Testfunktionen.
+
+**Abgewogen, Teil für Teil:**
+
+- **`ngc-controller`** — fasst podman an und Dateisysteme. Gemessen: podman läuft über
+  `exec.CommandContext` (`runtime/podman.go:501`), nicht über eine Bibliothek; das Dateisystem über
+  `syscall.Statfs` und zwei ioctls. Beides ist in Rust genauso erreichbar, über `libc` — das schon
+  mitvendort ist. **Gewinn: keiner, der zu benennen wäre.** Wer Prozesse startet und ioctls
+  ausführt, gewinnt an Speichersicherheit nichts, was Go nicht schon gibt. **Preis: 15 336 Zeilen
+  plus 29 143 Zeilen Tests.**
+- **`ngc-api`** — Netz und Krypto. Hier wäre der Gewinn am ehesten zu erwarten, und er ist am
+  teuersten zu holen: Noise (`flynn/noise`) hätte in Rust kein Gegenstück, das dieselben Bytes
+  erzeugt, ohne gegen die Go-Fassung gemessen zu werden; dasselbe für die XTS-verschlüsselte
+  SQLite-Datei. **Preis: 15 435 + 34 700 Zeilen, und zwei Krypto-Verträge, deren Bitgleichheit
+  jeweils ein eigener Versuch wie dieser wäre.**
+- **`ngc-store` (`apps/cli`)** — 2 258 Zeilen, das kleine Werkzeug. **Der einzige Teil, bei dem
+  die Rechnung aufgehen könnte:** es ist klein, es hat keine Noise-Sitzung, und es wäre der
+  natürliche Ort für einen zweiten echten Versuch. **Preis: es müsste trotzdem `sign`, `enc`,
+  `store` und `wire` ein zweites Mal haben — also die 9 468 Zeilen `shared/` zuerst.**
+- **Die Oberfläche** — reines JavaScript ohne Bauschritt, läuft im Browser. Rust käme nur als
+  WebAssembly, das heißt: ein Bauschritt, wo heute keiner ist. Steht gegen `CLAUDE.md`, Zeile 77.
+  **Kommt nicht in Frage.**
+- **`shared/` selbst** — ist **eingefroren**. Nichts daran ist angefasst worden; die Go-Gegenprobe
+  zur Tiefen-Messung lief in einer Testdatei, die danach wieder weg war.
+
+**Hochgerechnet, aus der einen gemessenen Zahl:** `sign.go` 136 Zeilen Go → 192 Zeilen Rust,
+Faktor **1,41**. Auf `shared/` angewandt: etwa **13 300** Zeilen Rust, und das ist die *untere*
+Schranke, denn `sign` ist der leichteste Fall — die strenge JSON-Schicht aus `enc` und die
+Unicode-Tabellen aus `wire` sind im Faktor nicht drin, weil sie in Rust kein Gegenstück haben.
+Die 32 Beweisfälle brauchten 159 Zeilen Prüfprogramm gegen 339 Zeilen `sign_test.go` — die
+Prüfseite wäre also nicht billiger, nur anders geschnitten.
+
+### Was gewinnt der Benutzer?
+
+**Nichts Sichtbares.** Das ist die ehrliche Antwort, und sie ist nicht gemessen worden, weil es
+nichts zu messen gibt: die Binärdateien wandern auf eine Maschine, die ohnehin podman laufen
+lässt; 24,5 MB `server-api` gegen vielleicht 5 MB in Rust entscheidet auf keiner Anlage etwas.
+Kein Benutzer sieht eine Antwortzeit, die von der Sprache kommt.
+
+**Abgewogen, der eine Punkt, der zählen könnte:** Speichersicherheit in dem Teil, der Bytes von
+außen entgegennimmt, bevor eine Unterschrift geprüft ist. Nur: Go ist dort auch speichersicher.
+Was Rust zusätzlich gibt, ist Freiheit von Wettläufen bei geteiltem Zustand — und dafür ist nicht
+gemessen, dass NGC ein Problem hätte. Ein `go test -race`-Befund, der eine Umschreibung
+rechtfertigt, liegt nicht vor.
+
+### Vorschlag
+
+**Nein, und zwar nicht „später nochmal", sondern aus der Rechnung heraus.**
+
+Die Begründung in einem Satz: der Versuch hat bewiesen, dass Rust den Vertrag **bitgleich**
+treffen kann — und dieselbe Messung hat gezeigt, dass dafür 41 fremde Kisten mit 577 163 Zeilen
+in ein Repo müssten, dessen Hausregel lautet, Fremdcode selbst zu pflegen. Das sind nicht zwei
+Argumente, das ist eins: **die Bitgleichheit war nie der Engpass, die Hausregel ist es.** Wer Rust
+in NGC will, muss zuerst die Regel „keine Laufzeitabhängigkeiten" abschaffen. Solange die Regel
+gilt, ist die Antwort schon gegeben.
+
+Dazu drei Dinge, die auch ohne Rust aus diesem Versuch mitzunehmen sind — und die mehr wert sind
+als die Sprachfrage:
+
+1. **Die Ablehnungsseite steht in keinem Vektor.** `sign.json` kennt einen gültigen Umschlag und
+   sonst nichts; die 18 Ablehnungen stehen dreimal von Hand da (Go, JavaScript, und nun Rust).
+   Eine Vektordatei, die auch die **abzulehnenden** Eingaben trägt, würde die zwei bestehenden
+   Fassungen enger halten. Das ist eine Änderung in `shared/testdata` und damit an einem
+   eingefrorenen Ordner — Thomas' Entscheidung, nicht meine.
+2. **Die Tiefen-Lücke ist der Maßstab** für jede künftige Fremdsprache: wer `core`, `store` oder
+   `wire` nachbaut, muss das doppelte Mitglied eine Ebene tiefer ablehnen. `serde_json` tut es
+   nicht. Das gehört in die Vertragsdoku, bevor es jemand bemerkt, indem er es falsch macht.
+3. **`CLAUDE.md` Zeile 74–76 ist überholt.** Dort steht noch, `tools/modules.go` halte die Module
+   fest; `THIRD-PARTY.md` sagt, die Datei ist seit dem 18.10.2026 weg. Eine Zeile, zwei Wahrheiten.
+
+**Gemessen ist der Versuch, nicht der Vorschlag.** Die Zahl, die trägt: 41 Kisten, 577 163 Zeilen,
+für 136 Zeilen Go.
+## Punkt 68: Fremde Programme nach NGC portieren — das Programm ja, die Oberfläche nie
+
+Thomas' Frage, wörtlich: „können wir Rust und solche Programme einfach portieren oder nicht
+oder was müssen wir schaffen dass wir es können". Anlass war Wordcraft, ein Word-Nachbau in
+Rust (272 101 Zeilen, 405 fremde Kisten, MIT/Apache). Die Frage ist nicht die von Punkt 67 —
+dort ging es um NGCs **eigenen** Quelltext, hier um NGCs **Apps**.
+
+Die Antwort steht in zwei Zahlen aus `shared/store`:
+
+> **`MaxPackage` = 4 GiB. `MaxUIFile` = 16 MiB.**
+> (`shared/store/catalog.go:25`, `shared/store/pack.go:22`)
+
+NGC gibt einem fremden **Programm** vier Gigabyte und seiner **Oberfläche** sechzehn Megabyte.
+Genau deshalb portiert das eine und das andere nicht.
+
+### Teil A: gemessen, es trägt — ein 120-MB-Paket aus fremdem Rust
+
+Der Versuch liegt unter `versuch-port/`, Beleg und kein Bestandteil. Gemessen am 20.10.2026,
+Debian 13 unter WSL, rustc 1.99.1, podman 5.4.2:
+
+| Schritt | Ergebnis | Dauer |
+|---|---|---|
+| `wordcraft-cli` statisch, `x86_64-unknown-linux-musl` | 41 986 968 Bytes | 4 min 05 s |
+| Adapter (Go, statisch, linux/amd64), 145 Zeilen | 3 940 512 Bytes | — |
+| `podman build --arch amd64` | Abbild gebaut | 4,0 s |
+| `podman save --format docker-archive` | 127 236 096 Bytes | 7,5 s |
+| `ngc-store pack` | **127 244 288 Bytes**, SHA-256 `9aae8b99…` | 0,99 s |
+| `store.Walk` liest es zurück | `services/amd64.tar` → `Art=image Arch=amd64`; Manifest: 3 Aktionen, 1 Dienst | 0,08 s |
+
+**Kein musl-gcc nötig** — Rust bringt seine eigene musl-libc mit. Das Paket ist von NGCs
+**eigenem Leser** angenommen worden, nicht nur von einem Packer geschrieben.
+
+Der Dienstvertrag (`shared/service/service.go:19-37`) ist vollständig sprachneutral:
+Umgebungsvariablen rein, stdin/stdout/stderr als Kanal, Ausstiegscode als Status. Es gibt
+**keine Bibliothek**, die ein Dienst einbinden müsste — das Terminal liest die Variablen von
+Hand (`terminal/terminal.go:447-477`), ein Rust-Programm kann genau dasselbe.
+
+### Vier Dinge, die ein Port lernen muss — jedes im Versuch bezahlt
+
+1. **Die Aktion kommt als Umgebungsvariable, nicht als Argument.** `NGC_ACTION` und
+   `NGC_PARAMS` (`service.go:19-29`) gegen `wordcraft-cli convert <in> <out>`. **Jeder Port
+   braucht einen Adapter**, und nichts in NGC bringt einen mit. Der hier sind 145 Zeilen Go,
+   davon 61 Kommentar. Er bindet `shared/service` ein, statt die Namen abzuschreiben, und das
+   kostet gemessen **1 093 632 Bytes**: 2 846 880 ohne, 3 940 512 mit — `shared/service` zieht
+   `shared/trust` und `shared/wire` mit. Richtig ist es trotzdem, denn abgeschriebene Namen
+   sind die zweite Stelle, an der ein Vertrag auseinanderläuft.
+2. **Der Adapter darf keine Shell sein.** `NGC_PARAMS` ist JSON von außen; ein Dateiname in
+   einer Shell-Zeile ist der Weg, auf dem ein Dokument zu einem Befehl wird. Gemessen beim
+   Schreiben: die erste Fassung benutzte `path/filepath` und wurde auf Windows gebaut —
+   `filepath.IsAbs("/etc/passwd")` ist dort **false**, und `../etc/passwd` wurde zu
+   `\data\etc\passwd`. Ein Prüfer, dessen Antwort vom Baurechner abhängt, ist kein Prüfer.
+   Richtig ist `path` und **ablehnen statt entschärfen**.
+3. **Der Container muss von selbst oben bleiben.** Der Controller fährt mit `podman exec`
+   hinein; NGCs eigene Apps halten den Container mit `ngc-controller hold`
+   (`node/main.go:161`). Ein fremdes Abbild hat das Programm nicht und muss seinen eigenen
+   Leerlauf mitbringen — hier `/bin/sleep infinity`.
+4. **`ngc-controller image` kann genau eine App bauen: das Terminal.** Die Pfade sind
+   Konstanten (`node/image.go:65` `terminalDir`, `:70` `imageRepo`). Wer eine andere App baut,
+   ruft podman selbst — was dieser Versuch getan hat. **NGC hat kein Werkzeug für fremde
+   App-Abbilder.**
+
+### Zwei Messfehler, beide im Versuch bezahlt
+
+Sie stehen hier, weil beide wie ein Erfolg aussahen.
+
+**`tools/check.sh` war grün, und das war wertlos.** Der Wächter bei `check.sh:121` verlangt,
+dass **jede von git erfasste** `.go`-Datei von mindestens einer der vier Konfigurationen
+übersetzt wird. Der Adapter lag zuerst in einem **eigenen** Go-Modul, damit `./...` des
+Hauptmoduls ihn nicht erreicht — „Beleg, kein Bestandteil". Lokal lief `check.sh` grün, weil
+er **vor** `git add` lief und der Wächter untracked Dateien nicht sieht. Die CI sah sie und
+sagte: `no checked configuration compiles these files`. Der Wächter hat recht: Beleg im Repo,
+den nichts typprüft, ist Beleg, dem niemand trauen kann. Das Muster dafür steht längst da —
+`tools/kaputt-probe/main.go` ist auch Wegwerf-Messcode und liegt im Hauptmodul. Der Adapter
+liegt jetzt dort ebenfalls; ausgeliefert wird er nicht, weil `tools/release-gate.sh` die
+Pakete einzeln benennt, die es baut.
+
+**`podman save` hat eine vorhandene Datei nicht überschrieben.** Nach dem Umbau des Adapters
+meldete derselbe Befehl `SAVE_MS=965` statt 7 500 und `ls` zeigte **dieselbe Größe und
+denselben Zeitstempel** wie vorher. Gemessen wäre dann das alte Abbild gewesen. Erst
+`rm services/amd64.tar` davor gab ein echtes Ergebnis — 127 236 096 statt 126 142 464 Bytes.
+Eine Messung schreibt ihr Ziel vorher weg.
+
+### Teil B: gemessen, es trägt nicht — die Oberfläche, vierfach versperrt
+
+Wordcrafts WebAssembly-Bau ist wirklich gelaufen (`trunk build --release`, 7 min):
+
+| Blocker | Beleg im Quelltext | Messung am Bau |
+|---|---|---|
+| ES-Modul | `appframe.js:731` lehnt `type="module"` ab (`NEEDS_CLASSIC`) | `dist/web/index.html` hat `<script type="module">`, die glue-JS hat `export` |
+| kein Netz | `connect-src 'none'` (`Page.php:54`) | glue-JS benutzt `fetch(` und `instantiateStreaming` |
+| kein WASM | `script-src data:` ohne `'wasm-unsafe-eval'` (`Page.php:52`) | der Browser verweigert `WebAssembly.instantiate` |
+| zu groß | `MaxUIFile` 16 MiB (`pack.go:22`) | **44 027 637 Bytes** = 42 MB; als `data:`-Adresse 56 MB, also auch über `MaxUITotal` 64 MiB |
+
+Die ersten drei wären behebbar. Der vierte nicht, ohne `shared/` anzufassen.
+
+Und das trifft nicht nur WASM. Jede portierte Oberfläche steht vor: kein
+`localStorage`/IndexedDB (opake Herkunft, `frame-boot.js:43`), keine Worker
+(`worker-src 'none'`), kein `eval`, kein Datei-Download (kein `allow-downloads`,
+`appframe.js:244`), `MAX_PARAMS` 8 KiB, `MAX_CALL_RESULT` 8 MiB, 8 Kanäle je Fenster. Die
+ganze App-API sind 117 Zeilen: `ngc.call`, `ngc.open`, `ngc.theme`/`onTheme` — sonst nichts.
+
+**Gesucht und nicht gefunden:** in ganz `apps/web/` gibt es **keinen** Datei-Download und
+**keinen** Upload, auch nicht in der Shell selbst. Eine Dokument-App kann heute nichts vom
+Rechner des Nutzers öffnen und nichts dorthin speichern.
+
+### Die Hausregel steht nicht im Weg — aber sie sagt es nicht
+
+`CLAUDE.md:72` bindet „keine Laufzeitabhängigkeiten" an **`go mod vendor`**, also an NGCs
+eigenen Quelltext. `shared/store/manifest.go:41` hat dagegen ein Feld `Publisher`, und
+`CoreApp` (`wire.go:307`) trennt fremde Apps von Kern-Apps. Eine App ist ein unterschriebenes
+Paket eines Herausgebers, kein Teil von NGCs Quelltext. Die 405 Kisten von Wordcraft fallen
+also **nicht** unter Punkt 67.
+
+**Nur: kein Dokument sagt das.** Das ist eine Regellücke, keine Programmierfrage, und sie
+gehört in `THIRD-PARTY.md` — ein Satz, der entscheidet, ob ein App-Abbild unter die
+Fremdcode-Regel fällt. Vorschlag im Pull Request; geändert ist dort nichts.
+
+### Was wir schaffen müssen
+
+Nach Wirkung geteilt durch Preis, nicht nach Reihenfolge im Quelltext.
+
+1. **`ngc.asset(path)` — eine App liest ihre eigenen geprüften Dateien als Bytes.**
+   Heute bekommt eine App nur, was HTML referenziert; Bytes nie. Das ui-tar liegt schon
+   geprüft im Speicher (`appframe.js:656-668`), also ist es eine kleine Ergänzung in
+   `ngc.js` und `appframe.js`. Schließt auf: WASM ohne `fetch`, große Schriften,
+   Wörterbücher, Vorlagen. **Billigster und wirksamster Einzelschritt, ohne
+   Sicherheitspreis.**
+2. **Datei herein und heraus, über die Shell.** Nicht `allow-downloads` an den Rahmen geben,
+   sondern die Shell besitzt den Dialog und die App bekommt und schickt Bytes über die
+   Brücke — dann bleibt die App eingesperrt. Ohne das hat **keine** Dokument-App Sinn.
+3. **Ein Werkzeug für fremde App-Abbilder.** `ngc-controller image` mit Pfaden als
+   Argumenten statt als Konstanten, oder ein eigener Unterbefehl in `ngc-store`. Heute baut
+   jeder Herausgeber mit podman von Hand, und die Digest-Pflicht (`runtime.CheckBase`) prüft
+   dabei niemand.
+4. **Ein Adapter-Muster, einmal dokumentiert.** Vier Fallen stehen oben; jeder Port tritt
+   sonst in alle vier. Gehört nach `apps/server-controller/templates/` neben das Terminal.
+5. **`'wasm-unsafe-eval'` in `FRAME_CSP`** (`Page.php:52`) — eine Sicherheitsentscheidung.
+   Erst nötig, wenn ein konkretes Programm es braucht. Der ES-Modul-Blocker ist dafür
+   **nicht** zu lösen: `wasm-bindgen --target no-modules` erzeugt ein klassisches Skript,
+   das ist App-Seite.
+6. **Worker im Rahmen** (`worker-src`, `Page.php:54`) — kleiner als Nr. 5, gleiche Art.
+7. **`MaxUIFile`/`MaxUITotal` anheben** — ⚠ `shared/` ist eingefroren, steht als **P14** im
+   v1.3-Vorschlag. Ohne das passt kein WASM dieser Größenklasse je in ein Paket.
+8. **Rahmenprotokoll mit Längenkopf, einmal in `shared/`** — ⚠ ebenfalls eingefroren, **P15**.
+   `serve` gibt Streams ohne Nachrichtengrenzen durch; das Terminal hat sich dafür einen
+   eigenen 3-Byte-Kopf erfunden (`terminal.go:76-96`), und jede weitere App erfindet ihn neu.
+9. **Quote für `/data`.** Heute nur gemessen, nicht begrenzt (`runtime/data.go:223-258`), und
+   die alten App-Abbilder liegen mit drin (`install/update.go:206-218`).
+
+### Vorschlag
+
+**Portieren ja — den Programmteil. Die Oberfläche schreiben wir immer selbst.**
+
+Und das ist keine Schwäche, die zu beheben wäre: es ist der Grund, warum jede NGC-App im
+selben Käfig sitzt und warum eine fremde App keinen eigenen Weg nach draußen hat. Wer die
+Oberfläche portierbar macht, gibt genau diesen Käfig auf. Die vier Blocker aus Teil B sind
+zusammen die Tür, und man öffnet sie nicht aus Bequemlichkeit.
+
+Reihenfolge: **Nr. 1 zuerst** (`ngc.asset`), dann **Nr. 2** (Datei herein/heraus), dann
+**Nr. 3 und 4** (Werkzeug und Adapter-Muster — sie kosten nichts an Sicherheit und nehmen
+jedem künftigen Port die vier Fallen ab). Nr. 5 bis 9 erst, wenn ein benanntes Programm sie
+braucht — und Nr. 7 sagt, dass das für Wordcraft ohnehin nicht reicht.
+
+Zu Wordcraft selbst: was man bekommt, ist `wordcraft-cli` als Dienst — `convert`, `text`,
+`info`, `render` — mit einer Oberfläche, die wir schreiben. Nie Wordcrafts Editor. Wer den
+will, schreibt ihn neu: gemessen sind das für „docx lesen und anzeigen" etwa 22–25k Zeilen,
+für „lesen, bearbeiten, speichern" 75–85k, dazu 8–15k Oberfläche.
+
+**Gemessen ist der Versuch, nicht der Vorschlag.** Die Zahl, die trägt: ein 120-MB-Paket aus
+fremdem Rust, von NGCs eigenem Leser angenommen — und 42 MB Oberfläche, die in 16 MiB nicht
+passen.
+
+## Punkt 69: Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt
+
+Gefunden beim Grünmachen des Pull Requests zu Punkt 68 — und es war nicht dessen Fehler.
+
+**Gemessen:** die letzten drei Läufe von `Linux-Pruefung` auf `main` sind **rot**, am 18., 19.
+und 20.10.2026. Jedes Mal dieselbe Zeile, und jedes Mal im Schritt `zaehlen`:
+
+```
+ci-count: /home/runner/work/_temp/test.json is empty - nothing ran, and that is not a result
+```
+
+`check.sh` selbst war in allen drei Läufen **grün** (`323 passed, 0 failed`). Rot war nur der
+Zähler — über eine Datei, die niemand schrieb.
+
+### Zwei Hälften, die auseinandergelaufen sind
+
+`.github/workflows/linux.yml` setzt `NGC_CHECK_TEST_JSON` und sagt dazu:
+
+> check.sh writes the JSON stream of its own test run here instead of running the suite a
+> second time just to count it.
+
+`tools/check.sh` sagte an derselben Stelle das Gegenteil, mit Datum:
+
+> NOTE 18.10.2026: … NGC_CHECK_TEST_JSON, a -json stream teed to a file for
+> tools/ci-count.sh. **It is NOT taken here** … Whoever wants the JSON builds it ON this
+> mechanism, not beside it.
+
+Der Satz ist richtig begründet: der Lauf schreibt `-v` in ein Protokoll, **weil** das
+Protokoll zurückgelesen wird — für Tests, die sich still zur Seite stellen. Ein zweiter Lauf
+nur zum Zählen war genau das, was vermieden werden sollte. Nur: der Workflow wurde nicht
+mitgezogen. Seit dem 18.10.2026 lief `ci-count.sh` auf eine leere Datei, und die Meldung war
+beide Male wahr — die Datei *war* leer.
+
+**Das ist die Klasse „zwei Stellen, eine Wahrheit", und hier mit der schlimmsten Folge:** eine
+Prüfung, die immer rot ist, prüft nichts mehr. Wer drei Tage lang rote Läufe sieht, hört auf
+hinzusehen — und der nächste echte Befund geht darin unter. Punkt 68 ist genau so an einem
+Fehler vorbeigelaufen, der gar nicht ihm gehörte.
+
+### Behoben, ohne einen zweiten Testlauf
+
+`go tool test2json` macht aus genau der `-v`-Ausgabe, die `check.sh` schon hat, den
+JSON-Strom, den `ci-count.sh` zählt. Es gehört zur Go-Werkzeugkette, kostet also keine
+Abhängigkeit, und das Textprotokoll bleibt das Erste — es ist weiter das, was zurückgelesen
+wird. Also genau, was die NOTE verlangte: **auf** dem Mechanismus, nicht daneben.
+
+Gemessen am 20.10.2026, beide Pfade:
+
+| | Ergebnis |
+|---|---|
+| grüner Lauf, `NGC_CHECK_TEST_JSON` gesetzt | `check.sh` Ausstieg 0, 3 476 197 Bytes JSON; `ci-count` **3349 passed, 0 FAILED, 87 SKIPPED**, Ausstieg 0 |
+| roter Lauf (ein Test mit `t.Fatal`) | `test2json` wandelt, `ci-count` nennt den Test, `ci-count: red`, Ausstieg 1 |
+
+Zwei Kleinigkeiten, die dabei auffielen und mit im Satz stehen:
+
+- **Der Lauf steht jetzt in einem `if`.** `check.sh` ist `set -euo pipefail`; ein bloßes
+  `go test …` mit `rc=$?` dahinter hätte das Skript bei rotem Lauf sofort beendet, und die
+  Wandlung wäre nie gelaufen — also hätte die CI **gerade dann** nicht gezählt, wenn es
+  darauf ankommt. Der Workflow-Schritt läuft mit `if: always()`; jetzt hält die eine Hälfte
+  das, was die andere verspricht.
+- **`packages: 1 ok` ist kein Befund.** Ein gemischter `-v`-Strom von `go test ./...` sagt
+  `test2json` nicht, zu welchem Paket eine Zeile gehört, also meldet `ci-count` ein Paket,
+  wie viele auch liefen, und ein rotes Paket kommt ohne Namen heraus. Die **Fall**-Zahlen
+  sind richtig, und nur die beurteilt `ci-count`. Steht als Kommentar an der Stelle, damit
+  es niemand als Fund liest.
+
+### Was offen bleibt
+
+**Nicht gemessen:** ob die drei anderen Aufträge (`-race`, `root`, `fuzz`) ihre
+JSON-Ströme richtig schreiben. Sie waren in allen Läufen grün, also schreiben sie etwas —
+aber sie bauen ihren Strom selbst im Workflow, nicht über `check.sh`, und ob ihre Zahlen
+stimmen, hat niemand gegengerechnet. Das ist dieselbe Frage wie hier, nur eine Stelle weiter.
+
+**Und die eigentliche Lücke:** nichts sagt Bescheid, wenn `main` rot ist. Drei Tage lang hat
+das niemand bemerkt, und bemerkt wurde es erst, weil ein Pull Request daneben rot war.
+
+### Nachtrag 20.10.2026: derselbe Commit, einmal grün und einmal rot — und niemand konnte sagen warum
+
+Nach der Behebung oben lief der **push**-Lauf vollständig **grün**, alle drei Aufträge. Der
+**pull_request**-Lauf auf **demselben Commit** war **rot**. `main` hatte sich nicht bewegt —
+`git merge-base` ist weiter `4c08ef7`, der Merge ist also inhaltsgleich mit der Zweigspitze.
+
+Und in jedem Auftrag fiel ein **anderer** Test um:
+
+| Auftrag | umgefallen |
+|---|---|
+| `check.sh + counted test run` | `TestAPackageLargerThanOneWindowGetsThrough` (`apps/server-controller/classes/serve`) |
+| `controller cases that need root` | derselbe |
+| `-race (Linux goroutines)` | `TestAPanicInTheHelloHookKeepsTheTunnel` (`apps/server-api/classes/controllers`) |
+
+**Lokal gemessen, je 20 Läufe: beide 20/20 grün.** Beides sind Tests über Nebenläufigkeit und
+Flusskontrolle — ein Paket, das größer als ein Kreditfenster ist, und ein Panik im Hello-Haken,
+der den Tunnel halten soll. Das Bild passt zu Last, nicht zu einem Defekt in diesem Zweig.
+
+**Nicht gemessen, und deshalb ausdrücklich offen:** ob diese zwei Tests wirklich wackeln. Ein
+grüner und ein roter Lauf sind keine Rate. Dafür bräuchte es dieselben Tests mehrfach unter
+Last auf dem Runner, und das ist hier nicht gelaufen.
+
+#### Was daran wirklich kaputt war: die CI sagte nie, WARUM
+
+Zu jedem dieser Fehlschläge stand in den Protokollen **nur der Name**:
+
+```
+--- FAIL: TestAPackageLargerThanOneWindowGetsThrough (0.01s)
+```
+
+Keine Zeile mehr. `go test -v` schreibt die Ausgabe eines Tests **vor** diese Zeile, und
+`check.sh` grepte nur die Zeile selbst heraus. Bei den Aufträgen `-race` und `root` war es noch
+dichter: sie leiten `go test -json` in eine Datei, die kein Schritt je zeigt, und `ci-count.sh`
+nannte ebenfalls nur Namen. **Eine rote Prüfung, die den Grund verschweigt, lässt sich von einem
+Wackler nicht unterscheiden — und genau das ist die einzige Frage, die ein roter Lauf
+beantworten muss.**
+
+Behoben an beiden Stellen:
+
+- **`tools/check.sh`** druckt jeden umgefallenen Test mit seinem Block, von `=== RUN` bis
+  `--- FAIL` — dort landen `t.Errorf` und `t.Fatal`. Unterfälle kommen mit den Zeilen ihres
+  Elterntests.
+- **`tools/ci-count.sh`** druckt zu jedem roten Fall die `Output`-Sätze aus dem JSON-Strom.
+  Damit sagen auch `-race` und `root` den Grund, ohne dass eine Datei hochgeladen werden muss.
+
+Gemessen am 20.10.2026 gegen ein echtes rotes Protokoll (ein Test mit zwei `t.Errorf`, einer mit
+`t.Fatal` in `t.Run`): beide nennen Test, Datei, Zeile und Text; der grüne Lauf bleibt
+unverändert bei 3349 passed, 0 FAILED, 87 SKIPPED und Ausstieg 0.
+
+#### Zwei Messfallen auf dem Weg dahin, beide bezahlt
+
+1. **Das Heredoc hat `\n` zu einem echten Zeilenumbruch gemacht.** Der erste awk-Block ging
+   über eine Shell-Heredoc ins Skript und trug danach eine Zeichenkette über zwei Zeilen —
+   ein ungültiges awk-Programm. `bash -n tools/check.sh` meldete **ok**, weil der Fehler
+   innerhalb einer einfach zitierten Zeichenkette lag und erst zur Laufzeit zählt, also genau
+   auf einem roten Lauf. Gefunden nur, weil der Block gegen ein echtes Protokoll geprüft wurde.
+   **Ein Syntaxprüfer der Hülle prüft nicht den Inhalt.** Der Block steht jetzt ohne jeden
+   Gegenstrich da und wird über eine Datei geschrieben, nicht über ein Heredoc.
+2. **`substr($0, 10)` griff ein Zeichen zu früh.** `go test` schreibt drei Leerzeichen nach
+   `RUN`, der Name kam mit führendem Leerzeichen heraus und passte auf nichts: der Block
+   druckte **leer**, und das sieht aus wie „es gab nichts zu zeigen". Jetzt `$3`, weil ein
+   Testname kein Leerzeichen trägt.
+
+Beide gehören zusammen mit Punkt 69 selbst in eine Reihe: **eine Prüfung, die schweigt, ist
+schlimmer als eine, die rot ist.**
+
+### Nachtrag 20.10.2026, zweiter Teil: die CI hat sich selbst überfahren
+
+Der Nachtrag oben nannte „Last" als Vermutung. Sie ist jetzt **gemessen**, und die Ursache ist
+ein Fehler im Arbeitsablauf selbst.
+
+`.github/workflows/linux.yml` läuft `on: push` **und** `on: pull_request`. Ein Zweig mit
+offenem Pull Request löst also beides aus. Der Riegel dagegen war:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+```
+
+**`github.ref` ist für die zwei Ereignisse nicht dieselbe Zeichenkette:** `refs/heads/<zweig>`
+beim Push, `refs/pull/<n>/merge` beim Pull Request. Zwei Gruppen, also hat `cancel-in-progress`
+nichts abgebrochen — und **beide Läufe liefen vollständig durch**. Das ist der Beweis, nicht die
+Vermutung: gemessen zweimal, am 20.10.2026 um 09:57 und um 10:43, Start zwei Sekunden
+auseinander, beide bis zum Ende. Zwei komplette Suiten gleichzeitig, darunter zwei `-race`-Läufe
+(der Auftrag mit 40 Minuten Zeitgrenze).
+
+Und beide Male fiel **nur im pull_request-Lauf** ein Zeittest des Tunnels um, während der
+push-Lauf auf **demselben Commit** grün war:
+
+| Lauf | umgefallen |
+|---|---|
+| 09:57 | `TestAPanicInTheHelloHookKeepsTheTunnel` |
+| 10:43 | `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel/one_interval,_in_a_fraction_of_a_second` |
+
+Der zweite nennt sich selbst „in a fraction of a second" und brauchte **2,46 s**, der
+Elterntest **26,45 s**.
+
+**Behoben:** die Gruppe wird auf den **Zweig** geschlüsselt statt auf `github.ref` —
+`github.head_ref || github.ref_name` ergibt bei beiden Ereignissen dieselbe Zeichenkette, also
+bricht der eine Lauf den anderen ab. Jeder Push wird weiter gemessen, wofür der `-race`-Auftrag
+ausdrücklich da ist; was aufhört, ist zweimal zahlen und Zeitverhalten unter doppelter Last
+messen.
+
+**Nicht gemessen:** ob diese Zeittests unter einfacher Last verlässlich sind. Die doppelte Last
+ist weg, die Frage nicht beantwortet.
+
+#### Offen, und es gehört nicht mir
+
+`apps/server-controller/classes/link/link_test.go`, Zeile 1312:
+
+```
+the tunnel counted as gone although the API answers every ping it sees
+```
+
+Die Stelle steht **nach** `close(drain)`: die Drosselung ist gelöst, und der Test wartet bis zu
+30 Sekunden auf einen Ping — bricht aber ab, sobald `tn.dead` gesetzt ist. Auf einem langsamen
+Läufer ist der Tunnel in der Drosselphase (dreimal 300 ms plus Einplanung) schon totgemeldet,
+bevor der erste Ping durchkommt. Der Test setzt voraus, dass das Lösen der Drosselung den Ping
+vor die Todesfrist bringt, und unter Last stimmt das nicht.
+
+**Hier wird daran nichts geändert.** Es ist der Wächter eines anderen Teils, und dieses Projekt
+hat für genau diesen Fall ein eigenes Muster — `tools/check.sh` nennt es im Kommentar: die
+Uhrtests in `apps/server-api/classes/login` stellen sich zur Seite, wenn ihre eigene
+Nullkontrolle sagt, dass die Maschine den Faktor heute nicht auflösen kann, und melden das als
+`UNMEASURABLE`. Ob dieser Test dasselbe bekommen soll oder eine größere Frist, entscheidet, wem
+er gehört. **Ein Wächter, den ein Fremder leise zum Überspringen bringt, ist schlimmer als ein
+roter Lauf** — darum steht er hier als Befund und nicht als Änderungssatz.
+
+### Nachtrag 20.10.2026, dritter Teil: der Zeittest hat eine Nullkontrolle — und was sie NICHT ist
+
+Thomas hat entschieden, den Test zu härten, nach dem Muster der Uhrtests in
+`apps/server-api/classes/login`. Das ist getan, und das Wichtigste daran ist eine
+Einschränkung.
+
+**Erst die Ursache, genau.** `ping()` (`link.go:736`) macht einen Tunnel nur für einen Ping
+tot, der scheiterte, **während kein Schreibvorgang von uns lief**:
+
+```go
+mine := t.writing.Load() > 0
+...
+if mine { continue }
+t.dead.Store(true)
+```
+
+Der Unterfall baut genau diesen Schild: der Stuffer hält einen Schreibvorgang im Steckplatz,
+also überspringt jeder scheiternde Ping sich selbst. Nach `close(drain)` räumt der Drain-Faden
+in `congested` aber **beides** weg — `p.free()` und dann `s.halt()`. Damit fällt der Schild,
+und wenn der erste Ping danach noch im Rückstau scheitert, tut `ping()` genau das, was es
+verspricht: `dead`. Kein Defekt, sondern das Aufräumen des Tests, das mit dem Rückstau um die
+Wette läuft. Auf einem schnellen Rechner gewinnt der Ping, auf einem belasteten Läufer nicht.
+
+**Die Nullkontrolle** liest das am Stuffer selbst ab, nicht per Abtastung: er schließt `done`,
+wenn sein Faden zurückkommt, also beweist ein geschlossenes `done` in diesem Augenblick, dass
+der Schild weg ist (`shieldGone`). Dann:
+
+- Schild **oben** und Tunnel tot → **rot**, das ist der Defekt, für den der Test da ist.
+- Schild **unten** und Tunnel tot → **`UNMEASURABLE`**-Skip, mit Zahlen. Der Lauf hat die
+  Maschine gemessen, nicht `ping()`.
+
+Dasselbe Wort und dieselbe Begründung wie in `login`: `go test` ohne `-v` druckt für einen
+übersprungenen Test **nichts**, und `tools/check.sh` grept danach — ein Test, der sich still
+zur Seite stellt, wäre schlimmer als ein falsches Rot.
+
+#### Was die Kontrolle ausdrücklich nicht ist
+
+**Sie nimmt keinen Wächter weg, und der Skip dort war nie der Wächter.** Gemessen, fünf grüne
+Läufe in Folge: wenn diese Schleife zum ersten Mal hinsieht, ist der Stuffer **jedes Mal**
+„already finished" — der Schild ist dort also immer unten, und der Test besteht, weil der Ping
+nach **fünf bis sechs Millisekunden** da ist. Die `dead`-Prüfung in dieser Schleife war damit
+von Anfang an nur eine Abkürzung, um nicht dreißig Sekunden auf einen längst toten Tunnel zu
+warten.
+
+Der eigentliche Wächter ist die Schleife **vor** dem Drain: dort steht nachweislich ein
+Schreibvorgang von uns im Steckplatz (`waitWriting`), und ein toter Tunnel ist dort rot ohne
+Ausweg. Dazu die eine Zusage, die dem Unterfall den Namen gibt: nach dem Öffnen **muss** ein
+Ping die API erreichen — das ist die Frist von dreißig Sekunden. **Beides ist unverändert.**
+
+#### Welche Stufe von „geprüft" das erreicht
+
+Nach der Vierteilung: geschrieben / übersetzt / enthalten / **ausgeführt**.
+
+- Die Entscheidung selbst ist **ausgeführt**: `TestShieldGoneReadsTheStuffer` hält `shieldGone`
+  und `stufferState` an beide Antworten, absichtlich herbeigeführt.
+- Der **Skip-Zweig selbst ist hier nicht gelaufen.** 25 Läufe des Unterfalls unter 128
+  Lastschleifen auf 64 Kernen: **50 PASS, 0 FAIL, 0 SKIP**, erster Ping nach 5 bis 37 ms. Diese
+  Maschine kommt nicht in die Lage.
+- **Der Auslöser ist aber gemessen — in der CI.** Genau diese Zeile war am 20.10.2026 um 10:43
+  rot (`the tunnel counted as gone although the API answers every ping it sees`), und davor um
+  09:57 der Schwestertest. Dort wird aus dem Rot künftig ein benannter Skip, und `check.sh`
+  nennt ihn Zeile für Zeile.
+
+Nach der Änderung lokal: `check.sh: ok`, **3350 passed, 0 FAILED, 87 SKIPPED**, und
+`0 guard(s) unmeasurable` — es stellt sich also nichts unbemerkt zur Seite.
+
+**Offen bleibt:** ob das Aufräumen in `congested` die bessere Stelle wäre — erst den Rückstau
+durchlassen und den Stuffer **danach** anhalten, dann gäbe es das Rennen gar nicht. Das wäre
+eine Änderung am Helfer, die alle vier Fälle dieses Tests berührt, und sie ist **nicht
+gemessen**. Wer den Teil besitzt, entscheidet das; die Kontrolle hier macht den Lauf
+inzwischen ehrlich, statt ihn zu verdecken.
+
+### Nachtrag 21.10.2026: drei Umbauten am Schild, alle verworfen — das Fazit
+
+Der offene Punkt aus dem dritten Teil lautete: das Rennen nach dem Drain beseitigen, statt es
+nur zu benennen. Dafür sind drei Umbauten gebaut und gemessen worden, alle unter 128
+Lastschleifen auf 64 Kernen, immer derselbe Rechner. „Läufe" zählt Durchgänge des Unterfalls;
+„Schild oben" ist, wie oft der Stuffer beim ersten Hinsehen noch schrieb:
+
+| Umbau | Läufe | **Fehlschläge** | Schild oben |
+|---|---|---|---|
+| **Ausgangsstand**, nur Nullkontrolle | 30 | **0** | 0 von 30 |
+| **1. Rückstau zuerst:** erst auf einen Schreibvorgang warten, dann `s.halt()`, dazu `quietStuffer` | 20 | **2** | 12 von 20 |
+| **2. Byte-Zähler im Rohr:** `pipe.fwd`, `drained()` wartet auf Ruhe (50 **und** 200 ms geprüft) | 16 | **2** | 16 von 16 |
+| **3. Drosselung:** 4 KiB statt `wire.MaxPayload` ab dem Drain | 30 | **3** | 27 von 28 |
+
+Die zwei hinteren erreichen das Ziel — der Schild bleibt bis zum ersten Ping oben, wo er im
+Ausgangsstand **nie** oben war. Nur kostet jeder von ihnen Fehlschläge, wo der Ausgangsstand in
+30 Läufen keinen hat.
+
+**Keiner ist ausgeliefert.** Alle Fehlschläge sind dieselbe Meldung, und sie ist nicht die
+alte:
+
+```
+Run = link: the API cannot be reached, want an orderly end
+```
+
+**Der Satz, der alle drei erklärt:**
+
+> Der Schild **ist** der Verkehr. Mehr Schild heißt mehr in Flug, und der geordnete Abschluss
+> braucht das Gegenteil. Kleinere Frames senken die Menge und machen den Schild dafür lückig.
+
+Die Einzelheiten, soweit sie etwas tragen:
+
+- **Zu 1 und 2:** `ErrAPI` kommt aus der **Leseseite** (`link.go:283`), nicht von einer
+  Schließnachricht, die im Rohr steckt — die API-Seite liest durchgehend (`apiSide.quiet`).
+  Entscheidend ist die **Menge in Flug** beim Abschlussdialog: im roten Lauf 16 Frames à
+  `wire.MaxPayload`, rund ein Megabyte, gegen 5 bis 12 vorher.
+- **Zu 2:** ein Zähler im Rohr kann kein „leer" melden. Was der Controller hinter der Sperre
+  aufstaute, liegt in **seinem** Sendepuffer — Megabytes auf Linux, wie der Kommentar bei
+  `pipe.free` sagt —, und dort sieht kein Rohr hinein. Es bleibt „es kam eine Weile nichts
+  durch", also eine Ruhezeit und kein Beweis; vierfache Ruhezeit änderte das Ergebnis nicht.
+- **Zu 3:** `writing` ist nur oben, **während** `t.c.Write` läuft. Ein 4-KiB-Frame auf offenem
+  Rohr ist in Mikrosekunden durch, der Schild bekommt also Lücken — und `ping()` liest den
+  Zähler in einem einzigen Augenblick. Ein lückiger Schild ist schlechter als keiner, weil er
+  die Lücke zufällig macht.
+- **Und eine Messregel, teuer bezahlt:** Umbau 3 sah in den ersten zwei Stichproben wie die
+  Lösung aus — 8 Läufe mit 16 PASS / 0 FAIL, dann 8 weitere mit 0 FAIL. Erst die dritte, mit
+  14 Läufen des kurzen Unterfalls, brachte die 3 Fehlschläge. Umbau 1 zeigt dasselbe von der
+  anderen Seite: eine Stichprobe davon war 12 von 12 grün. **Eine Stichprobe von acht ist keine
+  Rate** — nach dem ersten Lauf ausgeliefert, wäre zweimal eine Verschlechterung eingezogen,
+  die wie eine Verbesserung aussah.
+
+**Nicht gemessen und offen:** ob der Unterfall überhaupt eine Aussage über `ping()` **nach** dem
+Drain treffen kann, oder ob seine ganze Aussage davor liegt. Das entscheidet, wem der Teil
+gehört.
+
+### Nachtrag 21.10.2026: und dabei kam ein Fehler in meiner eigenen Nullkontrolle heraus
+
+Umbau 3 hat den Test diese Zeile drucken lassen:
+
+```
+the tunnel counted as gone 22ms after the way opened although a write of ours
+still stands in the socket (writing 0)
+```
+
+**Die Meldung widerspricht sich selbst** — „a write still stands" und „writing 0" in einem
+Satz. Die Ursache ist mein `shieldGone`: es fragt, ob der **Stuffer-Faden lebt**, und das ist
+nicht dasselbe wie **ein Schreibvorgang läuft**. Bei Drosselung lebt der Faden und schreibt
+gerade trotzdem nicht.
+
+Dahinter steckt der tiefere Fehler: `ping()` liest `t.writing` in **seinem** Augenblick, direkt
+nachdem der Ping aufgab (`link.go:736`). Ein toter Tunnel heißt also, **dieser** Lesevorgang sah
+Null. Der Augenblick ist vorbei, wenn die Schleife hinsieht, und keine spätere Lesung von
+`writing` und kein Zustand des Stuffers holt ihn zurück. **Ein rotes Urteil in dieser Schleife
+war von Anfang an nicht begründbar** — es hätte eine Maschine für einen Defekt erklärt.
+
+**Behoben:** dort ist ein toter Tunnel jetzt **immer** `UNMEASURABLE`, mit allen Zahlen (Zeit,
+Pings, `writing` jetzt, Zustand des Stuffers) und der Begründung im Code. Der rote Zweig ist
+weg, weil er nie einen hätte geben dürfen.
+
+**Es nimmt keinen Wächter weg**, dieselbe Begründung wie im dritten Teil: der Wächter ist die
+Schleife **vor** dem Drain, wo `waitWriting` beweist, dass ein Schreibvorgang steht, und die
+Frist von dreißig Sekunden, in der ein Ping ankommen muss. Beide sind unverändert rot, wenn sie
+brechen.
+
+**Stand danach:** 22 Läufe unter derselben Last **22 PASS, 0 FAIL, 0 SKIP**; `check.sh: ok`,
+**3350 passed, 0 FAILED, 87 SKIPPED**, `0 guard(s) unmeasurable`.
+
+Und: **der Skip-Zweig ist jetzt wirklich gelaufen.** Im dritten Teil musste er als „nur
+übersetzt" ausgewiesen werden; in Umbau 3 hat er zum ersten Mal gefeuert und seine Zeile
+gedruckt. Er steht damit auf der vierten Stufe — durch einen Versuch, der selbst verworfen
+wurde.
+
+## Punkt 70: Ein Paket über eine Fenstergröße kommt unter Last nicht durch — `E_PROTOCOL` statt `ok`
+
+Gefunden, weil die CI endlich sagt, **warum** ein Test umfällt (Punkt 69). Der Befund gehört
+nicht zu dem Zweig, auf dem er auftrat: `apps/server-controller/classes/serve/`, `shared/` und
+`apps/server-api/` sind dort **byteweise der Stand von `main`** (`git diff origin/main --stat`
+auf diese Pfade: leer). Also ein Befund auf `main`.
+
+### Was umfällt
+
+`TestAPackageLargerThanOneWindowGetsThrough`
+(`apps/server-controller/classes/serve/activate_test.go:276`). Der Fall schickt **6 Rahmen à
+60 000 Bytes** = 360 000, also mehr als `wire.DefaultWindow` (262 144), und hält damit
+`chanReader.give`: jeder an den Installierer gegebene Rahmen muss den Kredit sofort
+zurückzahlen.
+
+Gemessen am 21.10.2026, derselbe Rechner, `go test -count=20`:
+
+| | Fehlschläge |
+|---|---|
+| ohne Last | **0 von 20** |
+| unter 128 Lastschleifen auf 64 Kernen | **4 von 20** |
+
+Und die Meldungen sind dieselben drei, jedes Mal:
+
+```
+CLOSE = {Status:error Code:E_PROTOCOL Message:Ungültige Nachricht.}, want ok
+result = "", want the empty object
+the installer read 60000 bytes, want 360000
+```
+
+**Die gelesene Menge ist immer ein Vielfaches von 60 000** — gemessen 0, 60 000, 60 000 und
+120 000 Bytes. Der Transfer bricht also an einer **Rahmengrenze** ab, nicht mitten in einem
+Rahmen, und zwar nach null, einem oder zwei von sechs.
+
+Dazu im `-race`-Auftrag derselben CI-Läufe, im gleichen Paket:
+`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel` (`app_test.go:672`) meldet `E_INTERNAL`,
+wo `E_TIMEOUT` erwartet ist. Nicht lokal nachgestellt — hier gibt es kein `-race` (kein
+C-Übersetzer), also **nicht gemessen**, ob es dieselbe Ursache ist.
+
+### Die Ursache — gemessen am 23.10.2026, und es war der Test
+
+**Dieser Abschnitt hieß zuerst „Was ich dazu NICHT sage" und sagte, die Ursache sei nicht
+gemessen. Jetzt ist sie es.** Die zwei Vermutungen, die hier als widerlegt standen, waren
+beide richtig widerlegt — nur war die dritte Stelle die richtige:
+
+```go
+case wire.TypeData:
+    n := uint64(len(f.Payload))
+    if n > ch.in || !ch.room() {        // channel.go:629
+        ch.claimLocked(closeProtocol)
+```
+
+`ch.in` ist der Kredit, den **diese** Seite gewährt hat und der noch nicht verbraucht ist. Der
+erste GRANT gibt `wire.DefaultWindow` = 262 144 Bytes. Der Test schob **sechs** Rahmen à 60 000
+sofort hinaus, ohne auf weitere GRANTs zu warten: vier passen (240 000), beim **fünften** fehlen
+37 856 Bytes, und wenn der GRANT für die schon gelesenen Rahmen noch nicht da ist, lehnt der
+Kanal ab — **völlig zu Recht**. Ein Sender dieses Vertrags darf seinen Kredit nicht überziehen.
+
+**Die Zahl, die es beweist**, kommt aus der Mutationsprobe unten: `22144 bytes of credit left
+and 60000 to send` — und 262 144 − 4 × 60 000 ist genau 22 144.
+
+**Es war also der Test und nicht der Kanal.** Die gute Nachricht steckt darin: an `ActActivate`
+ist nichts zu reparieren, und die Sorge aus dem Absatz weiter unten — ein Verwalter liest
+„Ungültige Nachricht" über ein heiles Paket — trifft nicht zu, solange die API ihren Kredit
+einhält. Die echte API tut das; nur der Test tat es nicht.
+
+### Behoben: die API-Seite des Tests zahlt
+
+Neu ist `apiSide.dataPaid` (`serve_test.go`): wo der Kredit nicht reicht, wartet die Senderseite
+erst auf den GRANT und schreibt dann. Das ist, was jeder echte Gegenpart tut.
+
+| | Fehlschläge |
+|---|---|
+| vorher, Linux unter Last | 5 von 20 |
+| vorher, Windows unter Last | 4 von 20 |
+| **nachher, Linux unter Last** | **0 von 20** |
+
+**Und der Wächter ist nicht weicher geworden, sondern schärfer** — Mutationsprobe: `give` so
+verändert, dass es keinen Kredit mehr zurückgibt. Dann endet der Test nicht grün und nicht mit
+`E_PROTOCOL`, sondern mit
+
+```
+waiting for a GRANT on channel 1, 22144 bytes of credit left and 60000 to send: context dead
+Run did not end
+```
+
+Vorher gaben ein kaputtes `give` und eine belastete Maschine **dasselbe** Rot. Jetzt sind sie zu
+unterscheiden: das eine wartet auf einen GRANT und nennt den Kredit, das andere ist kein Rot
+mehr.
+
+`check.sh: ok`, 3350 passed, 0 FAILED, 87 SKIPPED.
+
+### Die zwei Vermutungen davor, als widerlegt notiert
+
+- *Die API-Seite schickt DATA, bevor der Kanal offen ist.* Nein: `apiSide.open`
+  (`serve_test.go:420`) wartet auf das GRANT, bevor der Test weiterläuft.
+- *`Channel.room()` schlägt zu.* Die Stelle wäre die richtige — ihr Kommentar nennt
+  ausdrücklich `E_PROTOCOL` für einen Gegenpart, der seinen Kredit in Stücke unter
+  `queueCost` (32 Bytes) zerlegt (`channel.go:698`). Nur passt die Rechnung nicht: bei
+  262 144 Bytes Kredit erlaubt `(ch.in+ch.bytes)/32+2` über achttausend wartende Rahmen, und
+  es sind sechs.
+
+Beide waren an der falschen Stelle, und das Raten hat erst aufgehört, als die Linux-Messung
+eine verlässliche Nachstellung gab (5 von 20) — damit ließ sich der Zweig mutieren, statt ihn zu
+erraten.
+
+### Was es für den Nutzer heißt: nichts — und das stand nicht von Anfang an fest
+
+`ActActivate` ist der Weg, auf dem ein **App-Paket** zum Controller geht. Solange die Ursache
+offen war, stand hier die Sorge: sitzt der Abbruch im Kanal, dann scheitert auf einer belasteten
+Maschine die Installation eines Pakets über eine Fenstergröße, und der Verwalter liest
+„Ungültige Nachricht" — die Meldung für ein kaputtes Paket — über ein heiles. Dieselbe Klasse wie
+Punkt 65.
+
+**Die Sorge trifft nicht zu.** Der Kanal hat recht gehandelt, und die echte API hält ihren
+Kredit ein; nur der Test tat es nicht. An `ActActivate` ist nichts zu reparieren.
+
+**Und das ist der Grund, einen solchen Befund nicht als Wackler abzulegen, bevor man ihn
+kennt** — auch wenn er sich dann als einer herausstellt. Er stand als Frage da und nicht als
+Antwort, und die Antwort kam aus einer Messung, nicht aus einer Einschätzung.
+
+### Nachstellen
+
+Der Fall ist behoben, also läuft er jetzt durch. Um die **alte** Erscheinung zu sehen, muss
+`dataPaid` im Test wieder durch `data` ersetzt werden; dann gilt:
+
+```powershell
+go test -count=20 -run TestAPackageLargerThanOneWindowGetsThrough .\apps\server-controller\classes\serve\
+```
+
+Ohne Last läuft das durch. Mit Last — 128 beschäftigte Schleifen neben dem Lauf — fielen vier
+von zwanzig um, auf Linux fünf von zwanzig. Der Lauf braucht etwa zwanzig Sekunden.
+
+**Auf Linux** (wo die CI steht), mit dem für `linux/amd64` übersetzten Testbinär:
+
+```powershell
+go test -c -o D:\claude\rust\serve.test .\apps\server-controller\classes\serve\
+wsl -d Debian -u root -- /mnt/d/claude/rust/serve.test -test.run TestAPackageLargerThanOneWindowGetsThrough -test.count=20
+```
+
+### Was noch zu entscheiden ist
+
+Für diesen Fall nichts mehr. Offen bleibt der zweite aus dem Nachtrag unten
+(`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel`, `E_INTERNAL` statt `E_TIMEOUT` im
+`-race`-Auftrag): **nicht gemessen**, weil es hier kein `-race` gibt — kein C-Übersetzer. Er
+sitzt im selben Paket und an derselben Kreditmechanik, also lohnt zuerst die Frage, ob er
+dieselbe Ursache hat.
+
+### Nachtrag 22.10.2026: ein dritter Zeittest, und seine Schranke ist eine Haaresbreite
+
+Derselbe Weg wie oben: die CI sagt seit Punkt 69, **warum** ein Test umfällt, und damit fällt
+der dritte auf. Er gehört ebenfalls nicht zum Zweig, auf dem er auftrat — `apps/` und `shared/`
+sind dort byteweise `main` (`git diff origin/main --stat` auf diese Pfade: leer).
+
+`TestAFaultEndsTheTerminalAtOnce` (`apps/server-controller/classes/terminal/terminal_test.go:654`),
+im `root`-Auftrag:
+
+```
+it took 1.002616831s: the fault waited for the shell instead of ending the terminal
+```
+
+**Die Schranke ist `took > time.Second`** (Zeile 653), und überschritten wurde sie um **2,6
+Millisekunden**.
+
+**Hier stand zuerst, die Schranke trenne gegen `time.Minute`, also gegen 60 Sekunden, und fünf
+Sekunden würden dasselbe trennen. Das war falsch**, und der Test sagt es selbst drei Zeilen
+weiter oben (Zeile 619): *„a shell told to `sleep 1` could not have finished in under a second
+either way"*. Die Eingabe ist `sleep 1`, die Schranke ist eine Sekunde — **die zwei Seiten der
+Entscheidung waren dieselbe Zahl.** Eine Schranke von fünf Sekunden allein hätte den Wächter
+abgeschafft: ein Lauf, der das `sleep 1` wirklich abgewartet hätte, wäre durchgegangen.
+
+**Behoben wurde deshalb der Abstand, nicht die Schranke:** die Shell schläft jetzt **30
+Sekunden** — dieselbe Zahl, die der Nachbartest in Zeile 574 schon benutzt — und die Schranke
+heißt `faultWithin` und steht bei **5 Sekunden**. Der Nachbar bindet 10 Sekunden gegen dieselben
+30; 5 gegen 30 ist strenger und hat denselben Abstand im Rücken.
+
+**Und jetzt ist der Fall gemessen, nicht nur aus der CI abgelesen.** Unter Windows stellt er
+sich selbst zur Seite — 20 von 20 Läufen, jedes Mal mit `NICHT GEMESSEN auf windows: /dev/ptmx
+gibt es nur unter Linux`. Also wurde das Testbinär für `linux/amd64` übersetzt und in der
+Debian-WSL gelaufen, wo es `/dev/ptmx` gibt:
+
+| | Ergebnis |
+|---|---|
+| 10 Läufe unter Linux | **10 PASS**, je 0,00–0,01 s |
+| Mutationsprobe, `faultWithin` auf 1 ns | **3 von 3 rot** — die Behauptung greift also |
+| was die Mutation nebenbei misst | das Terminal endet in **1,2 bis 1,9 ms** |
+
+Damit stehen alle drei Zahlen nebeneinander: richtig endet es in **1,5 ms**, die Schranke liegt
+bei **5 s**, und ein Lauf, der auf die Shell wartet, kann nicht vor **30 s** zurückkommen. Das
+ist der Abstand, den die alte Fassung nicht hatte.
+
+### Drei Zeittests, ein Muster
+
+Mit Punkt 70 oben und dem Tunnel-Test aus Punkt 69 sind es drei, alle im Controller, alle nur
+unter Last, alle in anderen Teilen als dem Zweig, auf dem sie auftraten:
+
+| Test | Schranke | gemessen | Alternative, die er trennt |
+|---|---|---|---|
+| `TestAFaultEndsTheTerminalAtOnce` | 1 s → **5 s** | 1,0026 s (CI), 1,5 ms (Linux) | `sleep 1` → **`sleep 30`** |
+| `TestAPackageLargerThanOneWindowGetsThrough` | Kredit 262 144 | **behoben** (`dataPaid`), 0 von 20 | der Test überzog beim 5. Rahmen |
+| `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Tunnel tot vor dem ersten Ping | — |
+
+Der erste ist der einfachste von allen und **ist behoben** (siehe oben): zwei Zahlen, die
+dieselbe waren. Die anderen zwei sind Wettläufe und bleiben offen; sie lassen sich ohne Kenntnis
+des Protokolls nicht entscheiden.
+
+**Was daraus folgt und bisher nirgends stand:** eine Prüfung, die auf einem belasteten Läufer
+drei verschiedene Tests verlieren kann, ist keine Prüfung mehr, die einen echten Befund von
+Rauschen trennt. Das ist die Fortsetzung von Punkt 69 mit anderen Mitteln: dort war sie rot und
+schwieg, hier ist sie rot und meint es verschieden.
+
+### Nachtrag 23.10.2026: die zwei Wettläufe unter Linux — und Windows war das falsche Messgerät
+
+Beide offenen Fälle sind jetzt dort gemessen, wo die CI sie verliert: Testbinäre für
+`linux/amd64` übersetzt und in der Debian-WSL gelaufen, 128 Kerne, 256 Lastschleifen daneben.
+
+#### Der Kanal: bestätigt, und keine Windows-Eigenheit
+
+`TestAPackageLargerThanOneWindowGetsThrough`, 20 Läufe: **5 Fehlschläge**.
+
+| | Fehlschläge |
+|---|---|
+| Windows unter Last | 4 von 20 |
+| **Linux unter Last** | **5 von 20** |
+| Windows ohne Last | 0 von 20 |
+
+Dieselbe Erscheinung, dieselbe Rate, dieselben Zahlen: `CLOSE` mit `E_PROTOCOL`, und der
+Installierer las **60 000 Bytes dreimal und 120 000 Bytes zweimal** — also nach einem oder zwei
+von sechs Rahmen abgebrochen, an der Rahmengrenze. **Der Befund aus Punkt 70 steht damit auf
+zwei Betriebssystemen**, und die Ursache bleibt ungemessen.
+
+#### Der Tunnel: die Nullkontrolle feuert, und sie hat recht
+
+`TestAPingLostToOurOwnWriteDoesNotKillTheTunnel/one_interval`, 14 Läufe:
+**12 PASS, 0 FAIL, 2 `UNMEASURABLE`-Skips.**
+
+Die zwei Skips sind die Kontrolle aus Punkt 69, wörtlich im Protokoll:
+
+```
+UNMEASURABLE: the tunnel counted as gone 1.135s after the way opened - ping() decided
+on a count of running writes that no test can see afterwards
+```
+
+**Und jetzt die Zahl, die alles erklärt.** Wie lange der erste Ping nach dem Öffnen braucht:
+
+| | Ping-Ankunft |
+|---|---|
+| Windows unter Last | 5 bis 37 ms |
+| **Linux unter Last** | **507 ms bis 1,147 s** |
+
+Zwischen zwanzig- und zweihundertfach länger. Das Ping-Intervall des Falls ist **300 ms** —
+auf Linux liegt die Ankunft also regelmäßig **jenseits** eines Intervalls, auf Windows nie in
+seiner Nähe. Darum hat dieser Rechner den Fall in 22 Läufen nie verloren und die CI zweimal.
+
+**Die zwei Skips liegen mitten in derselben Verteilung wie die Durchläufe** — gefeuert bei
+869 ms und 1,135 s, bestanden bei 866 ms, 912 ms und 1,099 bis 1,147 s. Es ist in diesem Fenster
+ein Münzwurf, und genau das heißt „unmeasurable". **Ein rotes Urteil dort wäre Rauschen
+gewesen**, und die Korrektur aus Punkt 69, die den roten Zweig ganz entfernt hat, ist damit
+nicht nur begründet, sondern gemessen.
+
+#### Was daraus für das Messen folgt
+
+**Windows war für diese zwei Fälle das falsche Messgerät**, und das war vorher nicht
+sichtbar — es sagt nicht „übersprungen", es sagt grün. Ein Fall, der auf Zeiten im Netz oder
+auf Scheduling beruht, ist auf dem Betriebssystem zu messen, auf dem er läuft; dafür reicht
+`go test -c -o <datei>` und ein Lauf in der WSL, und das kostet eine Minute. Dieselbe Regel wie
+„ein Testergebnis gilt für das Laufwerk, auf dem es gemessen wurde" — nur eine Ebene höher.
+
 ## Punkt 71: Sechs Wände auf einem Weg — vom Release bis zur laufenden App, und vier standen nicht im geprüften Code
 
 **Gemessen vom 19. bis 21.10.2026** auf der Debian-VM aus Punkt 64, von einem **veröffentlichten
@@ -3168,3 +4166,26 @@ jemand mitliest.
 
 > **Mein Vorschlag:** kein Protokoll, aber der **Satz auf dem Schirm nennt das Feld**: „Eine Angabe
 > dieses Servers ist unlesbar (`version`)." Das benennt die Stelle, ohne irgendwo etwas abzulegen.
+
+**Nachtrag vom 23.10.2026: alle drei sind entschieden und gebaut, die Prüfung steht.** Thomas hat
+a) mit „vorgekreuzt, abwählbar, nur `rootUsers`, nur dieser Controller" entschieden — gebaut in
+PR #105, das damit eine Entscheidung von PR #87 umdreht (dessen Begründung, eine Vorgabe entscheide
+in dem Augenblick, in dem niemand hinsieht, steht dort daneben). b) und c) liegen in PR #104: die
+Anzeigefelder `version` und `arch` werden leer gemacht statt die Antwort zu verwerfen, die harten
+Felder fallen weiter ganz, und der Satz nennt das Feld. **Was daran gemessen ist und was nicht,
+steht in den beiden PRs** — in allen drei Motoren laufen nur die Abnahmefälle von b) und c), und
+auf einer echten VM ist keines von beiden geprüft.
+
+**Was damit von den sechs Wänden noch steht,** nachgesehen am 23.10.2026 gegen `main`:
+
+- **(2)** beantwortet in PR #104, **(4)** in PR #87 und #105, **(3)** liegt in PR #86.
+- **(5) ist still behoben:** `main` legt `/var/lib/ngc/apps` mit `0o711` an und setzt den Modus
+  danach noch einmal (`runtime/data.go:122` und `:131`), während das Verzeichnis der App selbst
+  `0o700` bleibt. Damit darf der App-Benutzer den Weg durchlaufen, ohne lesen zu können — genau
+  das, was `podman load` brauchte.
+- **(1) ist offen, und zwar woanders:** die Unit steht nur auf dem Zweig `ngc-kette` von `ulh`,
+  der nicht verschmolzen ist; auf dessen `main` gibt es die NGC-Skripte gar nicht. Dort schreibt
+  `ngc-api.sh` weiter `ReadWritePaths` ohne `/etc/ngc`.
+- **(6) ist offen:** `apps()` filtert in `main` unverändert auf `core.RightUse`
+  (`coreapp/desktop.go:161`), und die Rechteseite baut ihre Auswahl unverändert aus `this.apps`
+  (`apps/users.js:609` auf `main`). **Der Henne-Ei-Fall ist noch da.**

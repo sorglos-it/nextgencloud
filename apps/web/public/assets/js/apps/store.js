@@ -33,6 +33,9 @@ import { Budget, decode } from "../contracts/json.js";
 import { packageUI } from "../contracts/pack.js";
 import { proofShape, validateProof } from "../contracts/proof.js";
 import { PURPOSE_TRUST_LIST, parseEnvelope } from "../contracts/sign.js";
+import { APPS, NODES } from "../shell/changed.js";
+import { freshness } from "../shell/stale.js";
+import { CODES } from "../contracts/wire.js";
 
 const EMPTY = new Uint8Array(0);
 
@@ -133,10 +136,35 @@ class Store {
     this.turn = 0;
     this.at = TAB_APPS;
     this.source = "";
+    // What the window takes down with it. A listener that outlived its window
+    // would draw into a body nobody can see, and a store opened and closed ten
+    // times would leave ten of them behind.
+    this.off = [];
+    // THE RECHNER LIST IS THE SCREEN POINT 61 WAS WRITTEN FOR: a server was
+    // taken in under "Benutzer und Rechte" and showed up here only after
+    // Ctrl+F5. The nodes come from core.ActNodes, which is an answer of the
+    // API and not part of the trust list, so no trust hint covers them - the
+    // surface that takes a server in says so instead (shell/changed.js).
+    const ch = ctx?.changed ?? null;
+    if (ch !== null) {
+      this.off.push(ch.on(NODES, () => this.reload()));
+      this.off.push(ch.on(APPS, () => this.reload()));
+    }
   }
 
   stop() {
     this.abort.abort();
+    this.fresh?.stop();
+    for (const off of this.off) off();
+    this.off = [];
+  }
+
+  // reload throws the answers away and draws the open tab again. The cache is
+  // what makes a tab change free; after something changed it is exactly what
+  // must not be believed any more.
+  reload() {
+    this.cache = { __proto__: null };
+    return this.render();
   }
 
   // ---- the frame ---------------------------------------------------------
@@ -164,7 +192,12 @@ class Store {
       return b;
     });
     bar.addEventListener("keydown", (e) => this.key(e));
-    box.append(bar, this.panel);
+    // Since when this screen has been standing, and the one button that asks
+    // again. The store is built from answers of the API that another admin can
+    // change, and no message of the link says so: a screen that can be old must
+    // not look fresh (shell/stale.js).
+    this.fresh = freshness(() => this.reload());
+    box.append(bar, this.fresh.el, this.panel);
     clear(this.win.body);
     this.win.body.append(box);
   }
@@ -212,6 +245,7 @@ class Store {
     if (n !== this.turn || this.abort.signal.aborted) return;
     clear(this.panel);
     this.panel.append(...parts);
+    this.fresh?.done();
   }
 
   say(level, txt) {
@@ -299,16 +333,34 @@ class Store {
     try {
       apps = await this.catalogOf(src);
     } catch (e) {
-      // Three different things go wrong here and each gets its own sentence,
+      // FOUR different things go wrong here and each gets its own sentence,
       // because each has a different thing to DO about it: a store nobody
-      // has vouched for yet, a store replaying an old catalog, and an answer
-      // nobody signed for. One sentence for all three would tell the person
-      // nothing they could act on.
+      // has vouched for yet, a store whose catalog this installation has not
+      // fetched yet, a store replaying an old catalog, and an answer nobody
+      // signed for. One sentence for all four would tell the person nothing
+      // they could act on.
+      //
+      // The empty case is the one that was missing, and it was the loudest:
+      // until the hourly round has run once there is no catalog row, so
+      // ngc.store/catalog answers E_NOTFOUND (appstore.CodeFor over
+      // dbapi.ErrNotFound) -- and that answer used to fall through to "nicht
+      // echt", which tells a verified, healthy store's administrator that
+      // they are being attacked and leaves them nothing to do. Waiting is
+      // the thing to do, so the sentence says so (V1.2 point 65).
+      //
+      // E_NOTFOUND on THIS action can only mean "this API has nothing under
+      // that name yet" -- the missing row, or an API too old to carry the
+      // action at all. Neither is a forgery, and both are mended by waiting
+      // or by looking at the source list, so one sentence covers both. An ID
+      // the trust list does not name never gets here: it is refused before
+      // the request (Untrusted), and the API answers it E_UNREACHABLE.
       out.push(el("p", "fail", e instanceof Untrusted
         ? "Diesem Store wird noch nicht vertraut. Bitte ihn zuerst eintragen."
-        : e instanceof catalog.Rollback
-          ? "Dieser Store schickt einen alten Katalog. Bitte es später noch einmal versuchen."
-          : "Der Katalog dieses Stores ist nicht echt."));
+        : e?.code === CODES.NOTFOUND
+          ? "Der Katalog dieses Stores ist noch nicht geholt. NGC sieht stündlich nach; unter Quellen steht, wann es das letzte Mal geklappt hat."
+          : e instanceof catalog.Rollback
+            ? "Dieser Store schickt einen alten Katalog. Bitte es später noch einmal versuchen."
+            : "Der Katalog dieses Stores ist nicht echt."));
       return out;
     }
     const box = el("div", "rows");
@@ -442,6 +494,7 @@ class Store {
       "Die App ist entfernt.");
     if (ok) {
       this.cache.installed = undefined;
+      this.ctx.changed?.tell(APPS);
       this.render();
     }
   }
@@ -577,7 +630,13 @@ class Store {
         store: spec.store, grants: spec.needs,
       }, sel.value, "Die App ist eingerichtet.");
       go.disabled = false;
-      if (ok) this.cache.installed = undefined;
+      if (ok) {
+        this.cache.installed = undefined;
+        // THE MENU, not just this panel. An app that was just set up belongs
+        // on the desktop, and until this line the start menu went on showing
+        // the list from before the activation.
+        this.ctx.changed?.tell(APPS);
+      }
     });
     box.append(go);
     return box;
@@ -642,6 +701,7 @@ class Store {
       "Die neue Fassung wird eingespielt.");
     if (ok) {
       this.cache.updates = undefined;
+      this.ctx.changed?.tell(APPS);
       this.render();
     }
   }

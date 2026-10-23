@@ -59,6 +59,8 @@ import { PURPOSE_TRUST_LIST } from "../contracts/sign.js";
 import { b64encode } from "../contracts/b64.js";
 import { validTunnelURL } from "../contracts/url.js";
 import { coreApp, validAppID, validName } from "../contracts/text.js";
+import { APPS, NODES, RIGHTS, USERS } from "../shell/changed.js";
+import { freshness } from "../shell/stale.js";
 
 // How many log lines one page holds. The contract allows 1 to 500; fifty is
 // a screenful and a half, and paging is one button.
@@ -240,10 +242,155 @@ function nodeID(name, l) {
   return id;
 }
 
+// --------------------------------------------- who may run root tasks there
+//
+// A CONTROLLER THAT NAMES NOBODY CAN DO NOTHING, and until this screen there
+// was no way to name anybody. Measured on 19.10.2026 at a full installation
+// out of a published release: the node "ngc-2" was paired and taken in, the
+// app store offered it, and "Aktivieren" answered "Das hat der Rechner nicht
+// angenommen." with no sentence of the server behind it - the refusal happens
+// in the rights check, which writes no log line on either side. Setting up an
+// app is a root task (apps/store.js, rootTask(A.activate, ...)), and
+// trust.MayRoot lets one through only where the user stands in the node's
+// rootUsers or one of their roles in its rootRoles (Go: shared/trust/trust.go
+// :419). Both lists were written EMPTY by the only two places that wrote them
+// at all (askJoin, askJoinAPI), and no other place in the whole interface ever
+// wrote them: so on every freshly taken-in controller, nobody could ever
+// install an app. That is not a broken flow, it is a missing screen.
+//
+// WHY THERE IS NO DEFAULT HERE. Whom to trust with root on a machine is a
+// security decision and it belongs to the person who owns the installation,
+// not to this file: a default would hand the right out in the one moment
+// nobody is looking, and there is no way back out of a right nobody noticed
+// being given. So nothing is ticked, the question says what a tick means, and
+// the surface takes a server in even when nothing is ticked - and then says so
+// in the sentence it answers with, because a server that can do nothing is
+// worth saying out loud.
+//
+// A USER AND A ROLE ARE NOT THE SAME GIFT, and the question says which is
+// which: a user names the one person, a role names every present AND future
+// member of it, including ones somebody adds later. Both ways are offered
+// because both are in the contract (Node.RootUsers, Node.RootRoles) and a home
+// installation with one admin wants the short way; which of them is the better
+// habit is the owner's call, which is why the surface asks rather than decides.
+//
+// ONLY A CONTROLLER CARRIES THEM. An API node may carry no root lists at all
+// (Go: ValidAPINode asks for len(RootUsers)+len(RootRoles) == 0) and
+// trust.MayRoot only ever looks at a node of kind controller, so a version
+// that named anybody on an API node would be refused as invalid. The picker is
+// therefore drawn for controllers and nowhere else.
+
+// The one sentence for a controller nobody may run root tasks on. It stands in
+// the row of such a server and in the question that changes it, so both say the
+// same thing. The answer right after a take-up says it the other way round -
+// what nobody can do there yet - because a sentence about a server that was
+// just taken in has to say what follows from it.
+const NO_ROOT = "Mit Systemrechten: niemand";
+
+// rootPicker draws the choice and reads it back. node is the controller as the
+// verified list carries it, or null for one that is not in the list yet: the
+// boxes then start on what the list says, or on nothing at all.
+//
+// The users and roles come out of the VERIFIED list and not out of an action of
+// the API, for the same reason fillListed does: what an admin is about to sign
+// has to be built from the version the shell checked. It is also what makes the
+// result valid without a second check - trust.List.Validate refuses a root list
+// naming a user or a role the list does not have.
+function rootPicker(l, node) {
+  const allUsers = Array.isArray(l?.users) ? l.users.filter(isObj) : [];
+  const allRoles = Array.isArray(l?.roles) ? l.roles.filter(isObj) : [];
+  const nowUsers = node !== null && Array.isArray(node.rootUsers) ? node.rootUsers : [];
+  const nowRoles = node !== null && Array.isArray(node.rootRoles) ? node.rootRoles : [];
+  const fs = el("fieldset", "role rootpick");
+  fs.append(el("legend", null, "Aufgaben mit Systemrechten"));
+  fs.append(el("p", "hint", "Wer hier einen Haken hat, darf auf diesem Server Apps "
+    + "einrichten, entfernen, Daten löschen und das Terminal öffnen."));
+  const users = new Map();
+  const roles = new Map();
+  const opts = el("div", "opts");
+  for (const u of allUsers) {
+    if (typeof u.id !== "string" || typeof u.name !== "string") continue;
+    opts.append(pickBox(users, u.id, u.name, nowUsers.includes(u.id),
+      "Benutzer " + u.name + " darf Aufgaben mit Systemrechten ausführen"));
+  }
+  fs.append(el("p", "sub", "Einzelne Personen"), opts);
+  const ropts = el("div", "opts");
+  for (const r of allRoles) {
+    if (typeof r.name !== "string") continue;
+    ropts.append(pickBox(roles, r.name, r.name, nowRoles.includes(r.name),
+      "Rolle " + r.name + " darf Aufgaben mit Systemrechten ausführen"));
+  }
+  fs.append(el("p", "sub", "Ganze Rollen"), ropts,
+    el("p", "hint", "Eine Rolle gilt auch für alle, die ihr später beitreten."));
+  return {
+    el: fs,
+    // Sorted, so that the same choice always writes the same bytes, and
+    // without duplicates by construction - one box per id and per role name.
+    chosen() {
+      return {
+        rootUsers: [...users.entries()].filter(([, cb]) => cb.checked).map(([id]) => id).sort(plain),
+        rootRoles: [...roles.entries()].filter(([, cb]) => cb.checked).map(([r]) => r).sort(plain),
+      };
+    },
+  };
+}
+
+function pickBox(into, value, label, on, aria) {
+  const lab = el("label", "opt");
+  const cb = el("input", null);
+  cb.type = "checkbox";
+  cb.checked = on;
+  // The legend of a fieldset is not part of a checkbox's name, so the name
+  // carries what the tick means on its own.
+  cb.setAttribute("aria-label", aria);
+  lab.append(cb, el("span", "t", label));
+  into.set(value, cb);
+  return lab;
+}
+
+const isObj = (x) => x !== null && typeof x === "object";
+
+// same compares two sorted lists of strings, so that a question answered
+// without a change writes nothing: a version that changes nothing still costs
+// a signature and a new number in the chain.
+const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+// rootWho says in one line who may run root tasks on a controller, with the
+// names of the users rather than their ids: an id in a row is a row nobody can
+// read.
+function rootWho(l, node) {
+  const us = (Array.isArray(node.rootUsers) ? node.rootUsers : []).map((id) => userOf(l, id));
+  const rs = Array.isArray(node.rootRoles) ? node.rootRoles : [];
+  if (us.length + rs.length === 0) return NO_ROOT;
+  const parts = [...us];
+  for (const r of rs) parts.push("Rolle " + r);
+  return "Mit Systemrechten: " + parts.join(", ");
+}
+
+// tooManyRoot says why a choice cannot be written, and "" when it can. The
+// limit is the contract's (Go: MaxRoot per list, trust.MAX_ROOT here), and it
+// is said HERE rather than left to buildNextVersion: a refusal of the whole
+// version reads as a sentence about the list, and nobody can act on that.
+function tooManyRoot(want) {
+  if (want.rootUsers.length > trust.MAX_ROOT || want.rootRoles.length > trust.MAX_ROOT) {
+    return "Es sind zu viele Haken gesetzt. Mehr als " + trust.MAX_ROOT
+      + " Personen und mehr als " + trust.MAX_ROOT + " Rollen kann ein Server nicht führen.";
+  }
+  return "";
+}
+
+function userOf(l, id) {
+  const u = (Array.isArray(l?.users) ? l.users : []).find((x) => isObj(x) && x.id === id);
+  return u && typeof u.name === "string" ? u.name : String(id);
+}
+
 // ------------------------------------------------------------------- the app
 
 class Users {
   constructor(win, ctx) {
+    this.ctx = ctx ?? null;
+    // The sentence to carry over the next build of the Server panel.
+    this.keep = "";
     this.link = ctx?.link ?? null;
     this.trust = ctx?.trust ?? null;
     this.session = ctx?.session ?? null;
@@ -262,6 +409,11 @@ class Users {
     // app stood installed. Whoever narrows the API's list again breaks THIS
     // page, not just the menu.
     this.apps = Array.isArray(ctx?.apps) ? ctx.apps : [];
+    // AND READ AGAIN AT EVERY BUILD. ctx.apps answers the desktop's list as it
+    // stands now (shell/desktop.js, appCtx), and a panel that is built again
+    // because an app came or went must not build itself from the list that was
+    // there when this window opened.
+    this.appsNow = () => (Array.isArray(this.ctx?.apps) ? this.ctx.apps : this.apps);
     this.users = null; // ngc.users/list, once, shared by the log and the question
     this.log = [];
     this.loaded = new Set();
@@ -296,15 +448,54 @@ class Users {
       this.panels.append(p);
       this.panel.set(id, p);
     }
-    this.root.append(this.tabs, this.panels);
+    // Since when these screens have been standing, and the one button that
+    // asks again. Every panel here is built from answers of the API that
+    // another admin can change, and no message of the session link says so: a
+    // screen that can be old must not look fresh (shell/stale.js).
+    this.fresh = freshness(() => this.rebuild(this.current));
+    this.root.append(this.tabs, this.fresh.el, this.panels);
     win.body.append(this.root);
+
+    // WHAT THE PERSON WALKED INTO (report of 19.-21.10.2026): a right granted
+    // here and a server taken in here showed up only after Ctrl+F5, because
+    // every panel was built exactly once (this.loaded) and nothing ever asked
+    // it to be built again. Now whoever changed something says which STATE
+    // moved, and the panels that show that state are built again.
+    //
+    // A SERVER NEEDS NO LINE OF ITS OWN: joinNode writes a new version of the
+    // trust list and follows it, which is a change of the list, and the
+    // desktop turns every settled version into all four topics
+    // (shell/desktop.js, startDesktop). So the machinery that was already
+    // there carries it; only the ear was missing.
+    const ch = ctx?.changed ?? null;
+    this.off = [];
+    if (ch !== null) {
+      this.off.push(ch.on(NODES, () => this.rebuild("servers")));
+      this.off.push(ch.on(USERS, () => this.rebuild("users")));
+      this.off.push(ch.on(RIGHTS, () => this.rebuild("rights")));
+      // An app that came or went changes which rights there are to hand out.
+      this.off.push(ch.on(APPS, () => this.rebuild("rights")));
+    }
+
     this.show(TABS[0][0]);
   }
 
   destroy() {
     this.dead = true;
     this.abort.abort();
+    this.fresh?.stop();
+    for (const off of this.off ?? []) off();
+    this.off = [];
     this.closeAsk();
+  }
+
+  // rebuild draws one panel again. A panel that was never opened is left
+  // alone: it is built from scratch when it is shown, so there is nothing
+  // stale in it to replace, and asking the API for a screen nobody is looking
+  // at would be a question for nothing.
+  rebuild(id) {
+    if (this.dead || !this.loaded.has(id)) return;
+    this.build(id);
   }
 
   // ---- tabs ---------------------------------------------------------------
@@ -340,6 +531,7 @@ class Users {
   }
 
   build(id) {
+    this.fresh?.done();
     const p = this.panel.get(id);
     if (id === "users") this.buildUsers(p);
     if (id === "rights") this.buildRights(p);
@@ -413,6 +605,7 @@ class Users {
     // stands on screen that the contract would refuse on the way out.
     const known = new Set();
     for (const r of roles) for (const right of r.rights) known.add(right);
+    this.apps = this.appsNow();
     for (const a of this.apps) {
       if (!validAppID(a.id) || coreApp(a.id)) continue;
       for (const act of [core.RIGHT_USE, ...(Array.isArray(a.actions) ? a.actions : [])]) {
@@ -490,6 +683,13 @@ class Users {
         await this.call(core.ACT_SET_RIGHTS, { role: r.role, rights: want });
         r.rights = want;
         text(msg, "Die Rechte der Rolle »" + r.role + "« sind gespeichert.");
+        // THE START MENU. A right that was just granted is what decides
+        // whether an app stands in it (core.ActApps answers what this user may
+        // use), and until this line it did not move until the page was
+        // reloaded. The rights panel is NOT asked to build itself again from
+        // here: the sentence above it is the answer to the click, and the
+        // boxes already show what was sent.
+        this.ctx?.changed?.tell(RIGHTS);
       },
       failed: "Die Rechte konnten nicht gespeichert werden.",
       msg,
@@ -510,7 +710,14 @@ class Users {
   // ---- Server -------------------------------------------------------------
   buildServers(p) {
     clear(p);
-    p.append(el("h3", null, "Server"));
+    const top = el("p", "note", "");
+    top.setAttribute("role", "status");
+    // What was said right before this panel was built again. Taking a server
+    // in replaces this whole panel - that is the point - and the sentence that
+    // confirmed it would go with it. So it is carried over, once.
+    text(top, this.keep ?? "");
+    this.keep = "";
+    p.append(el("h3", null, "Server"), top);
     const pending = section("pending", "Wartende Server",
       "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
     const pendapi = section("pendapi", "Wartende API-Server",
@@ -671,6 +878,13 @@ class Users {
       const api = n.kind === trust.NODE_API;
       r.append(el("span", "nm", n.id), el("span", "kind", api ? "API-Server" : "Server"));
       if (api) r.append(chars(n.url));
+      // Who may run root tasks there is shown in the row and not only in the
+      // question: a server that nobody may set up an app on looks exactly like
+      // a working one until somebody tries, and then the refusal says nothing
+      // about rights (measured 19.10.2026: "Das hat der Rechner nicht
+      // angenommen.", no sentence of the server, no log line anywhere).
+      const says = api ? null : el("span", "root", rootWho(l, n));
+      if (says !== null) r.append(says);
       if (why === "") {
         // Only an API server has an address: the contract keeps a controller's
         // url empty (Go: trust.List.Validate refuses a controller with one),
@@ -679,6 +893,15 @@ class Users {
         if (api) {
           const b = button("b", "Adresse ändern", "Adresse von " + n.id + " ändern");
           b.addEventListener("click", () => this.askAddress(n, b, box));
+          r.append(b);
+        } else {
+          // THE WAY BACK FROM A SERVER TAKEN IN WRONG. A controller whose root
+          // lists name nobody could do nothing a root task needs, for ever:
+          // nothing in this interface could write those two lists after the
+          // take-up, and re-pairing the server is not a repair anybody should
+          // need for a tick that was missing.
+          const b = button("b", "Systemrechte ändern", "Systemrechte auf " + n.id + " ändern");
+          b.addEventListener("click", () => this.askRoot(n, b, box, says));
           r.append(b);
         }
         // The last API server is not offered: an installation whose list names
@@ -761,6 +984,78 @@ class Users {
         from.disabled = true;
       },
       failed: "Die Adresse konnte nicht geändert werden.",
+      msg: box.querySelector(".note"),
+    });
+  }
+
+  // askRoot changes who may run root tasks on a controller: the other half of
+  // the take-up, and the half that was missing. The boxes start on what the
+  // verified list says, so the question shows the state it is about, and the
+  // change is written into the next version like every other change of the
+  // list - signed by the person, checked by the shell before it is sent.
+  //
+  // THE KEYS ARE NOT TOUCHED. As with an address, this is a small change: the
+  // server keeps every key it has, and only who may tell it to do something as
+  // root moves. What it is NOT is cosmetic - this is the right to install and
+  // remove software on that machine and to open a terminal on it.
+  askRoot(n, from, box, says) {
+    const l = this.trust?.current?.()?.list;
+    if (!l) {
+      Users.say(box, "Die Vertrauensliste liegt noch nicht vor.");
+      return;
+    }
+    const pick = rootPicker(l, n);
+    const was = {
+      rootUsers: [...(Array.isArray(n.rootUsers) ? n.rootUsers : [])].sort(plain),
+      rootRoles: [...(Array.isArray(n.rootRoles) ? n.rootRoles : [])].sort(plain),
+    };
+    this.ask({
+      title: "Systemrechte auf »" + n.id + "« ändern",
+      body: [
+        el("p", null, "Wer hier steht, darf auf diesem Server Apps einrichten und entfernen, "
+          + "Daten löschen und das Terminal öffnen."),
+        el("p", null, rootWho(l, n)),
+        pick.el,
+        el("p", null, "Die Schlüssel des Servers bleiben dieselben. Es ändert sich nur, "
+          + "wer ihm Aufgaben mit Systemrechten geben darf."),
+      ],
+      go: "Systemrechte ändern",
+      from,
+      run: async () => {
+        const want = pick.chosen();
+        const why = tooManyRoot(want);
+        if (why !== "") {
+          Users.say(box, why);
+          return;
+        }
+        if (same(want.rootUsers, was.rootUsers) && same(want.rootRoles, was.rootRoles)) {
+          Users.say(box, "Daran hat sich nichts geändert. Es wurde nichts geschrieben.");
+          return;
+        }
+        await this.joinNode((next) => {
+          const node = next.nodes.find((x) => isObj(x) && x.id === n.id);
+          // The version is built from the list the shell verified, so the node
+          // is there; a list it is not in is not the one this screen was drawn
+          // from.
+          if (!node) throw new Error("Dieser Server steht nicht mehr in der Vertrauensliste.");
+          // Set, not merged: what the person ticked IS the answer, and the
+          // version is built from the list in force - so a neighbour who
+          // changed this node in between is overwritten by a choice that was
+          // made with a sentence in front of it, not by a stale half of one.
+          node.rootUsers = want.rootUsers;
+          node.rootRoles = want.rootRoles;
+        });
+        Users.say(box, "Die Systemrechte auf »" + n.id + "« sind geändert.");
+        // The row has to stop saying the old thing: it is the one place a
+        // person reads who may do this, and a line that is now wrong is worse
+        // than no line. It is read out of the version THAT NOW STANDS, never
+        // out of what was just sent - joinNode followed the chain to it.
+        const now = this.trust?.current?.()?.list;
+        const node = now?.nodes?.find((x) => isObj(x) && x.id === n.id);
+        if (says && now && node) text(says, rootWho(now, node));
+        from.disabled = true;
+      },
+      failed: "Die Systemrechte konnten nicht geändert werden.",
       msg: box.querySelector(".note"),
     });
   }
@@ -922,6 +1217,9 @@ class Users {
     }
     const v = this.trust.current();
     const id = nodeID(n.name, v.list);
+    // Nothing is ticked: whom to trust with root on a machine is the owner's
+    // decision, and a default would make it in the one moment nobody looks.
+    const pick = rootPicker(v.list, null);
     this.ask({
       title: "Server »" + n.name + "« aufnehmen",
       body: [
@@ -930,18 +1228,37 @@ class Users {
         el("p", null, "In der Liste heißt er: " + id),
         el("p", "fp mono", seen.fp),
         el("p", null, "Nehmen Sie ihn nur auf, wenn genau dieser Fingerabdruck auf dem Server steht."),
+        pick.el,
+        el("p", null, "Ohne einen Haken kann auf diesem Server niemand eine App einrichten. "
+          + "Das lässt sich später unter »Eingetragene Server« ändern."),
       ],
       go: "Server aufnehmen",
       from,
       run: async () => {
+        const want = pick.chosen();
+        const why = tooManyRoot(want);
+        if (why !== "") {
+          Users.say(box, why);
+          return;
+        }
         await this.joinNode((next) => {
           next.nodes.push({
             id, kind: trust.NODE_CONTROLLER, name: n.name, noise: n.key,
             sign: new Uint8Array(0), url: "", tls: new Uint8Array(0),
-            rootUsers: [], rootRoles: [],
+            // WHAT THE PERSON TICKED, and nothing of this file's own: these
+            // two lists are the whole reason a taken-in controller can do
+            // anything at all (trust.MayRoot), and a surface that filled them
+            // in by itself would be deciding who gets root on a machine.
+            rootUsers: want.rootUsers, rootRoles: want.rootRoles,
           });
         });
-        Users.say(box, "Der Server »" + n.name + "« ist aufgenommen.");
+        this.keep = "Der Server »" + n.name + "« ist aufgenommen. "
+          + (want.rootUsers.length + want.rootRoles.length === 0
+            ? "Auf diesem Server darf noch niemand Apps einrichten."
+            : "Aufgaben mit Systemrechten dürfen dort: "
+              + [...want.rootUsers.map((uid) => userOf(v.list, uid)),
+                ...want.rootRoles.map((r) => "Rolle " + r)].join(", ") + ".");
+        Users.say(box, this.keep);
         from.disabled = true;
       },
       failed: "Der Server konnte nicht aufgenommen werden.",
@@ -970,10 +1287,17 @@ class Users {
         await this.joinNode((next) => {
           next.nodes.push({
             id: n.node, kind: trust.NODE_API, name: n.node, noise: n.noise,
+            // BOTH STAY EMPTY HERE, and not by oversight: an API node may
+            // carry no root lists at all (Go: ValidAPINode asks for
+            // len(RootUsers)+len(RootRoles) == 0), and trust.MayRoot only ever
+            // looks at a node of kind controller. A version that named anybody
+            // here would be refused as invalid - so this must NOT be made to
+            // match askJoin, which asks the person whom to trust.
             sign: n.sign, url: n.url, tls: n.tls, rootUsers: [], rootRoles: [],
           });
         });
-        Users.say(box, "Der Server »" + n.node + "« ist aufgenommen.");
+        this.keep = "Der Server »" + n.node + "« ist aufgenommen.";
+        Users.say(box, this.keep);
         from.disabled = true;
       },
       failed: "Der Server konnte nicht aufgenommen werden.",
@@ -1156,9 +1480,18 @@ class Users {
         return;
       }
       if (e.key !== "Tab") return;
-      // Two stops, and Tab walks between them. Anything outside the question
-      // is behind it and must not be reachable while it stands.
-      const stops = [no, yes].filter((b) => !b.disabled);
+      // EVERY STOP OF THE QUESTION, IN THE ORDER IT STANDS, and Tab walks
+      // between them. Anything outside the question is behind it and must not
+      // be reachable while it stands.
+      //
+      // This used to be [no, yes] and nothing else, which was true as long as
+      // the body of a question was only sentences. It no longer is: the
+      // question that gives root on a server is a list of checkboxes, and
+      // under the old two stops not one of them could be reached with the
+      // keyboard - the trap took Tab away and gave it to a button. A question
+      // that can only be answered with a mouse is a question this file's own
+      // rules refuse. The address field had the same hole and is the same fix.
+      const stops = [...box.querySelectorAll("input,button")].filter((b) => !b.disabled);
       if (stops.length === 0) return;
       const i = stops.indexOf(document.activeElement);
       e.preventDefault();

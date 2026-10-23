@@ -381,6 +381,52 @@ func (a *apiSide) data(num uint32, b []byte) {
 	a.send(wire.Frame{Type: wire.TypeData, Channel: num, Payload: b})
 }
 
+// dataPaid sends one DATA frame on num and keeps to the credit this side was
+// granted: where the credit is short it first waits for the GRANTs the
+// controller sends back as the installer reads. It gives back what is left.
+//
+// WHY A TEST HAS TO PAY. The contract bounds one DATA frame by the credit the
+// other side granted - link.Channel.route refuses "n > ch.in" with E_PROTOCOL -
+// so pushing a whole package and trusting the credit to come back in time is a
+// race. It was a measured one: 5 of 20 runs on Linux under load and 4 of 20 on
+// Windows ended with "Ungültige Nachricht" instead of ok, and 0 of 20 without
+// load (V1.2 point 70).
+//
+// Waiting here does not weaken what such a case holds, it sharpens it. If the
+// credit never came back, this wait runs into the thirty seconds of answer and
+// the case is red with a reason that names the credit - and preventing exactly
+// that is what chanReader.give is for. Before, a broken give and a busy
+// machine were the same red.
+//
+// It reports with t.Error and gives up, like everything else on this side: it
+// runs in a goroutine of the test server, where t.Fatal would leave the test
+// standing.
+func (a *apiSide) dataPaid(num uint32, b []byte, credit int64) int64 {
+	a.t.Helper()
+	for credit < int64(len(b)) {
+		f, err := a.next()
+		if err != nil {
+			a.t.Errorf("waiting for a GRANT on channel %d, %d bytes of credit left and %d to send: %v",
+				num, credit, len(b), err)
+			return credit
+		}
+		if f.Type != wire.TypeGrant || f.Channel != num {
+			a.t.Errorf("the controller sent %v on channel %d while the API still owed bytes, want a GRANT on %d",
+				f.Type, f.Channel, num)
+			return credit
+		}
+		more, handshake, err := wire.ParseGrant(f.Payload)
+		// A handshake belongs in the FIRST grant only, which open read.
+		if err != nil || len(handshake) != 0 {
+			a.t.Errorf("GRANT on channel %d: %v, handshake %d bytes", num, err, len(handshake))
+			return credit
+		}
+		credit += int64(more)
+	}
+	a.data(num, b)
+	return credit - int64(len(b))
+}
+
 // eof sends the EOF of the API on num.
 func (a *apiSide) eof(num uint32) { a.send(wire.Frame{Type: wire.TypeEOF, Channel: num}) }
 
