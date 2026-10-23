@@ -156,6 +156,40 @@ test("the Apps tab shows an app only out of a catalog its store really signed", 
   await expect(page.locator(".storepanel")).not.toContainText("Der Katalog dieses Stores ist nicht echt.");
 });
 
+// The two sentences that must not be the same one. Point 65 of V1.2 is the
+// measurement behind this pair: on a freshly installed plant the catalog was
+// REAL (sign.Verify -> nil, the same key id on both sides) and the store still
+// said "nicht echt", because the row the hourly round writes was not there yet
+// and the empty case fell into the else branch meant for a forgery. A person
+// who reads "nicht echt" has nothing to do; a person who reads "noch nicht
+// geholt" has: wait, or look at Quellen.
+//
+// Both halves are measured HERE, one after the other in one run, because
+// either alone proves nothing: a case that only shows the new sentence would
+// also pass if the shell said it for a forged catalog too, and a case that
+// only shows the old one would also pass if nothing had changed at all.
+const NOT_FETCHED = "Der Katalog dieses Stores ist noch nicht geholt.";
+const NOT_REAL = "Der Katalog dieses Stores ist nicht echt.";
+
+test("an unfetched catalog says so, and a forged one still says it is not real", async ({ page }) => {
+  // 1. no row yet: the API answers E_NOTFOUND (appstore.CodeFor over
+  //    dbapi.ErrNotFound) and the store says what there is to do about it.
+  await store(page, { noCatalog: true });
+  await tab(page, "Apps").click();
+  await expect(page.locator(".storepanel")).toContainText(NOT_FETCHED);
+  await expect(page.locator(".storepanel")).not.toContainText(NOT_REAL);
+  await expect(page.locator(".approw")).toHaveCount(0);
+
+  // 2. the same shell, the same tab, a catalog signed by a key that is not
+  //    the store's: the old sentence, unchanged. The else branch keeps what
+  //    it names.
+  await store(page, { foreignCatalog: true });
+  await tab(page, "Apps").click();
+  await expect(page.locator(".storepanel")).toContainText(NOT_REAL);
+  await expect(page.locator(".storepanel")).not.toContainText(NOT_FETCHED);
+  await expect(page.locator(".approw")).toHaveCount(0);
+});
+
 test("a catalog under a foreign signature shows the sentence and not one app", async ({ page }) => {
   // The store's entry in the trust list stays as it is; only the key that
   // signed the catalog is another one. That is the whole attack: an answer

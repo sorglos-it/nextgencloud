@@ -103,12 +103,40 @@ func EnsureData(ctx context.Context, app string, u User, serverKey []byte) (stri
 		return "", err
 	}
 	dir := DataDirOf(app)
-	// 0700 from the start, not after the chown: between the two the directory
-	// exists, and for that moment it must not be readable by anyone else.
-	if err := paths.mkdirAll(paths.appData, 0o700); err != nil {
+	// config.AppDataDir itself - the directory ABOVE the app's - stays root's
+	// and 0711, the same line config.RunDir holds (EnsureRun). The number is
+	// not the one below it and means something else: every app's user has to
+	// ENTER this directory, because its own data directory lies in it and
+	// podman runs as that user with that directory as its home - it keeps the
+	// image store of the app in there. 0700 refuses even the entering, and
+	// then podman fails on the first look at its own directory and the whole
+	// activation is taken back. Measured on 20.10.2026 on the Debian machine:
+	// with 0700 here, "podman load" of the terminal app answered EACCES on
+	// newfstatat("/var/lib/ngc/apps/org.sorglos.terminal").
+	//
+	// 0711 and not 0755 because the list of installed apps is nothing a user
+	// of this machine needs to read off a directory: with 0711 a foreign user
+	// reaches the directory he was given the name of and lists none of the
+	// others (measured on the same machine: stat on a subdirectory answers,
+	// ls on the parent answers EACCES).
+	if err := paths.mkdirAll(paths.appData, 0o711); err != nil {
+		return "", err
+	}
+	// And it is tightened as well, not only made - the same reason EnsureRun
+	// has for its line: os.MkdirAll leaves the mode of a directory that is
+	// already there alone, so every installation that ran with the 0700 above
+	// has a parent directory that stays 0700 for ever and no app would ever
+	// start. It is the widening that matters here, which is why the call is
+	// not conditional: what stands there is not believed, it is set.
+	if err := paths.chmod(paths.appData, 0o711); err != nil {
 		return "", err
 	}
 	made := false
+	// 0700 for the app's OWN directory, from the start and not after the
+	// chown: between the two the directory exists, and for that moment it must
+	// not be readable by anyone else. Nobody but the app's user may ever enter
+	// it - it is where everything the app keeps lies, and the encryption below
+	// it protects a stolen disk, not a neighbour on this machine.
 	if err := paths.mkdir(dir, 0o700); err != nil {
 		if !os.IsExist(err) {
 			return "", err
