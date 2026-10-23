@@ -291,15 +291,40 @@ fi
 # is no admin, no trust list, and the API itself says so.
 # ---------------------------------------------------------------------------
 offen=$(auf "$API1" "test -s /var/lib/ngc/setup-code && echo offen || echo getan")
+
+# Station 3 has a half that IS decidable from a machine once a controller
+# stands there: a pairing leaves controller.json (config.SaveController, 0600
+# and root's) and the marker /var/lib/ngc/controller/paired behind, and the
+# service has to carry it. That is asked first, so a paired controller is not
+# reported as unmeasurable just because the code came from a browser.
+s3="Controller koppeln"
+if auf "$SVC1" "test -s /etc/ngc/controller.json && test -e /var/lib/ngc/controller/paired"; then
+	if [ "$(auf "$SVC1" "systemctl is-active ngc-controller")" = active ]; then
+		cp1=$(auf "$SVC1" "systemctl show -p MainPID --value ngc-controller")
+		sleep 10
+		cp2=$(auf "$SVC1" "systemctl show -p MainPID --value ngc-controller")
+		if [ "$cp1" != "$cp2" ]; then
+			fail 3 "$s3" "ngc-controller on svc-1 restarted during this run (MainPID $cp1 -> $cp2), so it is crash-looping"
+		else
+			pass 3 "$s3" "svc-1 is paired: controller.json and the paired marker are there, ngc-controller.service is active and kept one MainPID ($cp1) over 10 s"
+		fi
+	else
+		fail 3 "$s3" "svc-1 is paired (controller.json and the marker are there) but ngc-controller.service is $(auf "$SVC1" "systemctl is-active ngc-controller"): $(auf "$SVC1" "journalctl -u ngc-controller -n 3 --no-pager | tr '\n' ' '")"
+	fi
+	drei=getan
+else
+	drei=offen
+fi
+
 if [ "$offen" = offen ]; then
 	warum="the first setup has not happened: /var/lib/ngc/setup-code is still there, so this installation has no admin and no trust list yet. Open https://$ZONE in a browser and type the code in"
-	unmeasurable 3 "Controller koppeln" "$warum - the pairing code comes from a signed-in admin"
+	[ "$drei" = getan ] || unmeasurable 3 "$s3" "$warum - the pairing code comes from a signed-in admin"
 	unmeasurable 4 "aufnehmen" "$warum - adopting is a click of an admin"
 	unmeasurable 5 "Systemrechte setzen" "needs station 4"
 	unmeasurable 6 "Katalog da" "$warum; the API says it itself: 'catalogs could not be fetched error=state: no trust list yet' (journalctl -u ngc-api on api-1)"
 	unmeasurable 8 "App erscheint im Menue" "needs station 7, and a second user to show that the rights page offers an app one cannot see yet"
 else
-	unmeasurable 3 "Controller koppeln" "the setup is done, but the pairing code is shown in the browser and read from there - a script cannot be the admin"
+	[ "$drei" = getan ] || unmeasurable 3 "$s3" "no controller is paired yet: the code is shown in the browser (Benutzer und Server -> Server -> Kopplungscode), is good ONCE (dbapi.OncePair) and for 24 hours - a script cannot be the admin that mints it"
 	unmeasurable 4 "aufnehmen" "needs station 3, and then a click through the interface"
 	unmeasurable 5 "Systemrechte setzen" "needs station 4"
 	unmeasurable 6 "Katalog da" "needs a controller that was adopted, so station 4"

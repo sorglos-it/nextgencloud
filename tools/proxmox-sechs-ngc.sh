@@ -351,16 +351,92 @@ web() {
 		printf 'export NGC_CERT_MODE=selfsigned\n'
 		printf 'export NGC_CERT_FILE=\n'
 		printf 'export NGC_KEY_FILE=\n'
-		printf 'export NGC_APIS=%s\n' "$adressen"
-		printf 'export NGC_API_PINS=%s\n' "$pins"
+		# QUOTED, and that is not cosmetic: both answers are LISTS separated by
+		# spaces, and an unquoted "export NGC_APIS=a b" makes the shell read
+		# "b" as a second assignment - "export: `https://api-2...': not a
+		# valid identifier". Measured 24.10.2026: the second API fell out of
+		# the balancer that way while api-trust.pem already held both
+		# certificates, so nothing looked wrong except one BalancerMember.
+		printf 'export NGC_APIS="%s"\n' "$adressen"
+		printf 'export NGC_API_PINS="%s"\n' "$pins"
 	} | datei_hin "$WEB_IP" /root/ngc-web.env 0600
 	auf "$WEB_IP" "set -a; . /root/ngc-web.env; set +a; bash /root/ulh/apps/cli/assets/scripts/ngc-web.sh install" ||
 		fehler "ngc-web install failed - look at the output above"
 	echo "web: ok"
 }
 
+# ------------------------------------------------------------------ controller
+# ngc-controller.sh pairs WHILE it installs, and the pairing code comes out of
+# the browser: "Benutzer und Server" -> Server -> Kopplungscode. A code is
+# good ONCE (dbapi.OncePair) and for 24 hours (tunnel.PairLifetime = 86400),
+# so every server needs its own.
+#
+# The code goes in through the STANDARD INPUT of this script and from there
+# into a 0600 file on the machine. It never stands in an argument:
+# /proc/<pid>/cmdline is readable by every local user without hidepid, and
+# the script of ulh keeps the same promise where it hands the code to
+# "ngc-controller pair".
+#
+# Usage:  printf '%s' 'ngc-pair:...' | proxmox-sechs-ngc.sh controller svc-1
+controller() {
+	local name=$1 ip rollen code
+	case $name in
+	web-api-1)
+		ip=$API1_IP
+		rollen="web api"
+		;;
+	api-2)
+		ip=$API2_IP
+		rollen="api"
+		;;
+	db-1)
+		ip=$DB_IP
+		rollen="db"
+		;;
+	svc-1)
+		ip=$SVC1_IP
+		rollen="services"
+		;;
+	svc-2)
+		ip=$SVC2_IP
+		rollen="services"
+		;;
+	*) fehler "controller takes one of: web-api-1 api-2 db-1 svc-1 svc-2" ;;
+	esac
+	code=$(cat)
+	case $code in
+	ngc-pair:*) ;;
+	*) fehler "that is no pairing code - it begins with 'ngc-pair:' (a join code, 'ngc-join:', belongs to ngc-api and not here)" ;;
+	esac
+	{
+		printf 'export NGC_NAME=%s\n' "$name"
+		printf 'export NGC_PAIR_CODE=%s\n' "$code"
+		printf 'export NGC_ROLES=%s\n' "$rollen"
+		if [ "$name" = db-1 ]; then
+			# Role db carries the migration in controller.json, and that is
+			# the account which may change the schema - a different one from
+			# the db_user of api.json, which may not (measured: "CREATE
+			# command denied to user 'ngc'").
+			printf 'export NGC_MIGRATE_NODES=db-1.%s:3306\n' "$ZONE"
+			printf 'export NGC_MIGRATE_NAME=ngc\n'
+			printf 'export NGC_MIGRATE_USER=ngc_migrate\n'
+			auf "$DB_IP" "grep '^export NGC_PASSWORD_MIGRATE=' $ANTWORTEN" |
+				sed 's/NGC_PASSWORD_MIGRATE=/NGC_MIGRATE_PASSWORD=/'
+			printf 'export NGC_MIGRATE_CA=/etc/ngc/db-ca.crt\n'
+		fi
+	} | datei_hin "$ip" /root/ngc-controller.env 0600
+	if [ "$name" = db-1 ] || [ "$name" = web-api-1 ] || [ "$name" = api-2 ]; then
+		[ -s "$ARBEIT/db-ca.crt" ] || fehler "no $ARBEIT/db-ca.crt - run 'db' first"
+		datei_hin "$ip" /etc/ngc/db-ca.crt 0644 <"$ARBEIT/db-ca.crt"
+	fi
+	auf "$ip" "set -a; . /root/ngc-controller.env; set +a; bash /root/ulh/apps/cli/assets/scripts/ngc-controller.sh install; rc=\$?; shred -u /root/ngc-controller.env 2>/dev/null || rm -f /root/ngc-controller.env; exit \$rc" ||
+		fehler "ngc-controller install failed on $name - look at the output above"
+	printf 'controller: %s is paired (roles: %s)\n' "$name" "$rollen"
+}
+
 case ${1:-} in
 laden) laden ;;
+controller) controller "${2:-}" ;;
 ulh) ulh ;;
 store) store ;;
 db) db ;;
