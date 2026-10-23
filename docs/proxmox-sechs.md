@@ -293,6 +293,48 @@ Gemessen am 24.10.2026 auf der verteilten Anlage:
   Fingerabdruck, der echte `releaseKey`, und als Store
   `https://store.ngc.mein.lan` mit unserem Schlüssel.
 
+## Nach der Ersteinrichtung — was dabei noch aufgefallen ist
+
+Thomas hat am 24.10.2026 die Ersteinrichtung im Browser gemacht, svc-1
+gekoppelt und api-2 beitreten lassen. Damit sind Station 3 und D3 gemessen
+(der Lauf geht von 9 auf 6 unmessbar). Dabei kamen vier weitere Dinge heraus.
+
+**6. Der Anker außerhalb der Datenbank liegt auf den API-Servern gar nicht.**
+`advanceAnchor` in `apps/server-api/classes/state/trust.go` schreibt
+ausdrücklich nur **über eine Datei, die schon da ist** („Only over a file that
+is already there"), und auf einem API-Knoten legt sie niemand an — `ngc-api.sh`
+tut es nicht. Gemessen: auf api-1 und api-2 gibt es `/etc/ngc/trust-anchor.json`
+nicht, während die Vertrauensliste schon auf Fassung 3 steht. Das Versprechen
+„der Anker liegt außerhalb der Datenbank" hält auf einer frischen Anlage also
+für die API niemand. Der Kommentar an der Stelle beschreibt genau diese Lage
+selbst: ein Anker, den nur eine Kopplung setzt, „protects nobody".
+
+**7. Der Anker des Controllers bleibt stehen.** svc-1 hat die Datei — mit
+`"seq": 1`, während die Liste auf 3 steht. Gesetzt wurde sie bei der Kopplung
+und seither nicht bewegt.
+
+**8. Ein selbst betriebener Laden muss die Kennung `global` tragen.**
+`ngc-api.sh` nimmt `store_url` und `store_key` und trägt den Laden unter der
+Kennung **`global`** ein (Zeile `store.global` in `ngc_blob`). `ngc-store
+catalog` nimmt die Kennung dagegen als Angabe. Wer dort etwas anderes schreibt
+— wir zuerst `ngc-sechs` —, bekommt den Katalog abgelehnt, und die Anlage sagt
+nur: „Der Katalog ist fehlerhaft oder gehört zu einem anderen Store."
+(`store.VerifyCatalog`, `c.Store != st.ID`). Welche der beiden Kennungen nicht
+passt, steht nirgends.
+
+**9. Umbenennen lässt `ngc-store catalog` mit einer falschen Meldung stehen.**
+Nach dem Wechsel der Kennung antwortet es „the catalog needs a higher sequence
+number than the last one" — bei **jeder** Nummer. `lastSeq` prüft den Katalog,
+der schon im Ordner liegt, mit der **neuen** Kennung; das schlägt fehl, und der
+Fehler kommt als `ErrSeq` heraus. Abhilfe: die alte `catalog.json` löschen,
+dann neu unterschreiben.
+
+Außerdem gemessen, ohne Wertung: der Tunnel des Controllers endet alle rund
+420 Sekunden mit `link: the API cannot be reached` und steht sofort wieder —
+und die Katalogrunde schlägt **erst eine Stunde nach dem Start** zum ersten Mal
+(`server.go`: „The first beat is an hour after the start and not at the start",
+mit Begründung).
+
 ## Was der Erstlauf verteilt NICHT durchläuft, und warum
 
 `bash tools/erstlauf-verteilt.sh` → **0 rot, 9 unmessbar, Ausstieg 2**, keine
