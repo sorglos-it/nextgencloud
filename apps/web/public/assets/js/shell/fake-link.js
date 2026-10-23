@@ -51,6 +51,8 @@ import { encodeList, hash as listHash, parseList, parseSigned, validStore } from
 import { deriveSeed, publicFromSeed } from "../contracts/proof.js";
 import { packageUI } from "../contracts/pack.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
+import { ChannelError } from "../net/channel.js";
+import { CODES } from "../contracts/wire.js";
 
 const enc = new TextEncoder();
 
@@ -670,7 +672,16 @@ export async function fakeWorld() {
       return enc.encode(JSON.stringify({ seq: next.seq }));
     },
     "ngc.store/sources": async () => enc.encode(JSON.stringify(or("sources", SOURCES))),
-    "ngc.store/catalog": async () => await catalogFor(uiHashes()),
+    // knob noCatalog: the API has no catalog row for this store yet, which is
+    // every installation for the first hour (V1.2 point 66). The real
+    // dispatcher answers that with E_NOTFOUND out of appstore.CodeFor over
+    // dbapi.ErrNotFound, and the error the shell catches is the link's own
+    // ChannelError - the same class and the same code the wire builds, not a
+    // shape of the test's own.
+    "ngc.store/catalog": async () => {
+      if (knobs.noCatalog === true) throw new ChannelError(CODES.NOTFOUND, "");
+      return await catalogFor(uiHashes());
+    },
     "ngc.store/installed": async () => enc.encode(JSON.stringify(or("installed", INSTALLED))),
     "ngc.store/updates": async () => enc.encode(JSON.stringify(or("updates", UPDATES))),
     "ngc.store/install-key": async () => enc.encode(JSON.stringify(installKey)),

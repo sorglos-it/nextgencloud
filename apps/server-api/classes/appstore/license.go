@@ -296,8 +296,23 @@ func (st *Stores) UsersAllowed(ctx context.Context, app string) (int, bool, erro
 		return 0, false, err
 	}
 	// The right of an app belongs to a role, and a user holds it through a
-	// role; being an admin grants no app right (rights.Check), so the roles
-	// that hold it are the whole answer.
+	// role, so the ROWS are what is counted here.
+	//
+	// An admin holds the right of every installed app WITHOUT a row
+	// (rights.Of, adminApps), and that right is deliberately not a seat. The
+	// count answers what the vendor is paid for, and the implicit right
+	// answers something else: that an installed app is reachable at all and
+	// that its rights can be handed out. Admins are the people who installed
+	// the app and can deactivate and uninstall it, their number is in the
+	// trust list and no admin can raise it alone, so what this leaves open is
+	// bounded by that number.
+	//
+	// The other reading is defensible and is one line -- holders[
+	// trust.RoleAdmin] = true -- and it was measured before it was dropped:
+	// the fixture carries two admins, so a licence for five then refused the
+	// sixth user at five ordinary users (7 > 5). An installation would lose
+	// one seat per admin on every paid app, which is a change to what a
+	// licence is worth, and that is not this change's subject.
 	use := app + "/" + core.RightUse
 	holders := map[string]bool{}
 	for _, r := range all {

@@ -616,7 +616,21 @@ func TestTheShellsExitCodeComesBack(t *testing.T) {
 //
 // What it holds: a channel that breaks ends the terminal with a failure and
 // without waiting. The number is independent of LastWord - a shell told to
-// "sleep 1" could not have finished in under a second either way.
+// "sleep 30" could not have finished in under five seconds either way.
+//
+// THE GAP IS THE GUARD, not the bound, and it was too narrow until
+// 23.10.2026: the shell slept ONE second and the bound was ONE second, so
+// the two sides of the decision were the same number and two milliseconds of
+// load decided it. Measured in CI on 21.10.2026, the root job: 1.002616831s
+// against a bound of 1s - missed by 2.6 ms, with nothing wrong.
+//
+// Raising the bound alone would have taken the guard away: at five seconds a
+// run that really waited out "sleep 1" would have passed. So the SLEEP grew
+// with it, to the thirty seconds the test above already uses. Now a correct
+// end lands in milliseconds, a waiting one cannot come back before thirty
+// seconds, and the bound sits in between with five seconds of slack for a
+// busy machine. The sleeping shell costs nothing when the code is right: the
+// fault kills the session group at once and the sleep dies with it.
 //
 // WHAT IT DOES NOT HOLD, and the attempt is written down rather than hidden:
 // the branch that makes only a CLEAN end wait (pty_linux.go, "if first ==
@@ -641,7 +655,7 @@ func TestTheShellsExitCodeComesBack(t *testing.T) {
 func TestAFaultEndsTheTerminalAtOnce(t *testing.T) {
 	skipWithoutPTY(t)
 	goodEnv(t)
-	in := append(keys([]byte("sleep 1\n")), keys([]byte("exit\n"))...)
+	in := append(keys([]byte("sleep 30\n")), keys([]byte("exit\n"))...)
 	var errOut bytes.Buffer
 	start := time.Now()
 	code := run(context.Background(), bytes.NewReader(in),
@@ -650,10 +664,17 @@ func TestAFaultEndsTheTerminalAtOnce(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit 0 although the channel broke, after %v, stderr %q", took, errOut.String())
 	}
-	if took > time.Second {
-		t.Fatalf("it took %v: the fault waited for the shell instead of ending the terminal", took)
+	if took > faultWithin {
+		t.Fatalf("it took %v: the fault waited for the shell instead of ending the terminal (it sleeps 30s, so a wait cannot come back before that)", took)
 	}
 }
+
+// faultWithin is how long the terminal may take to end on a broken channel.
+// It is a bound on the MACHINE and not on the decision: the decision is made
+// by the gap to the thirty seconds the shell sleeps, and this number only has
+// to stay far below that while leaving a loaded runner room. See the comment
+// on TestAFaultEndsTheTerminalAtOnce for what one second cost.
+const faultWithin = 5 * time.Second
 
 // holdOpen hands out what it was given and then blocks instead of answering
 // EOF. That is what the channel of an open terminal does, and it is the

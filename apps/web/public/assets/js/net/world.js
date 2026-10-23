@@ -417,9 +417,18 @@ export function adapterFor(link, world = {}) {
         case FLOW_CALL:
         case FLOW_TRANSFER:
           return callBytes(link, a, { params: p, taskBytes, confirmBytes });
+        // THE CONFIRMATION GOES DOWN THIS BRANCH TOO, and until now it did
+        // not: confirmBytes was read two lines above and handed only to
+        // callBytes. The row that pays for that is the upload -
+        // contracts/core.js has ACT_UPLOAD as FlowIn and core.critical says
+        // upload is critical, so the one action of the table that MUST carry a
+        // re-confirmation went down the one branch that dropped it, and the
+        // API answered E_CONFIRM with nothing on this side to explain it.
+        // net/channel.js's sendInBytes has had the parameter since 18.10.2026;
+        // only the caller was never pulled along.
         case FLOW_IN:
           return sendInBytes(link, a, {
-            params: p, taskBytes, stream: o.stream, onProgress: o.onProgress,
+            params: p, taskBytes, confirmBytes, stream: o.stream, onProgress: o.onProgress,
           });
         // FlowOut is a channel that stays open and belongs in open(); taking
         // it here would mean bounding an answer in the one place that cannot
