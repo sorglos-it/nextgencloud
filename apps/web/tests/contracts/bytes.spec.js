@@ -585,7 +585,16 @@ const NEEDS_X25519 = [
 // result is that each of them reads its own work back before handing it over
 // (parseEnvelope and validateProof), which task.spec.js and proof.spec.js
 // measure where those live.
-const CALLABLES = 217;
+// 216 since 23.10.2026: core.refusedField, which reads the field name off a
+// refusal the contract made. It takes no bytes of a caller at all - it reads
+// one property of an Error the contract itself threw - so it brings no line to
+// ENTRIES either.
+//
+// 218 since 23.10.2026, when the two rounds above met in one tree: two from
+// the task of an app's own channel and one from core.refusedField. The number
+// is the sum and not one of the two - a merge that kept either would count
+// what the other added as "not in the list".
+const CALLABLES = 218;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that
