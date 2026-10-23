@@ -319,7 +319,9 @@ func (d *Dispatcher) totpBegin(ctx context.Context, rq *Call) ([]byte, error) {
 	}
 	begin, sealed, err := d.Login.BeginTOTP(row.Name)
 	if err != nil {
-		return nil, failWhy(wire.CodeInternal, reason.InsideAPI)
+		// Nothing of the secret and nothing of the error: the making of the
+		// secret failed, and that is a fault of this server.
+		return nil, failWhy(wire.CodeInternal, reason.Defect)
 	}
 	if !d.totp.put(id, sealed, rq.S.Now()) {
 		return nil, failWhy(wire.CodeLimit, reason.FactorBusy)

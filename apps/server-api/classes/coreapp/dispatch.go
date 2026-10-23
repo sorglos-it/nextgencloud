@@ -335,9 +335,9 @@ func (d *Dispatcher) serve(ctx context.Context, s *browser.Session, c *link.Chan
 	o wire.Open, raw []byte) (code wire.Code, node string, why reason.Reason) {
 	defer func() {
 		if guard.Hit(recover(), "coreapp.open", c.Num) {
-			// A panic is a defect of ours, so the line says that and names no
-			// check: no check said no here.
-			code, node, why = wire.CodeInternal, "", reason.InsideAPI
+			// A panic is a defect of ours, so the line says that and names
+			// no check: nothing refused here, something broke.
+			code, node, why = wire.CodeInternal, "", reason.Defect
 		}
 	}()
 	return d.open(ctx, s, c, o, raw)
@@ -489,7 +489,9 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 	// carries no Noise message 2: the session to the API is already encrypted
 	// end to end (package wire, "Core apps").
 	if err := s.SendGrant(ctx, c, wire.DefaultWindow, nil); err != nil {
-		return wire.CodeInternal, reason.InsideAPI
+		// The link, not a check: whoever reads this line is looking for a
+		// session that went away, not for a refusal.
+		return wire.CodeInternal, reason.Link
 	}
 	// The DATA of a FlowIn channel is STREAMED to the handler and not read
 	// into a []byte first. It matters for one action and it decides whether
@@ -546,7 +548,7 @@ func (d *Dispatcher) run(ctx context.Context, s *browser.Session, c *link.Channe
 		return wire.CodeTooLarge, reason.TooLarge
 	}
 	if err := s.SendResult(ctx, c, body); err != nil {
-		return wire.CodeInternal, reason.InsideAPI
+		return wire.CodeInternal, reason.Link
 	}
 	return "", reason.None
 }

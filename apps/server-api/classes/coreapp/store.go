@@ -310,7 +310,7 @@ func storeFail(err error) error {
 	}
 	// CodeFor answers E_INTERNAL for everything it does not know, and so does
 	// this: a fault of the installation, with no check that said no.
-	return failWhy(code, reason.InsideAPI)
+	return failWhy(code, reason.Defect)
 }
 
 // storeAnswer turns what the three controller steps answer into the end of the

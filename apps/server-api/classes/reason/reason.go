@@ -57,6 +57,8 @@ const MaxReason = 100
 const (
 	// Of the installation itself.
 	Trust    Reason = "Die Vertrauensliste konnte nicht gelesen werden."
+	Defect   Reason = "In diesem Server ist ein Fehler aufgetreten."
+	Link     Reason = "Die Verbindung zur Oberfläche brach ab."
 	DB       Reason = "Die Datenbank hat nicht geantwortet."
 	Result   Reason = "Das Ergebnis der Aktion war nicht kodierbar."
 	Deliver  Reason = "Die Oberfläche der App konnte nicht ausgeliefert werden."
@@ -106,7 +108,7 @@ const (
 
 // all is the whole list, so a case can show that no other sentence ever
 // reaches a reader (TestTheListIsClosed).
-var all = []Reason{Trust, DB, Result, Deliver, OwnTask, OwnProof,
+var all = []Reason{Trust, Defect, Link, DB, Result, Deliver, OwnTask, OwnProof,
 	ActionUnknown, ActionUnserved, Params, TooLarge,
 	AdminOnly, ShellClosed, NoRight, AppUnknown, NotRoot, NoTask, NoConfirm, BadTask,
 	TaskSpent, WithParams,
