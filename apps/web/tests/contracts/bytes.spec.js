@@ -571,7 +571,11 @@ const NEEDS_X25519 = [
 // way uitar.spec.js and sign.spec.js hold theirs.
 // 215 since 18.10.2026: wire.isGeneral, the codes whose own text says
 // nothing to do, so that a sentence of the server may stand beside it.
-const CALLABLES = 215;
+// 216 since 23.10.2026: core.refusedField, which reads the field name off a
+// refusal the contract made. It takes no bytes of a caller at all - it reads
+// one property of an Error the contract itself threw - so it brings no line to
+// ENTRIES either.
+const CALLABLES = 216;
 
 // The classes whose methods the walk reaches. A method needs an instance, and
 // an instance cannot be guessed: a Transport is handed two cipher states that

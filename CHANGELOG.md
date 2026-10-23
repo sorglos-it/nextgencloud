@@ -2,6 +2,17 @@
 
 ## Unveröffentlicht
 
+Eine Angabe, die nur angezeigt wird, verwirft die Antwort nicht mehr — und bleibt sie verworfen,
+nennt der Satz auf dem Schirm das Feld (`docs/vertraege-v1.2.md`, Punkt 71, Vorschläge b und c).
+In `contracts/core.js` trennt die Rechnerliste jetzt zwei Seiten: `version` und `arch` werden
+gezeigt und sonst von nichts gelesen, also macht `softenNodes` einen unlesbaren Wert **leer** und
+**behält die Zeile**; `node` und `roles` tragen eine Entscheidung und bleiben hart, die ganze
+Antwort fällt wie bisher. Dazu gibt die Vertragstabelle den Namen des gefallenen Feldes nach oben
+(`fault`, `core.refusedField`), und `apps/store.js` wie `apps/users.js` sagen „Eine Angabe dieses
+Servers ist unlesbar (`noise`).“ statt nur „Die Rechner konnten nicht geladen werden.“ — das
+Fenster neu zu öffnen half bei dem Fall, der wirklich passiert ist, nämlich
+Release-Binärdateien mit `0.0.0-dev`, überhaupt nicht.
+
 Testumgebung für den Recovery-Modus (Paket 0): Skripte in `tools/`, die auf der VM `ngc-recovery`
 den TPM-Simulator swtpm, fünf SoftHSM2-Token als Ersatz für vier Root-Sticks und einen
 Reservestick sowie QEMU mit Secure-Boot-OVMF einrichten und prüfen. Nachgewiesen ist das

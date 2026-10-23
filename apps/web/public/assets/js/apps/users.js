@@ -1201,7 +1201,14 @@ class Users {
 const REFUSALS = ["core: ", "tunnel: ", "trust: "];
 function reason(e, refused = BAD_LIST) {
   const m = String(e?.message ?? "");
-  return REFUSALS.some((p) => m.startsWith(p)) ? refused : NO_REACH;
+  if (!REFUSALS.some((p) => m.startsWith(p))) return NO_REACH;
+  // Where the contract named the field it fell over, the sentence names it
+  // too. It is a field name out of the contract's own table, not a word off
+  // the wire, and it is the one thing that tells the admin where to look -
+  // the sentence below says only that something was wrong
+  // (docs/vertraege-v1.2.md, point 71).
+  const bad = core.refusedField(e);
+  return bad === "" ? refused : "Eine Angabe dieses Servers ist unlesbar (" + bad + ").";
 }
 
 // chars puts an address on screen character by character, each in its own
