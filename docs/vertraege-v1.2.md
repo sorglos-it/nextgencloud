@@ -2454,6 +2454,169 @@ knows 4 of them.` Das Skript sagt es laut und macht weiter — richtig so, aber 
 4. Der **Controller ist nicht gekoppelt** („no app can run"), weil das über die angemeldete
    Oberfläche läuft. Die Kette endet hier also nicht an der Technik, sondern an Punkt 3.
 
+### Nachtrag vom 23.10.2026: PR 71 „ein Schreibkanal je Prozess" — entscheidungsreif, zwei Wege, ein Vorschlag
+
+> **Zur Nummer:** PR 71 trägt den Titel „Point 56", seine Commits sagen „Point 49", und
+> gemessen wurde die Sache in **Punkt 48**. Der Nachtrag steht hier, weil der PR diese
+> Nummer trägt; **der Punkt, den er fortsetzt, ist Punkt 48/49.** Wer dort liest, findet
+> die Vormessung.
+
+**Was der Umbau ändert.** Heute (main) hat eine SQLite-Datei **einen** Pool mit **vier**
+Verbindungen; Lesen und Schreiben teilen ihn, und ein wartender Schreiber **hält** seine
+Verbindung. Der PR macht daraus **zwei** Pools auf derselben Datei: einen Schreibgriff mit
+**einer** Verbindung und einen Lesegriff mit **vier** (`sqlite.OpenRW`, `sqlstore.NewSplit`).
+Dazu eine Schranke, wie lange ein Schreiber **vor** dem Schreibgriff wartet (`takeTurn`),
+mit einem neuen Fehler `ErrTurn`. **Der Titel führt in die Irre:** die Vier ist nicht weg,
+sie ist auf die **Lesevorgänge** gewandert.
+
+**Umfang:** 12 Dateien, +857/−69, **alle unter `apps/server-db/`**.
+**`shared/` ist unberührt** — gegen die heutige Spitze geprüft, nicht angenommen. **Nicht BLOCKIERT.**
+
+#### Gemessen am 23.10.2026 — beide Seiten, derselbe Prüfstand
+
+Debian 13 (WSL2), go1.27.2, ext4, 128 Kerne. **Ein** Messprogramm, das auf **beiden** Bäumen
+unverändert übersetzt (es benutzt nur `Open`, `OpenDB` und `dbapi.Store` — auf beiden Seiten
+gleich), je gegen main `3a9a3e2` und gegen den PR auf main nachgezogen. Die Schreibsperre hält
+ein **echter zweiter Prozess**, denn die SQLite-Sperre ist eine Sperre auf der Datei.
+Jede Messung prüft ihre eigene Voraussetzung und bricht ab, statt eine Zahl zu nennen:
+alle Schreiber müssen in der Luft sein, die Sperre muss beim Messpunkt noch halten,
+der Lesevorgang muss wirklich Daten zurückgegeben haben.
+
+**1. Was die heutige Grenze von vier kostet.** Wartezeit des **ersten Lesens** des Prozesses,
+hinter K blockierten Schreibern desselben Prozesses:
+
+| blockierte Schreiber | main (ein Pool von 4) | PR 71 (geteilt) |
+|---|---|---|
+| 2 | 0,001 s | 0,001 s |
+| **4** | **9,490 s** | **0,001 s** |
+| 8 | 9,491 s | 0,001 s |
+
+Befehl: `NGC_AB=1 go test -count=1 -v -run '^TestABReadBehindBlockedWriters$' ./apps/server-db/classes/sqlite/`
+
+Das ist die Zahl aus Punkt 48, heute unabhängig nachgemessen: **bei vier kippt es**, und zwar
+für **jede** Abfrage des Prozesses, auch jedes Lesen. Der Aufrufer bekommt `E_UNREACHABLE` (503)
+— von „Datenbank weg" nicht zu unterscheiden.
+
+**2. Was ein einziger Kanal kostet — Durchsatz.** 16 Fäden, 10 s, Datei sonst unbenutzt,
+je **drei** Läufe:
+
+| | Lauf 1 | Lauf 2 | Lauf 3 | Fehler |
+|---|---|---|---|---|
+| main | 3045,4/s | 3009,1/s | 3008,7/s | 0 |
+| PR 71 | 3251,2/s | 3291,1/s | 3225,3/s | 0 |
+
+Befehl: `NGC_AB=1 go test -count=1 -v -run '^TestABWriteThroughput$' ./apps/server-db/classes/sqlite/`
+
+**+7 bis +8 %**, die Bänder überschneiden sich nicht, 3 von 3 reproduziert. Der ein Kanal
+kostet hier **keinen** Durchsatz, er bringt welchen. **Achtung, umgebungsabhängig:** der PR
+nennt für Windows 404→625/s (C:) und 241→530/s (Z:, NAS), also +55 bis +120 %. Auf diesem
+Rechner sind es +7–8 %. **Die Richtung ist auf beiden Ständen dieselbe, die Höhe nicht.**
+
+**3. Was passiert, wenn der eine Kanal hängt.** Ein fremder Prozess hält die Sperre die ganze
+Zeit und gibt sie nie zurück; drei Schreiber ohne eigene Frist:
+
+| | main | PR 71 |
+|---|---|---|
+| Schreiber 0 | 80,614 s · `sqlite3: database is locked` | 80,000 s · `sqlstore: no turn at the write handle came free` |
+| Schreiber 1 | 80,600 s · `database is locked` | 80,000 s · `no turn at the write handle came free` |
+| Schreiber 2 | 80,695 s · `database is locked` | 80,537 s · `database is locked` |
+| **gesamt** | **80,696 s** | **80,537 s** |
+| Lesen währenddessen | 0,001 s | 0,001 s |
+
+Befehl: `NGC_AB=1 go test -count=1 -v -timeout 25m -run '^TestABWriteChannelStuck$' ./apps/server-db/classes/sqlite/`
+
+**Die Schranke hält:** die Warterei wächst **nicht** mit der Zahl der Schreiber, der ganze
+Vorgang bleibt bei **einer** Kette (80,6 s), genau wie main. Das Lesen war hier auf **beiden**
+Seiten schnell — bei nur drei Schreibern hatte auch main noch eine vierte Verbindung frei;
+der Unterschied steht in Messung 1, nicht hier.
+
+**4. Wo der neue Fehler landet.** `Fault(sqlstore.ErrTurn, FromRows)` = **`E_UNREACHABLE`**
+(503, „komm wieder"). Gemessen, nicht gelesen. Das ist die richtige Antwort — eine volle
+Warteschlange geht von selbst vorbei — und sie braucht **keine** Änderung in `shared/`
+und **keine** in `fault.go`. Der Text ist dabei **besser** als heute: er nennt die
+Warteschlange dieses Prozesses statt „Dienst nicht erreichbar".
+
+#### Der rote `-race`-Lauf: die Ursache liegt NICHT im Umbau
+
+Der rote Lauf vom 18.10.2026 fiel an
+`TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` in
+`apps/server-controller/classes/link` — ein Paket, das dieser PR **nicht anfasst**
+(alle 12 Dateien liegen unter `apps/server-db/`). Die drei `mariadb`-Namen im Protokoll
+stehen in der Liste der **übersprungenen** Fälle, nicht der gefallenen.
+
+Gegenprobe auf main, **ohne jeden PR-Code** (10 Läufe je Stand, `-race`, `-count=1`):
+
+| Stand | Ergebnis |
+|---|---|
+| main `b853f6e` (= main am 18.10., der Stand, gegen den CI merzte) | **6 von 10 FAIL** |
+| main heute (`3a9a3e2`) | 10 von 10 bestanden |
+| PR 71 auf main heute nachgezogen | 10 von 10 bestanden |
+
+Befehl: `go test -race -count=1 -run 'TestAPingLostToOurOwnWriteDoesNotKillTheTunnel' ./apps/server-controller/classes/link/`
+
+Also: **ein Zeitfehler im Prüffall auf main, schon vorher da**, von main selbst am
+20./21.10.2026 behoben (`e723f0d` „give the tunnel ping timing test a null control",
+`ec27cc5` „the null control had a red branch it could never justify"). Dass der
+`push`-Lauf derselben Kennung grün und der `pull_request`-Lauf rot war, passt dazu:
+`pull_request` prüft den **Merge** mit main.
+
+**Ganzer Satz auf dem nachgezogenen Stand, heute:** `3412 Fälle bestanden, 0 gefallen,
+0 DATA RACE` über 73 Pakete (ohne `shared/trust`, wie die CI).
+*Ein* Fall (`TestRealArchiveIsClosed`) fiel zunächst, weil meine Messkopie ohne `.git`
+lief — der Fall sagt das selbst laut; mit git bestanden, einzeln nachgemessen.
+
+#### Nicht gemessen, abgewogen
+
+- **Speicher der Pools auf dem Höhepunkt einer Sicherung.** Es sind jetzt **vier** Pools statt
+  drei. Der PR nennt das selbst als offen. `maxMemory` ist eine **Decke, keine Reservierung**,
+  und der Lesegriff bindet keinen Blob — aber eine Zahl dafür gibt es nicht, und auf einem Pi
+  ist das der teuerste Posten.
+- **Zwei echte `ngc-api` über die ganze HTTP-Strecke.** Unverändert offen aus Punkt 48.
+- **Auf einem echten Pi und auf dem NAS (Z:).** Meine Zahlen sind ext4 auf 128 Kernen.
+- **Was der Benutzer im Browser bei `E_UNREACHABLE` liest.** Offen aus Punkt 48/49.
+- **Die 190–240 s, die der Umbau vor der Schranke selbst verursacht hat.** Steht so im
+  Kommentar des PR (gemessen 16.10.2026); ich habe sie **nicht** nachgemessen, sondern nur,
+  dass die Schranke heute hält (Messung 3).
+
+#### Zwei Wege, je mit Preis
+
+**Weg A — zusammenführen (den geteilten Griff nehmen).**
+*Preis:* ein Pool mehr je Store, und was die vier auf dem Höhepunkt einer Sicherung halten,
+ist **nicht gemessen**; ein neuer Fehler `ErrTurn`, den kein Aufrufer beim Namen kennt
+(er landet richtig auf 503, aber ein Leser muss ihn lernen); der Schreibweg hat jetzt eine
+eigene Warteschlange, deren Schranke beim Öffnen von der Datenbank abgelesen wird;
++857 Zeilen im empfindlichsten Weg des Programms.
+*Gewinn:* die Klippe bei vier ist weg (0,001 s statt 9,490 s, gemessen); +7–8 % Schreibdurchsatz
+hier, mehr auf Windows; ein hängender Schreiber legt nicht mehr jedes Lesen des Prozesses still;
+der Fehlertext nennt die Ursache statt „Dienst weg".
+
+**Weg B — liegen lassen (bei vier bleiben).**
+*Preis:* vier wartende Schreiber legen **jede** Abfrage des Prozesses lahm, Lesen eingeschlossen
+— **9,49 s, heute auf main nachgemessen**. Das ist nicht „langsam", das ist für den Aufrufer
+nicht von einer toten Datenbank zu unterscheiden. Vier wird erreicht, sobald ein zweiter
+schreibender Prozess da ist: Sicherung, zweites API, `ngc-all.sh`. **Die Grenze ist vier,
+nicht „soundso viele Benutzer".**
+*Gewinn:* nichts Neues zu lernen, kein zweiter Pool, kein neuer Fehler; main bleibt, wie
+Punkt 48/49 es gemessen hat.
+
+#### Vorschlag: Weg A, zusammenführen
+
+Die Messung, die entscheidet, ist Messung 1. **9,49 s bei vier blockierten Schreibern** ist
+keine Durchsatzzahl, sondern ein Stillstand des ganzen Prozesses, den der Aufrufer nicht von
+einer toten Datenbank unterscheiden kann — und vier ist erreicht, sobald eine Sicherung und
+zwei Benutzerschreibvorgänge zusammenkommen. Genau das nimmt der PR weg (0,001 s, mit
+**demselben** Prüfstand auf **beiden** Seiten gemessen). Er nimmt dafür nichts: der Durchsatz
+steigt, er fällt nicht. Er rührt keinen eingefrorenen Vertrag an. Und sein einziges echt neues
+Risiko — die unbegrenzte Warteschlange, die er zuerst selbst erzeugt hat — hat er selbst
+gemessen und beschränkt; dass die Schranke hält, steht in Messung 3.
+
+Offen bleibt der Speicher auf dem Höhepunkt einer Sicherung. Das ist eine Frage an einen Pi,
+nicht an diesen Merge: es ist eine Decke und keine Reservierung, und es ist messbar, sobald
+ein Controller auf dem Tisch liegt. Dagegen steht ein Stillstand, der **heute in main** ist.
+
+**Zustand des PR:** auf main (`3a9a3e2`) nachgezogen, konfliktfrei, `shared/` unberührt,
+ganzer Satz grün, `-race` grün (0 DATA RACE). **Nicht zusammengeführt** — ein Ja genügt.
+
 ## Punkt 57: Der Riegel ist auf — NGC hat einen Release-Schlüssel, und nichts wird mehr ersetzt
 
 > **Stand: gilt.** Art: Umgebung. Das hier noch Ungemessene (Anmeldung im Browser,
