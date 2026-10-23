@@ -213,7 +213,7 @@ func (s *store) UserByName(ctx context.Context, name string) (dbapi.User, error)
 func (s *store) oneUser(ctx context.Context, stmt string, arg []byte) (dbapi.User, error) {
 	var out dbapi.User
 	err := s.query(ctx, func() error {
-		u, err := scanUser(s.db.QueryRowContext(ctx, stmt, blob(arg)).Scan)
+		u, err := scanUser(s.rdb.QueryRowContext(ctx, stmt, blob(arg)).Scan)
 		if errors.Is(err, sql.ErrNoRows) {
 			return dbapi.ErrNotFound
 		}
@@ -230,7 +230,7 @@ func (s *store) UserList(ctx context.Context) ([]dbapi.User, error) {
 	var out []dbapi.User
 	err := s.query(ctx, func() error {
 		out = nil
-		rows, err := s.db.QueryContext(ctx, userList)
+		rows, err := s.rdb.QueryContext(ctx, userList)
 		if err != nil {
 			return err
 		}
@@ -304,7 +304,7 @@ func (s *store) SessionPut(ctx context.Context, v dbapi.Session) error {
 func (s *store) SessionGet(ctx context.Context, token []byte) (dbapi.Session, error) {
 	var out dbapi.Session
 	err := s.query(ctx, func() error {
-		err := s.db.QueryRowContext(ctx, sessionSelect, blob(token)).Scan(&out.Token, &out.User, &out.Cert,
+		err := s.rdb.QueryRowContext(ctx, sessionSelect, blob(token)).Scan(&out.Token, &out.User, &out.Cert,
 			&out.Proof, &out.APIKey, &out.APICert, &out.Created, &out.Expires, &out.Seen)
 		if errors.Is(err, sql.ErrNoRows) {
 			return dbapi.ErrNotFound
@@ -351,7 +351,7 @@ func (s *store) PendingList(ctx context.Context) ([]dbapi.Pending, error) {
 	var out []dbapi.Pending
 	err := s.query(ctx, func() error {
 		out = nil
-		rows, err := s.db.QueryContext(ctx, pendingList)
+		rows, err := s.rdb.QueryContext(ctx, pendingList)
 		if err != nil {
 			return err
 		}

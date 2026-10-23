@@ -68,26 +68,48 @@ func (o Options) busyMillis() (int64, error) {
 // (config.DB.Key carries exactly this many).
 const keySize = 64
 
-// The pool. Four writers at once are plenty for one controller or one Pi, but
-// only one connection stays: each one runs a SQLite build of its own, and its
-// memory comes back only when the connection closes. With four kept open, the
-// largest blob each of them ever carried would stay paid for until the
-// program ends - on a Pi the most expensive thing in here. An idle connection
-// above the first is therefore dropped after a minute.
+// The two pools of one file: writes get ONE connection, reads get four. Only
+// one connection of either stays idle, because each connection runs a SQLite
+// build of its own and its memory comes back only when the connection closes
+// - with several kept open, the largest blob each of them ever carried would
+// stay paid for until the program ends, on a Pi the most expensive thing in
+// here. An idle connection above the first is therefore dropped after a
+// minute.
 //
-// That sum is per POOL, and while Backup runs there are three of them on the
-// same machine: the caller's, the one Backup opens on the database, and the
-// one fold opens on the copy (Kl-4 of the review of 10.10.2026, which found
-// the sentence above reckoning with one). Decided and named rather than
-// changed: maxMemory below is a ceiling and not a reservation, the two extra
-// pools live for the length of one backup, and each of them holds one
-// connection that reads pages and binds no blob - so what they really cost is
-// nothing like three times the worst case of one. NOT MEASURED: how much the
-// three hold together at the peak of a backup. Whoever has a controller
-// measures it; until then this is the honest shape of the sentence, not a
-// number.
+// That sum is per POOL, and while Backup runs there are FOUR of them on the
+// same machine: the caller's write handle, the caller's read handle, the one
+// Backup opens on the database, and the one fold opens on the copy (Kl-4 of
+// the review of 10.10.2026 counted three, when the caller had one). Decided
+// and named rather than changed: maxMemory below is a ceiling and not a
+// reservation, the two backup pools live for the length of one backup, and
+// each of the three besides the write handle holds one connection that reads
+// and binds no blob - so what they really cost is nothing like four times the
+// worst case of one. NOT MEASURED: how much the four hold together at the
+// peak of a backup. Whoever has a controller measures it; until then this is
+// the honest shape of the sentence, not a number.
+//
+// WHY THE SPLIT, MEASURED 13.10.2026 (point 48, built as point 49): with one
+// pool of four, four was also the number at which the process blocked itself.
+// A writer that waits for the file lock HOLDS its connection, so four waiting
+// writers owned all four connections and the next query of the process - any
+// query, a read as well - waited behind them: 2 blocked writers -> 0.007 s
+// for the first read, 3 -> 0.007 s, 4 -> 9.5 s, on C: and on Z: (NAS) alike.
+// With the split it is 0.006 s at 2, at 4 and at 192.
+//
+// What fixed that is the SEPARATE READ HANDLE, and not the one below: a
+// throwaway mutation that puts writeConns back to 4 and leaves the split
+// standing keeps the read fast (0.006 s at 192 blocked writers); one that
+// takes the split away and restores the four brings 9.69 s back exactly.
+// Measured, because point 48 had laid it down the other way round.
+//
+// writeConns = 1 is right for a second reason, not for that one: a SQLite
+// file has exactly ONE writer, so a second write connection can only wait,
+// and waiting in front of the handle inside Go is cheaper than waiting in
+// busy_timeout. Measured as throughput of one process: 16 threads went from
+// 404/s to 625/s on C: and from 241/s to 530/s on Z:.
 const (
-	maxOpenConns = 4
+	writeConns   = 1
+	readConns    = 4
 	maxIdleConns = 1
 	idleTimeout  = 60 * time.Second
 )
@@ -107,11 +129,23 @@ const maxMemory = 512 << 20
 
 // OpenDB opens the file named by cfg, encrypted with cfg.Key. It does not
 // create any table: the schema comes from the migrations.
+//
+// The handle carries ONE connection, which is what a writer needs: every
+// caller of OpenDB writes, or reads pages for a backup. Whoever wants reads
+// beside the writes takes OpenRW.
 func OpenDB(cfg config.DB) (*sql.DB, error) { return OpenDBWith(cfg, Options{}) }
 
 // OpenDBWith is OpenDB with the knobs of Options. Nothing in NGC calls it
 // with a non-zero Options; what it is for is a measurement that has to wait
 // out the busy deadline without waiting ten seconds for it.
+//
+// The two live together and neither gives way: the handle carries one write
+// connection (see writeConns), and Options shortens the deadline that one
+// connection waits on. A measurement of the split needs BOTH - the queue in
+// front of the write handle is bounded by one chain of the OPEN database
+// (sqlstore.takeTurn reads the busy_timeout pragma back off it), so shortening
+// the deadline here shortens the bound there as well, and a measurement of
+// the queue does not have to sit out eight ten-second tries either.
 func OpenDBWith(cfg config.DB, opt Options) (*sql.DB, error) {
 	busy, err := opt.busyMillis()
 	if err != nil {
@@ -141,10 +175,47 @@ func OpenDBWith(cfg config.DB, opt Options) (*sql.DB, error) {
 		return nil, err
 	}
 	db := sql.OpenDB(connector{inner: inner, hexkey: hexkey, busy: busy})
-	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxOpenConns(writeConns)
 	db.SetMaxIdleConns(maxIdleConns)
 	db.SetConnMaxIdleTime(idleTimeout)
 	return db, nil
+}
+
+// OpenRW opens the file twice: write carries one connection and every write,
+// read carries readConns connections and every read. Both are pools on the
+// same file with the same key.
+//
+// This is the shape of the whole change of point 48, and it is two sentences:
+// a SQLite file has one writer, so a second write connection can only wait;
+// and a connection that waits is a connection a read cannot have. Giving the
+// writes one connection and the reads their own handle separates the two
+// waits. The caller hands both to sqlstore.NewSplit.
+//
+// The read handle can write - it is the same connector, and asking SQLite for
+// a read-only connection would also refuse the PRAGMAs the file needs. That
+// nothing writes through it is this package's doing, not SQLite's: Open is
+// the only caller, and it gives the handle to NewSplit, which uses it for
+// queries only.
+func OpenRW(cfg config.DB) (write, read *sql.DB, err error) {
+	return OpenRWWith(cfg, Options{})
+}
+
+// OpenRWWith is OpenRW with the knobs of Options, and it is OpenDBWith's
+// reason for existing carried to the split: both handles get the SAME
+// deadline, because a measurement that shortens one and not the other would
+// be measuring two different files.
+//
+// Nothing in NGC calls it with a non-zero Options.
+func OpenRWWith(cfg config.DB, opt Options) (write, read *sql.DB, err error) {
+	if write, err = OpenDBWith(cfg, opt); err != nil {
+		return nil, nil, err
+	}
+	if read, err = OpenDBWith(cfg, opt); err != nil {
+		write.Close()
+		return nil, nil, err
+	}
+	read.SetMaxOpenConns(readConns)
+	return write, read, nil
 }
 
 // connector opens every connection of the pool. It wraps the driver's own
