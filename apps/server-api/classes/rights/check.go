@@ -3,6 +3,7 @@ package rights
 import (
 	"context"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/session"
@@ -48,29 +49,39 @@ type Request struct {
 }
 
 // Check decides whether the channel may open. It returns the verified task, if
-// one was needed, and the wire.Code to close with; an empty code means the
-// channel may open.
-func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now int64) (*task.Task, wire.Code) {
+// one was needed, the wire.Code to close with and the sentence that says which
+// check said no; an empty code means the channel may open, and the reason is
+// then reason.None.
+//
+// The reason exists because a code alone is no reason. Measured on 19.10.2026
+// on the Debian machine: a user with no root grant on that controller was
+// turned away here, and the only thing anybody could read of it afterwards was
+// "Das hat der Rechner nicht angenommen." -- the honest sentence
+// (reason.NotRoot) was in task.ErrForbidden all along and was thrown away in
+// codeOf. It is a sentence of the CLOSED list of package reason and never a
+// text of the error: see that package for why, and for which of the two
+// readers (log, screen) may see which.
+func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now int64) (*task.Task, wire.Code, reason.Reason) {
 	if req.Session == nil {
 		// Channels without a user are the API's own; the shell never opens one.
 		if req.Action.Name == "" || !core.WithoutUser(req.Action) {
-			return nil, wire.CodeForbidden
+			return nil, wire.CodeForbidden, reason.ShellClosed
 		}
-		return nil, ""
+		return nil, "", reason.None
 	}
 	// wire.Open.Validate already says an OPEN with a task carries no params of
 	// its own, since the task's params are the params and the rule judged
 	// those. Checked again here, so the decision does not rest on how careful
 	// the caller was.
 	if req.Open.Task != nil && len(req.Open.Params) != 0 {
-		return nil, wire.CodeVerify
+		return nil, wire.CodeVerify, reason.WithParams
 	}
 	user := req.Session.Cert().User
 	granted, admin, err := Of(ctx, db, l, user)
 	if err != nil {
 		// A row the database cannot hold is not "no rights": nothing opens
 		// until an admin has set it again.
-		return nil, wire.CodeUnreachable
+		return nil, wire.CodeUnreachable, reason.DB
 	}
 	var rule task.Rule
 	app, service, action := req.Action.App, req.Action.Service, req.Action.Name
@@ -79,10 +90,10 @@ func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now 
 		// The shell may open the actions of service api and the root tasks of
 		// service controller; stage, install and license are the API's own.
 		if !core.ShellOpens(req.Action) {
-			return nil, wire.CodeForbidden
+			return nil, wire.CodeForbidden, reason.ShellClosed
 		}
 		if req.Action.Admin && !admin {
-			return nil, wire.CodeForbidden
+			return nil, wire.CodeForbidden, reason.AdminOnly
 		}
 		rule = core.RuleFor(req.Action)
 	default:
@@ -91,9 +102,15 @@ func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now 
 		// user without the right nothing about the installation. The price:
 		// such a user cannot tell a typo in the app's name from a right they
 		// do not have, which makes their own search harder.
-		if req.App == nil || req.Manifest == nil || !req.App.Active ||
-			!usable(granted, req.App.ID) {
-			return nil, wire.CodeForbidden
+		// The one reason that goes into the log and not onto the screen
+		// (reason.Screen): the log tells an admin of this installation which
+		// of the four it was, and the shell is told no more than E_FORBIDDEN,
+		// so the indistinguishability above survives the sentence.
+		if req.App == nil || req.Manifest == nil || !req.App.Active {
+			return nil, wire.CodeForbidden, reason.AppUnknown
+		}
+		if !usable(granted, req.App.ID) {
+			return nil, wire.CodeForbidden, reason.NoRight
 		}
 		// core.RightUse is "use", and no contract keeps a manifest from
 		// naming an action "use": the right <app>/use would then be the
@@ -104,18 +121,18 @@ func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now 
 		// contract carries it. A licence check must not hang off <app>/use
 		// either, for the same reason.
 		if req.Open.Action == core.RightUse {
-			return nil, wire.CodeNotFound
+			return nil, wire.CodeNotFound, reason.ActionUnknown
 		}
 		a, ok := req.Manifest.Action(req.Open.Action)
 		if !ok {
-			return nil, wire.CodeNotFound
+			return nil, wire.CodeNotFound, reason.ActionUnknown
 		}
 		if !has(granted, req.App.ID, a.Name) {
-			return nil, wire.CodeForbidden
+			return nil, wire.CodeForbidden, reason.NoRight
 		}
 		r, err := store.RuleFor(req.Manifest, a.Name)
 		if err != nil {
-			return nil, wire.CodeNotFound
+			return nil, wire.CodeNotFound, reason.ActionUnknown
 		}
 		// App, action and service come from the row and the manifest, so a
 		// task must name exactly the channel the API resolved.
@@ -128,16 +145,18 @@ func Check(ctx context.Context, db dbapi.Store, l *trust.List, req Request, now 
 	}
 	t, err := task.Check(in, l, now)
 	if err != nil {
-		return nil, codeOf(err)
+		// Code and reason come out of the SAME error, so the two can never
+		// tell different stories about one decision.
+		return nil, codeOf(err), reason.ForTask(err)
 	}
 	if t != nil {
 		// A task counts once: the ID is spent until it expires, so nobody can
 		// replay a signed task.
 		if err := db.OnceCreate(ctx, dbapi.OnceTask, t.ID, "", t.Expires); err != nil {
-			return nil, wire.CodeVerify
+			return nil, wire.CodeVerify, reason.TaskSpent
 		}
 	}
-	return t, ""
+	return t, "", reason.None
 }
 
 // codeOf maps the errors of package task to the codes of the contract.

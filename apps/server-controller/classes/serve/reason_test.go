@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/flynn/noise"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
+	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -253,6 +255,60 @@ func TestAServiceThatFailsSaysSo(t *testing.T) {
 	}
 	if r := onlyCut(t, l); r["grund"] != ReasonService {
 		t.Errorf("grund = %q, want %q", r["grund"], ReasonService)
+	}
+}
+
+// A channel leaves ONE line, even when the end of its refusal cannot be sent
+// any more.
+//
+// This is the case the CI found on 23.10.2026 under -race on Linux, where the
+// timing made it happen and on Windows it did not: the container could not be
+// reached, the reason went into the journal - and behind it a SECOND line,
+// E_INTERNAL "could not be carried out server-side", because answer could not
+// get that very refusal out to a shell that was already gone. Two lines for
+// one channel, and the second one sends an operator to look in the wrong
+// place.
+//
+// It is built here without a clock: the shell gives the controller a window of
+// exactly one message, the service fills it, and the end of this side then has
+// no credit left to travel on - the same way
+// TestAnEndThatGetsNoCreditStillClosesTheChannel builds it. The service also
+// ends with an error, so there IS a first line to be the only one.
+func TestACutChannelLeavesOneLineEvenWhenItsEndCannotGoOut(t *testing.T) {
+	envHere(t)
+	w := newWorld(t)
+	l := &lines{}
+	w.rebuild(func(d *Deps) { d.Log = slog.New(l) })
+	w.quickAction(t, 1)
+	w.srv.last = 100 * time.Millisecond
+	// One whole message of output, so the credit of the shell is spent, and an
+	// error at the end of it, so the service has a reason of its own.
+	w.eng.run = func(_ context.Context, e runtime.Exec) (int, error) {
+		if e.Stdout != nil {
+			io.WriteString(e.Stdout, strings.Repeat("e", wire.MinWindow-noisep.TagSize-1))
+		}
+		return 3, nil
+	}
+	payload, hs := w.appOpenWin(t, nil, wire.MinWindow)
+	ended := w.tunnel(t, func(a *apiSide) {
+		sh := start(t, a, 1, payload, hs)
+		sh.inner(wire.E2EData, nil)
+		sh.inner(wire.E2EEnd, nil)
+		if n := sh.one(); n != wire.MinWindow {
+			t.Fatalf("the first frame was %d bytes, want the %d of a whole message", n, wire.MinWindow)
+		}
+		wantCode(t, sh.rest(), wire.CodeInternal)
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	// ONE line, and it is the reason of the service - not the internal one of
+	// the end that could not be sent.
+	r := onlyCut(t, l)
+	if r["grund"] != ReasonService {
+		t.Errorf("grund = %q, want the reason of the service %q", r["grund"], ReasonService)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi/memstore"
@@ -200,7 +201,7 @@ func nodeOf(a core.Action) string {
 // or none.
 func checkAs(t *testing.T, fx *fixture, user string, a core.Action, tk *sign.Envelope) wire.Code {
 	t.Helper()
-	_, code := Check(ctx, fx.DB, fx.List, Request{Action: a, Node: nodeOf(a), Session: fx.session(t, user),
+	_, code, _ := Check(ctx, fx.DB, fx.List, Request{Action: a, Node: nodeOf(a), Session: fx.session(t, user),
 		Open: wire.Open{App: a.App, Service: a.Service, Action: a.Name, Window: wire.MinWindow, Task: tk}}, now)
 	return code
 }
@@ -208,13 +209,13 @@ func checkAs(t *testing.T, fx *fixture, user string, a core.Action, tk *sign.Env
 // CheckApp asks Check for the action of the installed app as user.
 func (fx *fixture) CheckApp(t *testing.T, user, action string) wire.Code {
 	t.Helper()
-	_, code := fx.checkAppOpen(t, user, wire.Open{App: termApp, Service: termSvc, Action: action, Window: wire.MinWindow})
+	_, code, _ := fx.checkAppOpen(t, user, wire.Open{App: termApp, Service: termSvc, Action: action, Window: wire.MinWindow})
 	return code
 }
 
 // checkAppOpen asks Check for an app channel with exactly this OPEN, so a
 // test can vary the OPEN and nothing else.
-func (fx *fixture) checkAppOpen(t *testing.T, user string, open wire.Open) (*task.Task, wire.Code) {
+func (fx *fixture) checkAppOpen(t *testing.T, user string, open wire.Open) (*task.Task, wire.Code, reason.Reason) {
 	t.Helper()
 	return Check(ctx, fx.DB, fx.List, Request{App: fx.App, Manifest: fx.Manifest, Node: ctlNode,
 		Session: fx.session(t, user), Open: open}, now)

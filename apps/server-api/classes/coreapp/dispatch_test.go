@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/task"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
@@ -315,7 +316,7 @@ func TestADroppedFieldDoesNotStopTheChannel(t *testing.T) {
 	// And the report itself: the log answers ErrDropped for an action outside
 	// the grammar, and still writes.
 	before := len(fx.logEntries(t))
-	err := fx.Log.Channel(ctx, fx.AdminID, core.AppDesktop, "not a name", "", "")
+	err := fx.Log.Channel(ctx, fx.AdminID, core.AppDesktop, "not a name", "", "", reason.None)
 	if !errors.Is(err, audit.ErrDropped) {
 		t.Fatalf("the log did not report a dropped field: %v", err)
 	}
