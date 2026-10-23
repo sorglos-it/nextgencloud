@@ -39,9 +39,13 @@ const TICK_MS = 15000;
 // take the listeners down when the window closes.
 export function freshness(ask) {
   const line = el("p", "stand");
-  // A polite region: this changes while somebody reads something else, and a
-  // screen reader that announced every tick of a clock would be unusable.
-  line.setAttribute("role", "status");
+  // NO role="status", and that is measured and not a matter of taste. A clock
+  // that announced every tick would be unusable to a screen reader - and it
+  // would be a SECOND live region in a surface that already has one: the store
+  // and the user administration each carry a status line of their own, and
+  // apps/web/tests/shell/store.spec.js found exactly that on 22.10.2026, two
+  // regions where its locator wanted one. The age is a fact about the screen
+  // and is read where it stands.
   const when = el("span", "standtxt", "");
   const again = button("standgo", "Jetzt nachsehen", "Diesen Stand jetzt neu holen");
   line.append(when, again);
