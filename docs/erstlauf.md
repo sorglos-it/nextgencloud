@@ -38,38 +38,72 @@ sich korrekter Code. Sie werden erst beim Zusammensetzen zu einer Sackgasse.
 
 ## 2. Wie weit der Lauf gehen kann — und warum nicht weiter
 
-**Entscheidung: zwei Phasen, und die zweite läuft hier nicht.**
+**Zwei Phasen, beide gebaut, beide gelaufen.**
 
-- **Phase A (statisch, läuft überall):** Die Stationen 1, 2 und 7 haben eine Hälfte, die aus den
-  Quellen dieses Repos **und des ulh-Repos zusammen** entscheidbar ist. Diese Hälfte läuft in
-  Sekunden und braucht keine Maschine.
-- **Phase B (Maschine):** Die Stationen 3–6 und 8 brauchen eine frisch installierte Maschine.
-  Begründung mit Zeilen, nicht mit Vermutung:
-  - **fscrypt.** `runtime.ErrNoFscrypt` und die Verschlüsselung je App brauchen
-    `CONFIG_FS_ENCRYPTION`. Gemessen am 23.10.2026 auf dem WSL-Kern dieses Rechners
-    (`6.18.33.2-microsoft-standard-WSL2`): `# CONFIG_FS_ENCRYPTION is not set`. **Alle**
-    WSL-Instanzen teilen diesen Kern, also hilft eine neue Instanz nicht.
-  - **podman rootless in einem Container** (podman-in-podman) ist die zweite Hälfte derselben
-    Station und ebenfalls nicht in einem Container zu haben.
-  - **Die eine eingerichtete Maschine darf nicht kaputtgehen.** Auf `ssh ngc` steht die Anlage, in
-    der andere Sitzungen arbeiten; ihr Zustand ist mehrfach von Hand verändert (zwei Notlösungen
-    in `users.js`, `/var/lib/ngc/apps` auf `0711`, `ngc-api` ein Sonderbau `0.2.0-confirmfix`).
-    Zwei NGC-Anlagen auf einem Netz streiten außerdem um 7443 und 443.
+```powershell
+bash tools/erstlauf.sh --machine erstlauf-vm --machine-staged /root/release/dist --machine-ulh /root/release/ulh --machine-release-key /root/release/dist/release-key.pem
+```
 
-  Darum sind diese Stationen **UNMEASURABLE**, bis `--machine <ziel>` auf eine Wegwerf-Maschine
-  zeigt. Der Lauf endet dann mit **Code 2** und nennt sie beim Namen — nie mit `erstlauf: ok`.
-  Ein Lauf, der still auslässt, was er nicht kann, wäre selbst die siebte Hürde.
+- **Phase A — `tools/erstlauf.sh`, statisch, läuft überall.** Die Stationen 1, 2 und 7 haben eine
+  Hälfte, die aus den Quellen dieses Repos **und des ulh-Repos zusammen** entscheidbar ist. Läuft
+  in Sekunden, braucht keine Maschine.
+- **Phase B — `tools/erstlauf-maschine.sh`, läuft ALS ROOT AUF der Wegwerf-Maschine.** Sie
+  installiert NGC so, wie ein Nutzer es tut: Testrelease nach `/var/lib/ngc/staged`, dann das
+  ulh-Skript `ngc-all.sh`, dann die Stationen. `--machine <ziel>` in Phase A legt das Skript per
+  `scp` hinüber und fährt es per `ssh`; zusätzliche ssh-Optionen kommen aus `NGC_SSH_OPTS`, damit
+  nichts in die ssh-Konfiguration des Nutzers geschrieben werden muss.
 
-**Lieber ein ehrlicher Lauf über die halbe Strecke als ein grüner, der nichts beweist.** Phase B
-ist in diesem Zug **nicht gebaut** — die Stationen stehen mit Namen, Begründung und Zustand im
-Lauf, damit der nächste dort anfängt und nicht beim Inventar.
+### Der Unterschied der beiden Phasen ist Station 1
+
+Phase A fragt den **Text** des ulh-Skripts. Phase B fragt die **Sandbox**: `systemctl show` sagt,
+was systemd wirklich gewährt (Drop-ins eingerechnet, die niemand angesehen hat), und
+`systemd-run` mit genau diesen zwei Einstellungen versucht den Schreibvorgang. Eine Unit, die in
+der Datei richtig aussieht und trotzdem verbietet, fällt nur hier.
+
+### Wo Phase B endet, und warum (Zeilen, nicht Vermutung)
+
+| Station | Was fehlt |
+|---|---|
+| 3 koppeln | Der Kopplungscode kommt **aus dem Browser** (`pair_code`). Dafür braucht es das Webinterface: ulhs `ngc-web.sh` mit Apache und PHP — `ngc-all.sh` installiert das nicht (`NGC_PACKAGES=(openssl jq curl ca-certificates podman)`). |
+| 4, 5 | Brauchen Station 3. |
+| 6 Katalog | Braucht einen Store mit signiertem Katalog in der Vertrauensliste. NGCs eigener Store-Schlüssel ist im Skript noch ein Platzhalter (`NGC_STORE_KEY_DEFAULT=REPLACE-THIS-LINE-…`). |
+| 7 App einrichten | **Der Kern kann nicht verschlüsseln.** `# CONFIG_FS_ENCRYPTION is not set` auf `6.18.33.2-microsoft-standard-WSL2`, gemessen am 23.10.2026. `apps/server-controller/classes/serve/activate.go` sagt es an der Zeile selbst: auf so einem Kern endet **jede** Aktivierung in `runtime.ErrNoFscrypt`. **Alle** WSL-Instanzen teilen diesen Kern. |
+| 8 | Braucht Station 7 und einen zweiten Benutzer. |
+
+### Warum eine WSL-Instanz und keine echte VM
+
+Gemessen am 23.10.2026, mit den Orten:
+
+- **Kein QEMU:** nicht in `C:\Program Files\qemu`, nicht in `PATH` auf Windows, nicht in der
+  Debian-WSL-Instanz (`command -v qemu-system-x86_64`).
+- **Keine Virtualisierung in der Instanz:** `/dev/kvm` fehlt, und `/proc/cpuinfo` nennt
+  **0**-mal `vmx` und **0**-mal `svm`. Ohne KVM bliebe nur TCG-Emulation — für eine
+  Debian-Installation samt podman unbrauchbar.
+- **Die eine eingerichtete Maschine darf nicht kaputtgehen.** Auf `ssh ngc` (10.2.3.208) steht die
+  Anlage, in der andere Sitzungen arbeiten; ihr Zustand ist mehrfach von Hand verändert. Sie wurde
+  **nicht angefasst**.
+
+Die Wegwerf-Instanz heißt `ngc-erstlauf` und liegt in `D:\claude
+gc-erstlauf-vm`; das
+Testrelease in `D:\claude
+gc-erstlauf-release`. Beides ist meins und darf weg.
+
+**Lieber ein ehrlicher Lauf über die halbe Strecke als ein grüner, der nichts beweist.**
+
+### Der eine Riegel, den Phase B ersetzt
+
+`ngc-all.sh` trägt den öffentlichen Release-Schlüssel von NGC im Text, und niemand außer NGC kann
+ein Release signieren, das er annimmt. Phase B nennt darum mit `--test-release-key` eine
+**Test-Wurzel** und sagt es in jeder Ausgabe. Was weiter läuft: die Signaturprüfung selbst, samt
+Prüfsummen und Größe — eine manipulierte Datei fällt hier wie im Feld. Was **nicht** gemessen ist:
+dass NGCs eigener Schlüssel im Skript steht und stimmt.
 
 ## 3. Die Stationen
 
 | # | Station | Aussage, die rot wird | Hürde | heute |
 |---|---|---|---|---|
-| 1 | installieren | Jeder Pfad, den `ngc-api` **schreibt**, muss von `ReadWritePaths=` der Unit gedeckt sein, die das ulh-Skript für dieses Teil schreibt. Beide Hälften werden aus den beiden Repos **gelesen**, nicht abgetippt. | 1 | **ROT** |
-| 2 | API und Controller laufen | `tools/build-servers.sh` muss es geben, muss laufen, und die Programme, die es hinterlässt, müssen auf `-version` eine Nummer melden, die das **Muster der Oberfläche** annimmt (aus `contracts/text.js` gelesen). Gegenprobe im selben Lauf: ein Bau **ohne** `-ldflags` muss von demselben Muster abgelehnt werden. | 2 | **ROT** |
+| 1 | installieren | **A:** Jeder Pfad, den `ngc-api` **schreibt**, muss von `ReadWritePaths=` der Unit gedeckt sein — beide Hälften aus den beiden Repos **gelesen**, nicht abgetippt. **B:** die Installation kommt mit Code 0 durch, und ein Prozess in der **echten** Sandbox der Unit kann `/etc/ngc/trust-anchor.json` schreiben. | 1 | **ROT**, in beiden Phasen |
+| 2 | API und Controller laufen | **A:** `tools/build-servers.sh` muss es geben, muss laufen, und die Programme müssen auf `-version` eine Nummer melden, die das **Muster der Oberfläche** annimmt (aus `contracts/text.js` gelesen); Gegenprobe im selben Lauf: ein Bau **ohne** `-ldflags` muss abgelehnt werden. **B:** das **installierte** `/usr/lib/ngc/ngc-api` meldet so eine Nummer, `ngc-api.service` ist aktiv und behält **eine** MainPID über 10 s. | 2 | grün |
 | 3 | Controller koppeln | Kopplung gelingt und der Controller meldet sich. | — | UNMEASURABLE |
 | 4 | aufnehmen | Ein frisch aufgenommener Controller ist über die Oberfläche **änderbar** — nicht nur `rootUsers: []`. | 4 | UNMEASURABLE |
 | 5 | Systemrechte setzen | Systemrechte sind über die Oberfläche setzbar. | 4 | UNMEASURABLE |
@@ -81,23 +115,60 @@ Warum 3, 4, 5, 6 und 8 keine statische Hälfte haben, steht als Kommentar im Lau
 Grund je Station, damit der Nächste eine Lücke in der Suche sehen kann statt einem Satz zu glauben
 (`messen.md`: eine Abwesenheit belegt man mit Orten).
 
-## 4. Die roten Stationen sind lebende Befunde
+## 4. Was der Lauf gefunden hat
 
-Gemessen auf dieser Zweigspitze (`main` vom 23.10.2026, 17:1x): **zwei rot**, Ausstiegscode 1.
+Gemessen am 23.10.2026, `main` eingemischt, beide Phasen in einem Zug: **2 rot, 6 unmeasurable**,
+Ausstiegscode 1.
 
-1. `ngc-api.service` (ulh `ngc-kette`) gewährt `/var/lib/ngc /etc/ngc/tls`; die API schreibt
-   `/etc/ngc/trust-anchor.json`. **Hürde 1 ist nicht behoben**, nur auf der einen Maschine
-   umgangen.
-2. Es gibt kein `tools/build-servers.sh`. **Hürde 2 kann jederzeit wiederkehren**, weil der
-   nächste Release wieder von Hand gebaut wird.
+### Hürde 1 ist nicht behoben, und Phase B zeigt sie am laufenden System
 
-**Station 7 ist grün — und das ist die erste echte Probe des Laufs.** Bei der ersten Messung
-(Basis `b782635`) war sie rot, weil `data.go` dort noch `0o700` schrieb. PR 92 hat daraus `0o711`
-gemacht; derselbe Lauf, unverändert, meldet seitdem `ok`. Die Station folgt also der Behebung und
-nicht einer abgetippten Zahl.
+```
+station 1 installieren: FAIL -- ngc-api.service grants ProtectSystem=strict with
+  ReadWritePaths='/var/lib/ngc /etc/ngc/tls', and a process in that sandbox CANNOT write
+  /etc/ngc/trust-anchor.json: touch: cannot touch '…': Read-only file system
+```
 
-Behoben wird 1 nicht hier: die Datei liegt in einem anderen Repo auf Zweigen, an denen andere
-Sitzungen arbeiten. Der Auftrag dieses Zuges war der **Lauf**.
+Die Installation lief dabei mit **Code 0** durch, die API läuft, der Einmal-Code wurde gezeigt —
+und der Vertrauensanker ist trotzdem unschreibbar. Genau die Lage vom Oktober.
+
+**Beweis, dass die Aussage der Behebung folgt** (am laufenden System, Drop-in, `systemctl show`
+sieht ihn):
+
+| Lage | `ReadWritePaths` | Schreiben |
+|---|---|---|
+| wie installiert | `/var/lib/ngc /etc/ngc/tls` | **geht nicht** |
+| Drop-in mit `/etc/ngc` | `/var/lib/ngc /etc/ngc` | **geht** |
+| Kontrolle: `RestartSec=7` dazu | `/var/lib/ngc /etc/ngc` | geht (unverändert) |
+| Drop-in weg | `/var/lib/ngc /etc/ngc/tls` | **geht nicht** |
+
+### Hürde 2 ist behoben — von diesem Zug
+
+`tools/build-servers.sh` baut die drei Programme mit `-ldflags "-s -w -X main.Version=…"` aus den
+`VERSION`-Dateien. Station 2 **führt es aus** und fragt die Programme; die Gegenprobe im selben
+Lauf verlangt, dass ein Bau ohne das Flag von demselben Muster **abgelehnt** wird. Auf der
+Maschine meldet das installierte `/usr/lib/ngc/ngc-api` **0.2.0**, der Dienst ist aktiv und
+behielt eine MainPID über 10 s.
+
+### Neu gefunden: ohne eigenen Store kommt keine Installation zustande
+
+Nicht gesucht, vom Lauf gefunden. Mit beiden Store-Antworten leer bricht `ngc-all.sh install` ab:
+
+> NGC has no official app store yet, so this installation needs a store of its own: give its
+> address and its key in the two questions about the store. Leaving them empty would write a
+> placeholder into `/etc/ngc/api.json`, and the API refuses that file.
+
+Eine Installation aus einem veröffentlichten Release ist heute also **nur** möglich, wenn der
+Admin sich einen Store ausdenkt. Phase B nennt darum einen (`https://store.erstlauf.invalid`),
+sagt das laut, und Station 6 bleibt deshalb unmeasurable — dort antwortet nichts.
+
+### Hürde 5 war die erste echte Probe des Laufs
+
+Bei der ersten Messung (Basis `b782635`) war Station 7 rot, weil `data.go` dort noch `0o700`
+schrieb. PR 92 hat daraus `0o711` gemacht; derselbe Lauf, unverändert, meldet seitdem `ok`. Die
+Station folgt also der Behebung und nicht einer abgetippten Zahl.
+
+Hürde 1 wird hier nicht behoben: die Datei liegt im **ulh**-Repo auf Zweigen, an denen andere
+Sitzungen arbeiten.
 
 ## 5. Der Lauf prüft erst sich selbst
 

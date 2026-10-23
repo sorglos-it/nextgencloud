@@ -63,6 +63,13 @@ probe=$( (exit 7) >/dev/null 2>&1 || echo "$?")
 ulh=${NGC_ULH:-}
 ulh_ref=${NGC_ULH_REF:-}
 machine=""
+mstaged=${NGC_MACHINE_STAGED:-/root/release/dist}
+mulh=${NGC_MACHINE_ULH:-/root/release/ulh}
+mkey=${NGC_MACHINE_RELEASE_KEY:-}
+# Extra options for ssh and scp, for a target that is not in ~/.ssh/config -
+# a port, an identity, another config file. Taken from the environment so that
+# nothing here has to write into the user's ssh configuration.
+sshopts=${NGC_SSH_OPTS:-}
 while [ $# -gt 0 ]; do
 	case $1 in
 	--ulh)
@@ -75,6 +82,18 @@ while [ $# -gt 0 ]; do
 		;;
 	--machine)
 		machine=${2:-}
+		shift 2
+		;;
+	--machine-staged)
+		mstaged=${2:-}
+		shift 2
+		;;
+	--machine-ulh)
+		mulh=${2:-}
+		shift 2
+		;;
+	--machine-release-key)
+		mkey=${2:-}
 		shift 2
 		;;
 	-h | --help)
@@ -258,12 +277,20 @@ if [ ! -x "$builder" ]; then
 else
 	out=$work/servers
 	mkdir -p "$out"
-	"$builder" "$out" >"$work/build.log" 2>&1 ||
-		broken 2 "$s2" "$builder failed, so this station says nothing about versions: $(tr '\n' ' ' <"$work/build.log")"
+	# The programs have to RUN to be asked, so they are built for THIS machine,
+	# not for the release target: a linux binary answers nothing on a developer's
+	# Windows. The flag that stamps the number is the same work for every target,
+	# and which one was asked is said in the station's message.
+	hostos=$(go env GOHOSTOS)
+	hostarch=$(go env GOHOSTARCH)
+	ext=""
+	[ "$hostos" = windows ] && ext=".exe"
+	NGC_BUILD_OS="$hostos" "$builder" "$out" "$hostarch" >"$work/build.log" 2>&1 ||
+		broken 2 "$s2" "$builder failed for $hostos/$hostarch, so this station says nothing about versions: $(tr '\n' ' ' <"$work/build.log")"
 	bad=0
 	for name in ngc-api ngc-controller; do
-		bin=$out/$name
-		[ -x "$bin" ] || {
+		bin=$out/$name$ext
+		[ -s "$bin" ] || {
 			fail 2 "$s2" "$builder wrote no $name into the directory it was given, so the release has no stamped $name"
 			bad=1
 			continue
@@ -277,14 +304,14 @@ else
 	# The control in the other direction, and it is not decoration: a pattern
 	# that accepts everything would make this station green for ever. An
 	# unstamped build has to be refused by the SAME pattern in the SAME run.
-	GOFLAGS="-buildvcs=false" go build -o "$work/plain" ./apps/server-api ||
+	GOFLAGS="-buildvcs=false" go build -o "$work/plain$ext" ./apps/server-api ||
 		broken 2 "$s2" "./apps/server-api does not build, so the control of this station cannot be made"
-	plain=$("$work/plain" -version 2>&1 | head -1 | awk '{print $2}')
+	plain=$("$work/plain$ext" -version 2>&1 | head -1 | awk '{print $2}')
 	grep -Eq -- "$jsre" <<<"$plain" && {
 		fail 2 "$s2" "a build WITHOUT -ldflags reports '$plain' and the interface accepts it - then this station can no longer tell a stamped build from an unstamped one and proves nothing"
 		bad=1
 	}
-	[ "$bad" = 0 ] && pass 2 "$s2" "$builder produced ngc-api and ngc-controller with versions the interface's validVersion takes, and an unstamped build is refused by the same pattern"
+	[ "$bad" = 0 ] && pass 2 "$s2" "$builder produced ngc-api and ngc-controller for '"$hostos/$hostarch"' with versions the interface's validVersion takes, and an unstamped build is refused by the same pattern"
 fi
 
 # ---------------------------------------------------------------------------
@@ -316,7 +343,36 @@ if [ -z "$machine" ]; then
 	unmeasurable 5 "Systemrechte setzen" "needs an adopted controller; pass --machine <ssh target>"
 	unmeasurable 6 "Katalog da" "needs a running API with a store in its trust list; pass --machine <ssh target>"
 else
-	unmeasurable 3 "Controller koppeln" "--machine $machine was given, but the machine phase of this run is WRITTEN AND NEVER EXECUTED (tools/erstlauf-maschine.sh); run it by hand and read docs/erstlauf.md first"
+	# Phase B. The companion script goes over as a file and runs there; its
+	# station lines are in the same shape as the ones above and are taken as
+	# they come, because the machine is the only place that can answer them.
+	# What is counted here is counted out of its OUTPUT and not out of its exit
+	# code alone - a run whose lines were lost must not become a green total.
+	command -v ssh >/dev/null 2>&1 || broken 3 "Maschinenlauf" "no ssh on this machine, so --machine cannot reach $machine"
+	# shellcheck disable=SC2086
+	scp $sshopts -q -- "$root/tools/erstlauf-maschine.sh" "$machine:/tmp/erstlauf-maschine.sh" ||
+		broken 3 "Maschinenlauf" "tools/erstlauf-maschine.sh could not be copied to $machine"
+	mlog=$work/machine.log
+	echo "erstlauf: phase B on $machine (its station lines are indented; the ones above come out of the sources):"
+	set +e
+	# shellcheck disable=SC2029
+	ssh $sshopts -- "$machine" "bash /tmp/erstlauf-maschine.sh --staged '$mstaged' --ulh '$mulh'${mkey:+ --test-release-key '$mkey'}" >"$mlog" 2>&1
+	mrc=$?
+	set -e
+	sed 's/^/    /' "$mlog"
+	nlines=$(grep -c '^station ' "$mlog" || true)
+	# A machine run that printed no station line printed nothing this run may
+	# count. That is the "a run that hits no case still reports all in order"
+	# trap of messen.md, and it is caught here instead of being believed.
+	[ "$nlines" -ge 1 ] ||
+		broken 3 "Maschinenlauf" "the run on $machine printed no station line (exit $mrc), so it measured nothing"
+	mfail=$(grep -c '^station .*: FAIL' "$mlog" || true)
+	munm=$(grep -c '^station .*: UNMEASURABLE' "$mlog" || true)
+	fails=$((fails + mfail))
+	unmeasured=$((unmeasured + munm))
+	unmeasured_list="${unmeasured_list}$(grep '^station .*: UNMEASURABLE' "$mlog" | sed 's/^/    /')
+"
+	echo "erstlauf: the machine run on $machine ended with code $mrc: $nlines station(s), $mfail red, $munm unmeasurable"
 fi
 
 # ---------------------------------------------------------------------------
@@ -331,7 +387,7 @@ fi
 # below it. A mode without the execute bit for others makes that impossible,
 # whatever the number is.
 # ---------------------------------------------------------------------------
-s7="App einrichten"
+s7="App einrichten (Quelle)"
 datago=apps/server-controller/classes/runtime/data.go
 mode=$(sed -n 's/.*mkdirAll(paths\.appData, 0o\([0-7]*\)).*/\1/p' "$datago" | head -1)
 [ -n "$mode" ] || broken 7 "$s7" "no 'mkdirAll(paths.appData, 0o...)' in $datago - the directory of the app data is made somewhere else now"
