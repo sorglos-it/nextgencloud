@@ -4749,6 +4749,7 @@ das ganze Netz der Anlage, einschließlich `ngc-api`.
 **Getrennt gehalten:** gemessen sind die Tabelle der Schalter, die vier Befunde, die cgroup-Dateien
 und die drei Proben samt Gegenproben. Abgewogen sind die Folge des geteilten `TasksMax`, die
 Wirkung von `nosuid` auf `/data` und jeder der sechs Punkte dieser letzten Liste.
+
 ## Punkt 73: Ein zweiter Mensch — der Vertrag konnte es die ganze Zeit, die Oberfläche hatte keine Tür
 
 **Gemessen am 24.10.2026** gegen `origin/main` (`9753a8c`) und gegen die laufende Anlage

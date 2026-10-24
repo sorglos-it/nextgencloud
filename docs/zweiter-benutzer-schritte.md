@@ -3,7 +3,7 @@
 **Stand 24.10.2026.** Was hier steht, kann **nur ein Mensch** tun: die neue Fassung der
 Vertrauensliste wird im Browser mit dem Schlüssel der Person unterschrieben, und dieser
 Schlüssel ist ihr Passwort. Kein Agent tippt es. Alles andere ist gebaut und gemessen
-(`docs/vertraege-v1.2.md`, Punkt 72).
+(`docs/vertraege-v1.2.md`, Punkt 73).
 
 ## WELCHE Anlage — bitte zuerst lesen
 
@@ -103,4 +103,4 @@ sudo cp /root/zweiter-benutzer-backup-20261024/shell.css /var/www/ngc/public/ass
 
 Ein Benutzer, der schon in der Vertrauensliste steht, geht davon **nicht** weg: er steht in der
 unterschriebenen Liste, nicht in der Oberfläche. Ihn wieder loszuwerden heißt, eine Fassung
-ohne ihn zu bauen — dafür gibt es heute kein Formular, und das ist in Punkt 72 vermerkt.
+ohne ihn zu bauen — dafür gibt es heute kein Formular, und das ist in Punkt 73 vermerkt.
