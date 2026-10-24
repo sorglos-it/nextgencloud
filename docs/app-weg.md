@@ -598,9 +598,17 @@ geschätzt, sondern belegt:
   und `12:25:22` **nicht** — und genau 15 bzw. 19 Sekunden danach entstand der Systembenutzer
   der App.
 
-Es hat also **jemand anderes** in diesem Fenster eingerichtet. Wer, ist **nicht gemessen** —
-eine andere Sitzung oder ein Mensch am Browser. Für den Weg heißt es: **zwei voneinander
-unabhängige Einrichtungen** auf 0.2.2 sind gelungen, und die erste ist nicht meine.
+Es hat also jemand anderes in diesem Fenster eingerichtet — **und das war Thomas selbst, von
+Hand im Browser.** Auf die Frage hin hat er es bestätigt; die beiden Anmeldungen um 12:25:18 und
+12:25:22 und die drei `zeit`-Aufrufe danach sind ein Mensch, der die App einrichtet, das Fenster
+öffnet und einmal auf „Noch einmal lesen" drückt.
+
+**Und das ist der bessere Beleg, als meiner allein es gewesen wäre.** Zwei voneinander
+unabhängige Einrichtungen auf 0.2.2 sind gelungen, auf zwei verschiedenen Wegen: eine **von
+Hand**, ohne dieses Papier und ohne Skript, zweieinhalb Minuten vor meiner; und eine
+**geskriptet**, die das Abbild erneut aus dem Paket lud und den Behälter ersetzte. Ein Weg, den
+nur ein Skript gehen kann, wäre für diese Anleitung wertlos — ein Mensch ist ihn gegangen, und
+zwar der, für den sie geschrieben ist.
 
 **Eine Beobachtung, die dabei offen blieb:** der Controller meldet für jeden `zeit`-Aufruf über
 NGC `bytes=510` auf `stderr`. Der Dienst schreibt dort aber nur eine Zeile von **33 Byte** —
@@ -1116,9 +1124,9 @@ die neue Fassung — um 12:28:08 sagte die Oberfläche:
 
 Der Abbruch ist also **auf 0.2.1 gemessen und auf 0.2.2 nicht mehr aufgetreten**, und das ist
 nicht nur die Oberfläche: im Protokoll von `svc-1` steht zwischen 12:26 und 12:31 **kein**
-`tunnel ended` und **kein** `tunnel failed`. Dazu kommt, dass eine andere Sitzung dieselbe App
+`tunnel ended` und **kein** `tunnel failed`. Dazu kommt, dass **Thomas dieselbe App von Hand**
 aus demselben Katalog um 12:25:40 eingerichtet hat, ebenfalls ohne Abbruch — zwei unabhängige
-Einrichtungen auf 0.2.2, eine Messung auf 0.2.1. Dass 0.2.2 es behebt, ist damit immer noch
+Einrichtungen auf 0.2.2, von zwei verschiedenen Händen, gegen eine Messung auf 0.2.1. Dass 0.2.2 es behebt, ist damit immer noch
 **nicht** belegt (niemand hat die Ursache gefunden), aber es ist mehr als ein glücklicher Lauf. Warum die alte Fassung den Vertrag
 brach, ist nicht gemessen und wird es wohl auch nicht mehr.
 
