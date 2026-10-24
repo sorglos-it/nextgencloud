@@ -761,6 +761,35 @@ einzigen Benutzers enthält, steht in der Datei daneben; ins Repository gehört
 sie nicht. Der richtige Rückweg bleibt `mariabackup` mit den Schlüsseln unter
 `/etc/ngc/db-keys`, und das Werkzeug dafür gehört der Sicherungs-Sitzung.
 
+**Entschieden am 24.10.2026 nach der Rangfolge Sicherheit = Stabilität vor
+Leistung** (von Thomas delegiert), weil die Sicherungs-Sitzung zwei Orte
+vorschlagen wollte statt einem:
+
+**Nicht zwei Ordner auf derselben Platte.** Das ist die Form, die wie Trennung
+aussieht und keine ist — dieselbe Maschine, dasselbe Konto, dieselben Rechte.
+Wer den einen Ordner lesen kann, kann auch den anderen. Die Zahlen sagen, wo
+die Trennung wirklich liegt, und sie sind gemessen:
+
+| | Größe | gehört |
+|---|---|---|
+| die Daten (`/var/lib/mysql`, App-Daten, Dumps) | **285 MB** | nach `d:\ngc_backup`, wie benannt |
+| die Schlüssel (`/etc/ngc/db-keys`: `keyfile.key`, `keys.enc`, `sst.pass`) | **224 Byte** | in **keinen Ordner** |
+
+224 Byte schließen 285 MB auf. Was sie gefährlich macht, ist nicht ihr Ort,
+sondern dass sie alles aufschließen und in eine Textnachricht passen — also
+gehören sie dorthin, wo dieses Haus Geheimnisse hält (Vaultwarden, der
+Passwortmanager auf dem Stick), nicht in ein Verzeichnis daneben. Ein
+Sicherungsordner ohne die Schlüssel ist Geheimtext; mit ihnen ist er die
+Anlage.
+
+**Und zu meiner eigenen Datei, nach derselben Rangfolge:** sie bleibt liegen.
+Sie trägt einen argon2id-Abdruck, keinen Klartext, auf dem Rechner ihres
+Besitzers in einem Ordner, den er selbst benannt hat — und sie ist zur Stunde
+die einzige Sicherung der Datenbank, die existiert. Sicherheit und Stabilität
+stehen hier gleich, und bei Gleichstand wiegt „es gibt überhaupt eine
+Sicherung" mehr als „ein Abdruck liegt auf der eigenen Platte". Sobald das
+richtige Werkzeug einmal dorthin geschrieben hat, kann sie weg.
+
 Zwei Zahlen aus den Nachbarsitzungen, die beim Wiederanlauf zählen und hier
 stehen, damit sie nicht in Nachrichten verschwinden — **von dort gemessen,
 nicht von mir**: kein App-Container hat eine eigene cgroup, es greift
