@@ -5608,4 +5608,25 @@ svc-1 ein zweites Mal. Das Zurückspielen der MariaDB ist nicht gefahren.
 - Ob die Wegwerf-Maschine stehen bleibt. Sie trägt eine Klartextkopie der App-Daten von svc-1
   und dessen `controller.json`; solange sie steht, ist sie so empfindlich wie svc-1 selbst.
 
-Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitt 6.
+**Nachtrag vom selben Tag, und er korrigiert den Vorschlag dieses Punktes.** „Mehrere
+Verwahrstellen für den Schlüssel, eine für die Daten" war zu schwach; die Sitzung „Was
+passiert, wenn ein Rechner ausfällt" hat nachgemessen, woran es wirklich hängt:
+`/etc/ngc/db-keys` sind **224 Byte**, die eine **285 MB** große Datenbank aufschließen. Was sie
+gefährlich macht, ist nicht ihr Ort, sondern dass sie alles aufschließen und in eine
+Textnachricht passen — zwei Ordner auf derselben Platte sind deshalb keine Trennung, sondern
+dieselbe Maschine, dasselbe Konto, dieselben Rechte.
+
+`tools/sicherung.sh` nimmt daraufhin **zwei Ziele** und verweigert ohne das zweite den Dienst;
+ein Lauf, der Daten und Schlüssel an einen Ort schreiben soll, bricht ab (drei Fälle gemessen,
+Code 2, keine Ordner bleiben liegen). Der Lauf mit getrennten Zielen: `ok`, 313 s, **348 MB
+Daten gegen 75 KB Schlüssel** für fünf Rechner — klein genug für einen Passwortmanager, was
+das Argument praktisch macht und nicht nur richtig. Und geprüft, ob die Trennung eine ist: alle
+18 Geheimnisse aus dem Schlüssel-Ordner gegen den Daten-Ordner gesucht, **0 von 18** gefunden.
+Die Wortfunde (`dbKey`, `PRIVATE KEY`) sind Feldnamen im NGC-Programm und Fehlermeldungen in
+`libapt-private.so` des Grundabbilds, keine Schlüssel.
+
+Offen bleibt `app-daten.tar`: Klartext, 110 bis 201 MB, zu groß für einen Passwortmanager, und
+es liegt deshalb bei den Daten, obwohl es ohne jeden Schlüssel aufgeht. Es vor dem
+Wegschreiben zu verschlüsseln wäre die bessere Form und ist eine Entscheidung.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.

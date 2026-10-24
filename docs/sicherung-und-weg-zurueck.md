@@ -512,6 +512,85 @@ macht).
 
 ---
 
+## 9. Zwei Ordner auf einer Platte sind keine Trennung (gemessen)
+
+Abschnitt 4 endet mit „mehrere Verwahrstellen für den Schlüssel, eine für die Daten". Das war
+richtig und zu schwach, und die Schärfung kommt wieder von der Sitzung „Was passiert, wenn ein
+Rechner ausfällt" — **ihre Messung**:
+
+```
+/etc/ngc/db-keys   keyfile.key 64 B, keys.enc 96 B, sst.pass 64 B  =  224 Byte
+/var/lib/mysql                                                     =  285 MB
+```
+
+**224 Byte schließen 285 MB auf.** Was sie gefährlich macht, ist nicht ihr Ort, sondern dass sie
+alles aufschließen **und in eine Textnachricht passen**. Zwei Ordner auf derselben Platte sind
+damit die Form, die wie Trennung aussieht und keine ist: dieselbe Maschine, dasselbe Konto,
+dieselben Rechte — wer den einen liest, liest den anderen. Mein eigener Vorschlag „zwei Orte"
+war genau diese Form.
+
+### Was das Werkzeug jetzt tut
+
+`tools/sicherung.sh` nimmt **zwei Ziele** und verweigert ohne das zweite den Dienst. Die
+Schlüssel gehen nicht in den Daten-Ordner, und ein Lauf, der beides an einen Ort schreiben
+soll, bricht ab und sagt warum. Gemessen, alle drei Fälle, und nichts bleibt liegen:
+
+| Aufruf | Antwort |
+|---|---|
+| ohne `-schluessel` | Aufruf wiederholt, Code 2, keine Ordner angelegt |
+| Daten und Schlüssel derselbe Ordner | **abgebrochen**, Code 2, mit den 224 Byte als Begründung |
+| Schlüsselordner **im** Datenordner | **abgebrochen**, Code 2 — ein Ordner darin ist ein Ordner |
+
+Der Lauf gegen alle fünf Maschinen danach: `sicherung: ok`, Ausstiegscode 0, 313 s.
+
+| | Größe | Inhalt |
+|---|---|---|
+| Daten-Ordner | 348 MB | `state.db` je Controller, `mariadb.tar`, `app-daten.tar` |
+| **Schlüssel-Ordner** | **75 KB** | `etc-ngc.tar` je Rechner, 10–20 KB, plus eine Notiz je Rechner |
+
+75 KB für fünf Rechner. Damit ist das Argument der anderen Sitzung nicht nur richtig, sondern
+praktisch: **das passt als Anhang in einen Passwortmanager**, und der Daten-Ordner darf dann
+liegen, wo Platz ist. Der Schlüssel-Ordner ist in den Notizen ausdrücklich als *Durchfuhr*
+bezeichnet — hinein, in den Passwortmanager, von der Platte löschen.
+
+### Ist es wirklich eine Trennung? An den Werten geprüft, nicht an den Wörtern
+
+Ein `grep` nach dem Wort `dbKey` findet im Daten-Ordner sieben Dateien, nach `BEGIN` drei, nach
+`PRIVATE KEY` zwei. Das sieht nach einem Leck aus und ist keines — und der Unterschied ist
+genau der zwischen einem Wort und einem Wert:
+
+- `dbKey`, `noiseKey`, `signKey` in `app-daten.tar` sind **Feldnamen im NGC-Programm selbst**:
+  das Abbild der App trägt `/usr/lib/ngc/ngc-uhr` beziehungsweise den Controller, und die
+  JSON-Namen stehen als Zeichenketten darin.
+- `PRIVATE KEY` steht in `libapt-private.so` des Grundabbilds — eine Fehlermeldung von
+  OpenSSL, kein Schlüssel. Die Dateiliste nennt nur `.so`-Dateien.
+- `keyfile.key` und `keys.enc` in `mariabackup.log` und `mariadb.tar` sind die **Pfade** in
+  `backup-my.cnf`, nicht die Dateien.
+- `dbKey` in den `inhalt.txt` und im `LIESMICH.txt` ist mein eigener Text, der das Wort erklärt.
+
+Die Messung, die zählt, sucht deshalb nach den **Werten**: alle 18 Geheimnisse aus dem
+Schlüssel-Ordner (vier `dbKey`, die `noiseKey`, `signKey`, `storeKey`, `secretKey`,
+`challengeKey` und das Datenbank-Kennwort), je die ersten 24 Zeichen, gegen den ganzen
+Daten-Ordner:
+
+```
+18 Geheimnisse aus dem Schluessel-Ordner gelesen
+0 von 18 Geheimnissen stehen im DATEN-Ordner.
+```
+
+**Null von achtzehn.** Die Trennung ist eine. Der ausgepackte Prüfordner ist danach wieder
+gelöscht.
+
+### Die eine Ausnahme bleibt, und sie lässt sich nicht wegsortieren
+
+`app-daten.tar` ist Klartext (Abschnitt 4) und mit 110 bis 201 MB zu groß für einen
+Passwortmanager. Es liegt also im Daten-Ordner, obwohl es ohne jeden Schlüssel aufgeht. Das
+`LIESMICH.txt` sagt es in zwei Sätzen, statt es zu verschweigen: diese eine Datei ist wie ein
+Zugang zu behandeln. Eine bessere Form dafür ist offen — sie wäre, die App-Daten vor dem
+Wegschreiben zu verschlüsseln, und das ist eine Entscheidung und kein Handgriff.
+
+---
+
 ## Was gemessen und was abgewogen ist
 
 **Gemessen** (Lauf, Zahl, Ausstiegscode):
@@ -529,6 +608,9 @@ macht).
   das Nichtanlaufen der Uhr samt Gegenprobe mit angehaltenem Nachbarn.
 - Abschnitt 7 ganz, einschließlich des zweiten Laufs mit der Prüfung (180 s) und der
   Gegenprobe, dass sie bei einem einzigen Byte greift.
+- Abschnitt 9 ganz — die drei Verweigerungen, der Lauf mit getrennten Zielen (313 s, 348 MB
+  gegen 75 KB) und die Suche nach den 18 Werten im Daten-Ordner. Die 224 Byte gegen 285 MB sind
+  die Messung der Sitzung „Was passiert, wenn ein Rechner ausfällt".
 - Abschnitt 8 ganz — die beiden Fälle der Transportprüfung sind meine Messung; der
   47-KB-Dump und die Wiederkehr von db-1 in vier Sekunden sind die Messung der Sitzung „Was
   passiert, wenn ein Rechner ausfällt" und stehen hier mit ihr als Herkunft. Ebenso in
@@ -541,9 +623,13 @@ macht).
   eingesammelt werden — dass sie *fehlen* ist gemessen, dass sie beim Zurückspielen *gebraucht*
   werden ist für `/etc/ngc` und `state.db` inzwischen gemessen (Abschnitt 6) und für die
   MariaDB weiterhin geschlossen.
-- Abschnitt 4 der Unterabschnitt zur Aufbewahrung.
+- Abschnitt 4 der Unterabschnitt zur Aufbewahrung — in Abschnitt 9 geschärft und dort zum
+  Teil gemessen.
 - Abschnitt 5 die Schritte 2 und 3 — Kopplungscode und Eintrag in die Vertrauensliste. Die
   brauchen einen angemeldeten Admin in der Oberfläche; Schritt 1, 4 und 5 sind gefahren.
+- Abschnitt 9 die bessere Form für `app-daten.tar`: dass es Klartext ist und zu groß für
+  einen Passwortmanager, ist gemessen; es vor dem Wegschreiben zu verschlüsseln ist ein
+  Vorschlag und nicht gebaut.
 - Abschnitt 8 der Unterschied zwischen `safe_to_bootstrap: 1` und `0` — **nicht einmal
   abgewogen, sondern offen**: den zweiten Fall hat niemand erzeugt, und es stehen bewusst keine
   Zeilen dafür hier.

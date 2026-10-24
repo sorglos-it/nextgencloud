@@ -41,8 +41,28 @@
 # what came back and what did not when they were walked on a fresh machine,
 # is in the document named above.
 #
+# THE KEYS DO NOT GO WHERE THE DATA GO, and this script refuses to put them
+# there. The reason is a measurement of the session that switched the machines
+# off, and it is sharper than "keep them apart":
+#
+#	/etc/ngc/db-keys   keyfile.key 64 B, keys.enc 96 B, sst.pass 64 B = 224 Byte
+#	/var/lib/mysql                                                    = 285 MB
+#
+# 224 bytes unlock 285 megabytes. What makes them dangerous is not where they
+# lie but that they unlock everything AND fit in a text message - so they
+# belong where a house keeps secrets (a password manager), not in a second
+# folder next to the first. Two folders on one disk are the shape that looks
+# like separation and is none: same machine, same account, same rights.
+# Whoever can read the one reads the other.
+#
+# So this takes TWO targets and writes the keys to the second one. Without it
+# the run does not start, and it refuses a second target that lies on the
+# first - fail closed, because the one mistake nobody notices is the backup
+# that is complete in one place.
+#
 # Usage:
-#   sicherung.sh <ziel-ordner> <benutzer@rechner> [<benutzer@rechner> ...]
+#   sicherung.sh <daten-ordner> -schluessel <schluessel-ordner> \
+#                <benutzer@rechner> [<benutzer@rechner> ...]
 #
 # The proof of a complete run is the printed line "sicherung: ok", never the
 # exit code alone (tools/erstlauf.sh is held to the same rule and says why).
@@ -58,10 +78,18 @@ SSH_KEY=${NGC_SSH_KEY:-}
 
 usage() {
 	cat >&2 <<'EOF'
-Aufruf: sicherung.sh <ziel-ordner> <benutzer@rechner> [<benutzer@rechner> ...]
+Aufruf: sicherung.sh <daten-ordner> -schluessel <schluessel-ordner> \
+                     <benutzer@rechner> [<benutzer@rechner> ...]
 
-Der Ziel-Ordner wird angelegt und darf noch nicht da sein: eine Sicherung, die
-in eine vorhandene hineinschreibt, ist zwei halbe Staende.
+Beide Ordner werden angelegt und duerfen noch nicht da sein: eine Sicherung,
+die in eine vorhandene hineinschreibt, ist zwei halbe Staende.
+
+Die Schluessel gehen NICHT in den Daten-Ordner. 224 Byte unter
+/etc/ngc/db-keys schliessen 285 MB Datenbank auf, und der dbKey aus
+controller.json oeffnet die Datenbank jedes Controllers und die Datenordner
+aller Apps. Der Schluessel-Ordner ist nur die Durchfuhr: was darin landet,
+gehoert in den Passwortmanager und danach geloescht. Zwei Ordner auf derselben
+Platte sind keine Trennung.
 
 Umgebung:
   NGC_SSH_KEY    Schluesseldatei fuer ssh
@@ -146,18 +174,46 @@ notiz() {
 	printf '%s\n' "$1" >>"$MANIFEST"
 }
 
-if [ $# -lt 2 ]; then
+if [ $# -lt 1 ]; then
 	usage
 	exit 2
 fi
 
 ZIEL=$1
 shift
-if [ -e "$ZIEL" ]; then
-	echo "sicherung: $ZIEL ist schon da - bitte einen neuen Ordner nennen." >&2
+SCHLUESSEL=
+if [ "${1:-}" = -schluessel ]; then
+	SCHLUESSEL=${2:-}
+	shift 2 || true
+fi
+if [ -z "$SCHLUESSEL" ] || [ $# -lt 1 ]; then
+	usage
 	exit 2
 fi
-mkdir -p "$ZIEL"
+for d in "$ZIEL" "$SCHLUESSEL"; do
+	if [ -e "$d" ]; then
+		echo "sicherung: $d ist schon da - bitte einen neuen Ordner nennen." >&2
+		exit 2
+	fi
+done
+
+# The refusal this script exists for. Both paths are made absolute first, so
+# that "." and a relative name cannot hide that they are the same place, and
+# then neither may lie inside the other: a key folder under the data folder is
+# one folder, whatever it is called.
+mkdir -p "$ZIEL" "$SCHLUESSEL"
+Z_ABS=$(cd "$ZIEL" && pwd -P)
+S_ABS=$(cd "$SCHLUESSEL" && pwd -P)
+if [ "$Z_ABS" = "$S_ABS" ] || [ "${S_ABS#"$Z_ABS"/}" != "$S_ABS" ] || [ "${Z_ABS#"$S_ABS"/}" != "$Z_ABS" ]; then
+	rmdir "$SCHLUESSEL" "$ZIEL" 2>/dev/null || true
+	echo "sicherung: Daten und Schluessel sollen an EINEN Ort - das ist keine Sicherung." >&2
+	echo "sicherung:   Daten:     $Z_ABS" >&2
+	echo "sicherung:   Schluessel: $S_ABS" >&2
+	echo "sicherung: Wer den einen Ordner lesen kann, liest auch den anderen. 224 Byte" >&2
+	echo "sicherung: Schluessel schliessen 285 MB Datenbank auf; sie gehoeren in den" >&2
+	echo "sicherung: Passwortmanager, nicht in ein Verzeichnis daneben." >&2
+	exit 2
+fi
 STEMPEL=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # The one path this writes on the machines themselves, and it is removed again
@@ -170,7 +226,8 @@ for ziel in "$@"; do
 	name=$(fern "$ziel" hostname -s)
 	echo "sicherung: $ziel ($name)"
 	ordner="$ZIEL/$name"
-	mkdir -p "$ordner"
+	sordner="$SCHLUESSEL/$name"
+	mkdir -p "$ordner" "$sordner"
 	MANIFEST="$ordner/inhalt.txt"
 	# The one directory this makes on the machine, before anything is read:
 	# every part is written there first so it has a sha256 on both ends
@@ -183,12 +240,25 @@ for ziel in "$@"; do
 	#    is bytes nobody opens again - and because a machine that has none is
 	#    no NGC machine and the rest would be a quiet empty folder.
 	if fern "$ziel" test -d /etc/ngc; then
-		her "$ziel" /etc/ngc "$ordner/etc-ngc.tar" || fehlt "etc-ngc.tar"
-		notiz "etc-ngc.tar          DIE SCHLUESSEL. Ohne diese Datei ist alles andere hier wertlos."
-		notiz "                     controller.json: dbKey (oeffnet state.db UND die App-Datenordner),"
-		notiz "                     noiseKey (die Kennung dieses Rechners), anchor (Stand der Vertrauensliste)."
-		notiz "                     api.json: signKey, storeKey, secretKey, das Datenbank-Kennwort."
-		notiz "                     db-keys: der Schluessel der verschluesselten MariaDB-Tabellen."
+		her "$ziel" /etc/ngc "$sordner/etc-ngc.tar" || fehlt "etc-ngc.tar"
+		notiz "etc-ngc.tar          NICHT HIER. Die Schluessel dieses Rechners liegen im"
+		notiz "                     Schluessel-Ordner dieses Laufs, und ohne sie ist alles in"
+		notiz "                     diesem Ordner Geheimtext - ausser app-daten.tar."
+		{
+			printf 'Schluessel von %s (%s), %s\n\n' "$name" "$ziel" "$STEMPEL"
+			printf 'etc-ngc.tar  DIE SCHLUESSEL DIESES RECHNERS.\n'
+			printf '  controller.json  dbKey (oeffnet state.db UND die Datenordner aller Apps),\n'
+			printf '                   noiseKey (die Kennung dieses Rechners in der Vertrauensliste),\n'
+			printf '                   anchor, releaseKey.\n'
+			printf '  api.json         signKey, storeKey, secretKey, challengeKey, das Datenbank-Kennwort.\n'
+			printf '  db-keys          224 Byte, die 285 MB verschluesselte MariaDB aufschliessen.\n'
+			printf '  tls, db-ca       Zertifikate und ihre Schluessel.\n\n'
+			printf 'DIESER ORDNER IST NUR DIE DURCHFUHR. Was hier liegt, gehoert in den\n'
+			printf 'Passwortmanager und danach von dieser Platte geloescht. Solange es hier\n'
+			printf 'liegt, ist dieser Rechner so empfindlich wie %s selbst.\n\n' "$name"
+			printf 'sha256:\n'
+			printf '  %s\n' "$(cd "$sordner" && sha256sum etc-ngc.tar 2>/dev/null)"
+		} >"$sordner/inhalt.txt"
 	else
 		echo "sicherung: $name hat kein /etc/ngc - uebersprungen." >&2
 		notiz "etc-ngc.tar          FEHLT: dieser Rechner hat kein /etc/ngc."
@@ -267,30 +337,52 @@ for ziel in "$@"; do
 done
 
 cat >"$ZIEL/LIESMICH.txt" <<EOF
-Sicherung einer NextGenCloud-Anlage, $STEMPEL
+Sicherung einer NextGenCloud-Anlage - DIE DATEN, $STEMPEL
 
 Je Rechner ein Ordner, darin inhalt.txt mit der Liste und den Pruefsummen.
 
-DAS WICHTIGSTE IN EINEM SATZ: etc-ngc.tar ist der Schluessel zu allem anderen
-in diesem Ordner. Ohne ihn oeffnet weder state.db noch die MariaDB, von
-niemandem, auch nicht von NextGenCloud.
+DIE SCHLUESSEL LIEGEN NICHT HIER. Sie liegen im Schluessel-Ordner dieses
+Laufs, und das ist Absicht: 224 Byte unter /etc/ngc/db-keys schliessen 285 MB
+Datenbank auf, und der dbKey aus controller.json oeffnet die eigene Datenbank
+jedes Controllers und die Datenordner aller Apps. Ohne diese Dateien ist alles
+in diesem Ordner Geheimtext - von niemandem zu oeffnen, auch nicht von
+NextGenCloud.
 
-DIE EINE AUSNAHME, UND SIE IST WICHTIG: app-daten.tar ist KEIN Geheimtext. Auf
-der Maschine sind die Datenordner der Apps verschluesselt, aber beim Sichern
-lief der Dienst, also hat der Kern sie entschluesselt vorgelegt. Diese Datei
-oeffnet jeder, ohne Schluessel. Sie gehoert damit genauso weggeschlossen wie
-etc-ngc.tar - und sie ist der Grund, dass die Daten der Apps einen Verlust des
-dbKey ueberleben.
+MIT EINER AUSNAHME, UND SIE IST WICHTIG: app-daten.tar ist KEIN Geheimtext.
+Auf der Maschine sind die Datenordner der Apps verschluesselt, aber beim
+Sichern lief der Dienst, also hat der Kern sie entschluesselt vorgelegt. Diese
+Datei oeffnet jeder, ohne Schluessel. Sie ist zu gross fuer einen
+Passwortmanager und liegt darum hier - behandeln wie einen Zugang.
 
-DARAUS FOLGT FUER DIE AUFBEWAHRUNG: etc-ngc.tar gehoert an einen anderen Ort
-als der Rest - wer beides zusammen hat, hat die Anlage. Und jeder Rechner hat
-seinen EIGENEN dbKey (vier verschiedene auf dieser Anlage, gemessen): es gibt
-keinen einen Schluessel der Anlage, den man einmal wegschliesst.
+JEDER RECHNER HAT SEINEN EIGENEN dbKey (vier verschiedene auf dieser Anlage,
+gemessen): es gibt keinen einen Schluessel der Anlage, den man einmal
+wegschliesst.
 
 Der Weg zurueck ist in docs/sicherung-und-weg-zurueck.md beschrieben, Schritt
 fuer Schritt, und er ist einmal gegangen: auf einer frischen Maschine, die
 dieser Anlage nie gehoert hat, lief eine App aus dieser Sicherung wieder.
 Dort steht auch, was dabei NICHT zurueckkam.
+EOF
+
+cat >"$SCHLUESSEL/LIESMICH.txt" <<EOF
+Sicherung einer NextGenCloud-Anlage - DIE SCHLUESSEL, $STEMPEL
+
+DIESER ORDNER IST NUR DIE DURCHFUHR, KEIN AUFBEWAHRUNGSORT.
+
+Was hier liegt, gehoert in den Passwortmanager dieses Hauses und danach von
+dieser Platte geloescht. Je Rechner ein etc-ngc.tar; die Dateien sind klein
+genug dafuer (Groessenordnung 10 bis 20 KB je Rechner).
+
+Solange dieser Ordner hier steht, ist dieser Rechner so empfindlich wie die
+Anlage selbst: wer ihn und den Daten-Ordner hat, hat die Anlage - die
+Sicherung oeffnet auf einem beliebigen fremden Rechner, das ist gemessen.
+
+Darum liegt er nicht neben den Daten. Zwei Ordner auf derselben Platte waeren
+keine Trennung: dieselbe Maschine, dasselbe Konto, dieselben Rechte.
+
+UND NICHT WEGWERFEN, SOLANGE ER NICHT UMGEZOGEN IST: ohne diese Dateien ist
+der Daten-Ordner Geheimtext. Der Verlust ist endgueltig. Mehrere
+Verwahrstellen fuer die Schluessel, eine fuer die Daten.
 EOF
 
 if [ "$fehler" -ne 0 ]; then
