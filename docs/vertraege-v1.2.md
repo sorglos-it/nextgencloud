@@ -4749,3 +4749,164 @@ das ganze Netz der Anlage, einschließlich `ngc-api`.
 **Getrennt gehalten:** gemessen sind die Tabelle der Schalter, die vier Befunde, die cgroup-Dateien
 und die drei Proben samt Gegenproben. Abgewogen sind die Folge des geteilten `TasksMax`, die
 Wirkung von `nosuid` auf `/data` und jeder der sechs Punkte dieser letzten Liste.
+## Punkt 73: Ein zweiter Mensch — der Vertrag konnte es die ganze Zeit, die Oberfläche hatte keine Tür
+
+**Gemessen am 24.10.2026** gegen `origin/main` (`9753a8c`) und gegen die laufende Anlage
+(`ssh ngc`, Vertrauensliste in Fassung 6).
+
+Jede Messung der letzten Wochen lief mit **einem** Menschen, dem Verwalter aus der
+Ersteinrichtung. Dieser Punkt sagt, was einen zweiten aufgehalten hat, was davon jetzt gebaut
+ist, und was nur ein Mensch tun kann.
+
+### Die vier Stationen, einzeln gemessen
+
+| Station | Stand vor dem 24.10.2026 | Beleg |
+|---|---|---|
+| Ein Verwalter legt einen zweiten Benutzer an | **gibt es gar nicht** | Im ganzen Webinterface fasst **keine** Zeile `users` oder `roles` einer neuen Fassung an. `buildNextVersion` (`apps/web/public/assets/js/apps/users.js:188`) ist allgemein, hat aber genau **einen** Aufrufer (`:1349`, in `joinNode`), und jeder `change`-Rumpf, der dort hineingeht, schreibt nur `next.nodes`. |
+| Der zweite Benutzer bekommt eine **Rolle**, die nicht `admin` ist | **gibt es gar nicht, und das ist die zweite Lücke** | Eine Anlage verlässt die Ersteinrichtung mit **genau einer** Rolle: `admin` (`apps/web/public/assets/js/auth/setup.js:178`–`:181`, „One role"). Gegengeprobt an den Testdaten: `shared/testdata/trust.json`, Fassung 1, `roles` = `[{"name":"admin","level":"critical"}]`. Und `trust.List.Validate` weist einen Benutzer ab, dessen Rolle nicht in derselben Liste steht (`shared/trust/trust.go:581`, `l.Role(name)` → `ErrInvalid`). **Ein zweiter Benutzer ohne neue Rolle ist also zwangsläufig ein zweiter Verwalter.** |
+| Der zweite Benutzer meldet sich an | **nicht messbar** | Es gab keinen zweiten Benutzer. Die Station liegt hinter der ersten und wurde deshalb nicht behauptet, weder so noch so. |
+| Er sieht die Apps, für die seine Rolle `benutzen` hat | **nicht messbar, aus demselben Grund** | Der Weg ist gebaut und gelesen (`rights.Of` über die Rollen des Benutzers, `apps/server-api/classes/rights/rights.go:31`–`:54`), aber ohne zweiten Benutzer läuft er nie durch. |
+
+### Was `shared/` dafür gebraucht hat: **keine Zeile**
+
+Das ist das Ergebnis, und es ist eine Antwort auf die Anfrage aus
+`docs/superpowers/specs/2026-10-23-zweiter-benutzer.md`, Abschnitt 3.1. Nachgemessen, Zeile für
+Zeile, und jede davon steht unverändert:
+
+- Die Aktion, eine neue Fassung einzuliefern: `shared/core/core.go:142` (`ActTrust`, `FlowIn`,
+  `MaxTrustIn`).
+- Ein Verwalter darf in einer neuen Fassung **jede** Änderung unterschreiben, nicht nur die an
+  Knoten: `shared/trust/trust.go:303` — `onlyOwnKeys` greift nur, wenn der Unterzeichner
+  **kein** Admin ist.
+- Form eines Benutzers und seines Schlüssels: `shared/trust/trust.go:117`,
+  `shared/proof/proof.go:123`.
+- Bis zu 10 000 Benutzer und 256 Rollen: `shared/trust/trust.go:26`.
+- Der Datenbankteil muss nichts tun: die Zeile in `ngc_user` entsteht bei der **ersten
+  Anmeldung** (`apps/server-api/classes/login/finish.go:285`), und sie trägt keinen Schlüssel.
+
+**Damit ist Abschnitt 3.1 beantwortet: ja, eine Shell darf eine Fassung mit einem neuen Benutzer
+bauen, ohne dass `shared/core` eine eigene Aktion dafür bekommt.** Gebaut wurde genau so, und
+nichts unter `shared/` ist angefasst. Der Einladungsablauf (Abschnitt 3.2, Weg (a)) bleibt die
+offene Anfrage; er ist hier **nicht** beantragt und **nicht** gebaut.
+
+### Was gebaut ist
+
+Zwei Formulare in `apps/web/public/assets/js/apps/users.js`, beide über den schon vorhandenen
+`joinNode` — dieselbe Maschinerie, die einen Server aufnimmt:
+
+1. **Neue Rolle** (Reiter „Rollen und Rechte"). Sie darf zunächst nichts; was sie darf, wird
+   über die Haken derselben Seite vergeben. `level: critical`, wie die Rolle `admin` — nicht
+   `off`.
+2. **Neuer Benutzer** (Reiter „Benutzer"). Anmeldename, Rollen, ein erstes Passwort. Der
+   Schlüssel wird im Browser des Verwalters gerechnet (Argon2id → Ed25519); der Startwert wird
+   in einem `finally` überschrieben, und auf die Leitung geht **nur** der öffentliche Schlüssel.
+
+Das ist **Weg (b)** des Entwurfspapiers, und sein Preis steht im Fenster, bevor unterschrieben
+wird: „Bis »<Name>« es ändert, kennen Sie seinen Schlüssel und könnten in seinem Namen
+unterschreiben." Weg (a) löst ihn später ab, ohne ihn umzubauen.
+
+### Zwei Regeln dieser Woche, hier eingehalten
+
+- **Rechte sind kein Beiwerk.** Unter den Rollenhaken des Benutzerformulars steht der Satz, der
+  das sagt: eine App sieht nur, wessen Rolle das Recht `benutzen` dafür hat. Er steht dort, wo
+  der Haken gesetzt wird, nicht erst, wenn jemand über einen leeren Schreibtisch klagt.
+- **Ein leerer Zustand sieht nicht wie ein Angriff aus.** Ohne Sitzung oder ohne geprüfte
+  Vertrauensliste zeichnen beide Formulare **keinen** Knopf, sondern einen Satz, der das
+  **fehlende Ding** nennt: „Dafür ist eine Anmeldung nötig. Es kann gerade kein Benutzer
+  angelegt werden." Kein `role="alert"`, kein Wort über einen Fehler. Ein Fall prüft genau das
+  und prüft zusätzlich, dass die beiden Worte dieser Oberfläche für einen Defekt
+  („nicht in Ordnung", „antwortet gerade nicht") **nicht** darin stehen.
+
+### Wie es gemessen ist
+
+Neun Fälle in `apps/web/tests/shell/users.spec.js`, chromium, und je Zusicherung **ein
+sterbender Mutant und eine lebende Kontrollmutation** (`Z:\GitHub\claude-md\messen.md`).
+Mutiert wurde in einer **Kopie** des Baums, nie im Arbeitsbaum; der Treiber bricht ab, wenn eine
+Ersetzung nicht genau einmal greift.
+
+| Zusicherung | Mutant, der stirbt | Kontrolle, die lebt |
+|---|---|---|
+| Eine neue Rolle geht als Fassung N+1 hinaus, und sonst bewegt sich nichts | `LEVEL_CRITICAL` → `LEVEL_OFF` | Lokale Variable im Formular umbenannt |
+| Der neue Benutzer trägt **einen** Passwortschlüssel in der Form, die `proof.UserKey.Validate` nimmt | `credId` von 0 auf 1 Byte | Das Benutzerobjekt umbenannt |
+| Das erste Passwort verlässt den Browser nie | Das Passwort reitet im Salz des Schlüssels mit | Die Ableitung umbenannt |
+| Ein Benutzer ohne Rolle wird abgewiesen, bevor irgendwer unterschreibt | Die Rollenprüfung abgeschaltet | Die Sperrliste umbenannt |
+| Der leere Zustand nennt das fehlende Ding, nicht einen Defekt | Der Satz durch „nicht in Ordnung" ersetzt | Die Wache umbenannt |
+
+**Und eine Messung hat sich selbst berichtigt:** die erste Fassung des Passwort-Falls durchsuchte
+nur den **Umschlag** (`{"payload": "<base64url>", …}`). Der Mutant „Passwort im Salz" **lebte**
+dadurch, weil ein Passwort *innerhalb* der Fassung in diesem base64url verschwindet. Der Fall
+dekodiert jetzt jede gesendete Fassung und durchsucht beide Schichten; danach ist der Mutant
+gestorben, und zwar an der Nadel, die die Passwortbytes nennt — nicht an einem Bauabbruch.
+
+`tools/check.sh` druckt `check: ok`, Ausstiegscode 0, ohne Pipe gelesen. Alle 62 Fälle von
+`users.spec.js` sind grün.
+
+### Am laufenden System
+
+**Gebaut ist nicht gelaufen**, also auf `ngc.test` nachgesehen. Die Anlage läuft auf `0.2.0`,
+also **älter als `main`**; darum wurde nicht `main` darübergelegt, sondern **nur dieser eine
+Unterschied** auf die dortigen Dateien gesetzt (`users.js`, `shell.css`), mit Sicherung unter
+`/root/zweiter-benutzer-backup-20261024/`. Beide Dateien sind über HTTPS ausgeliefert, und in
+einem echten Browser lädt das Modul samt seinem ganzen Importbaum ohne einen einzigen
+`pageerror`.
+
+**Was damit noch nicht gemessen ist, und das ist die Wahrheit über diesen Punkt:** dass ein
+zweiter Mensch wirklich angelegt wird, sich anmeldet und sein Startmenü sieht. Dafür wird eine
+neue Fassung der Vertrauensliste **im Browser mit dem Schlüssel der Person** unterschrieben, und
+dieser Schlüssel ist ihr Passwort. Kein Agent darf es tippen. Die Stationen 3 und 4 oben bleiben
+deshalb **ungemessen**, bis Thomas die Schritte gegangen ist; sie werden danach hier nachgetragen.
+
+### Nachtrag vom 24.10.2026, nachmittags: **welche** Anlage gemessen wurde
+
+Seit heute gibt es **zwei** Anlagen, und eine Zahl ohne ihren Namen ist hinterher wertlos.
+
+| | Einzel-VM | Verteilte Anlage |
+|---|---|---|
+| Name | `ngc.test` (10.2.3.208) | `ngc.mein.lan` → api-1 (10.2.3.210) |
+| Fassung von NGC | `0.2.0` | `0.2.1` |
+| Vertrauensliste | Fassung 6, `RB1CPN7b…` | Fassung 6, `JtyqTFme…` — **dieselbe Nummer, andere Anlage** |
+| `rp` | leer | `ngc.mein.lan`, Origin `https://ngc.mein.lan` |
+| Dieser Zweig eingespielt? | **ja**, die zwei Dateien | **nein** |
+
+**Alles oben in diesem Punkt ist an der Einzel-VM gemessen** — Einspielen, Auslieferung,
+Browserprobe. **Die Stationstabelle gilt trotzdem für beide**, und das ist jetzt stärker belegt
+als heute Vormittag: die verteilte Anlage läuft **exakt `origin/main`**. Gemessen, nicht
+geschlossen: ihre `users.js`, über HTTPS geholt, hat den git-Hash `83344ee` — Byte für Byte die
+Datei aus `origin/main`. Sie hat also ebenfalls **keine Tür** für einen zweiten Benutzer.
+
+**Die Namen lügen teilweise, am laufenden Dienst nachgesehen** (eine Warnung der
+Koordinationssitzung, hier nicht geglaubt, sondern geprüft):
+
+- **api-1** und **api-2** tragen wirklich eine NGC-API: beide antworten auf
+  `GET /api/v1/trust` mit `E_LOGIN` und auf `GET /api/v1/setup` mit `E_NOTFOUND` — also hat
+  jede von beiden schon einen Verwalter. api-1 liefert zusätzlich das Webinterface.
+- **db-1**, **svc-1**, **svc-2** haben von 22, 80, 443, 5432, 7443, 7444, 8443, 9443, 7000, 7001
+  **nur 22** offen. Für zwei Controller ist das richtig — „nobody dials a controller" —, für
+  die Datenbank sagt es nur, dass sie nach außen nichts anbietet.
+- **store** nimmt auf 443 eine Verbindung an, bricht aber im TLS-Handschlag ab
+  (`SEC_E_ILLEGAL_MESSAGE`). **Dort läuft kein brauchbares HTTPS.**
+
+### Zwei API-Server — was das für einen zweiten Benutzer heißt
+
+Die verteilte Anlage hat **zwei** APIs, und ihr Webinterface weiß das:
+`/config.json` nennt `https://api-1.ngc.mein.lan:7443` **und**
+`https://api-2.ngc.mein.lan:7443`. Ein zweiter Benutzer kann also an einem anderen API-Server
+landen als dem, an dem er angelegt wurde.
+
+**Gelesen, nicht gemessen:** das soll der Vertrag schon tragen. `ngc.users/api/trust` nimmt die
+Fassung nicht nur an, sondern verteilt sie — `AddVersion`, `settle`, **`pushTrust`**
+(`apps/server-api/classes/coreapp/users.go:250`, `:257`). Der zweite API-Server bekäme die
+Fassung damit, ohne dass die Oberfläche etwas dazutut.
+
+**Nicht gemessen, und es soll niemand glauben, es sei geprüft:** dass ein an api-1 angelegter
+Mensch sich an api-2 anmelden kann. Dafür müsste dieser Zweig auf der verteilten Anlage liegen,
+und dafür fehlt der Zugang (die sechs VMs stehen in keiner SSH-Konfiguration, und der
+NGC-Schlüssel öffnet sie nicht). **Das ist die nächste Messung, nicht ein Ergebnis dieser.**
+
+### Und ein Befund, der nicht zu dieser Arbeit gehört, aber gemessen ist
+
+**Die Einzel-VM `ngc.test` ist seit etwa 12:40 nicht mehr erreichbar**: 1 von 3 Ping-Antworten,
+kein SSH, kein HTTPS. Um 12:0x lief sie noch — da wurden die zwei Dateien eingespielt und die
+Browserprobe lief grün gegen sie. Was sie umgeworfen hat, ist **nicht gemessen**, und zwei
+statische Dateien einer Oberfläche sind keine plausible Ursache. Solange sie unten ist, kann
+niemand die Schritte aus `docs/zweiter-benutzer-schritte.md` gehen.

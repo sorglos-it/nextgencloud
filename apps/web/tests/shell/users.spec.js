@@ -1893,3 +1893,283 @@ test("the boxes of the question can be reached with the keyboard alone", async (
   await expect(dlg.getByRole("checkbox",
     { name: "Benutzer admin darf Aufgaben mit Systemrechten ausführen" })).toBeChecked();
 });
+
+// --------------------------------------------- a second human: role and user
+//
+// WHAT THESE CASES ARE FOR. Every measurement of this installation until
+// 24.10.2026 ran with ONE person, the admin out of the setup. These cases are
+// the two doors a second person has to come through, and they are measured
+// where the decision really is: in the BYTES of the version that goes out,
+// not in the sentence on screen.
+//
+// A NEW ROLE IS NOT A DETAIL. An installation leaves the setup with exactly
+// one role - admin (auth/setup.js) - and trust.List.Validate refuses a user
+// whose role is not in the same list (Go: validateUsers -> l.Role(name)). So
+// "a second user who is not a second admin" needs a role first, and the case
+// below walks that whole order: role, right, user.
+
+// newUser fills the form of the users tab and answers the question.
+async function newUser(page, { login, roles, pass, repeat }) {
+  const form = app(page).locator(".newuser");
+  await form.locator("input[type=text]").fill(login);
+  for (const r of roles) await form.getByRole("checkbox", { name: "Rolle " + r }).check();
+  const pw = form.locator("input[type=password]");
+  await pw.nth(0).fill(pass);
+  await pw.nth(1).fill(repeat === undefined ? pass : repeat);
+  await form.getByRole("button", { name: "Neuen Benutzer anlegen" }).click();
+}
+
+async function newRole(page, name) {
+  const form = app(page).locator(".newrole");
+  await form.locator("input[type=text]").fill(name);
+  await form.getByRole("button", { name: "Neue Rolle anlegen" }).click();
+}
+
+test("a new role goes out as version N+1 and touches nothing but the roles",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Rollen und Rechte");
+    await newRole(page, "technik");
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    // The question says what the role may do, and that is NOTHING yet: a
+    // role that arrived able to do things would be the opposite of the rule
+    // this window is built on.
+    await expect(dialog).toContainText("Sie darf zun\u00e4chst nichts.");
+    await dialog.getByRole("button", { name: "Rolle anlegen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".panel.rights .note"))
+      .toHaveText("Die Rolle \u00bbtechnik\u00ab ist angelegt. Sie darf noch nichts.");
+
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const one = window.__ngcSent[0];
+      const l = await trust.parseList(trust.parseSigned(one.bytes).payload);
+      return {
+        count: window.__ngcSent.length,
+        where: one.app + "/" + one.service + "/" + one.name,
+        seq: l.seq,
+        roles: l.roles.map((r) => r.name + ":" + r.level),
+        users: l.users.map((u) => u.name),
+        nodes: l.nodes.map((n) => n.id),
+      };
+    });
+    expect(sent.count).toBe(1);
+    expect(sent.where).toBe("ngc.users/api/trust");
+    expect(sent.seq).toBe(2);
+    // Sorted by name, which is what the list demands, and the level is the
+    // one the admin role carries - not off.
+    expect(sent.roles).toEqual(["admin:critical", "technik:critical"]);
+    // AND NOTHING ELSE MOVED. Without these two lines the case would pass
+    // just as well for a change that also wrote a user or dropped a server.
+    expect(sent.users).toEqual(["admin"]);
+    expect(sent.nodes).toEqual(["api-1", "ctl-1"]);
+  });
+
+test("a role that is already there is refused before anybody is asked to sign",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Rollen und Rechte");
+    await newRole(page, "admin");
+    await expect(app(page).locator(".panel.rights .note"))
+      .toHaveText("Die Rolle \u00bbadmin\u00ab gibt es schon.");
+    // No question, no signature, nothing on the wire: the refusal happened
+    // in front of all three.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+  });
+
+test("a new role reaches the form of the users tab without a reload", async ({ page }) => {
+  // THE COMPLAINT OF 19.-21.10.2026, one panel further along: a thing that
+  // was just created and is not on the screen that hands it out is a thing
+  // the person cannot use until they press Ctrl+F5.
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Benutzer");
+  // Before: the installation has one role, so the form offers one haken.
+  await expect(app(page).locator(".newuser").getByRole("checkbox")).toHaveCount(1);
+  await openTab(page, "Rollen und Rechte");
+  await newRole(page, "technik");
+  await page.getByRole("dialog").getByRole("button", { name: "Rolle anlegen" }).click();
+  await sign(page);
+  await openTab(page, "Benutzer");
+  await expect(app(page).locator(".newuser")
+    .getByRole("checkbox", { name: "Rolle technik" })).toBeVisible();
+});
+
+test("a second user goes out as one version with one password key, and the first "
+  + "password goes nowhere", async ({ page }) => {
+    await skipWithoutLogin(page);
+    // Everything this page sends over HTTP, so a password that escaped the
+    // app's own door would still be caught.
+    const seen = [];
+    page.on("request", (r) => seen.push((r.postData() ?? "") + " " + r.url()));
+    await mount(page, { signable: true });
+
+    // 1. the role, because a user cannot be made without one.
+    await openTab(page, "Rollen und Rechte");
+    await newRole(page, "technik");
+    await page.getByRole("dialog").getByRole("button", { name: "Rolle anlegen" }).click();
+    await sign(page);
+
+    // 2. the user.
+    const FIRST = "Erstpasswort2026"; // 16 characters: see the needles below
+    await openTab(page, "Benutzer");
+    // THE PANEL IS WAITED FOR, not assumed. Creating the role ends with a
+    // rebuild of this panel, and a form filled in before that rebuild is a
+    // form that is thrown away mid-typing - measured on the first run of
+    // this case: the name field was empty and the surface answered that ""
+    // is no login name.
+    await expect(app(page).locator(".newuser")
+      .getByRole("checkbox", { name: "Rolle technik" })).toBeVisible();
+    await newUser(page, { login: "berta", roles: ["technik"], pass: FIRST });
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    // THE PRICE OF WAY (b) IS IN THE QUESTION. The admin typed the first
+    // password, so until it is changed the admin holds that person's key -
+    // and the dialog says so, in German, before the signature.
+    await expect(dialog).toContainText("kennen Sie seinen Schl\u00fcssel");
+    await dialog.getByRole("button", { name: "Benutzer anlegen" }).click();
+    await sign(page);
+    await expect(app(page).locator(".panel.users .note"))
+      .toHaveText("\u00bbberta\u00ab ist angelegt und kann sich anmelden.");
+
+    const sent = await page.evaluate(async () => {
+      const trust = await import("/assets/js/contracts/trust.js");
+      const one = window.__ngcSent[window.__ngcSent.length - 1];
+      const l = await trust.parseList(trust.parseSigned(one.bytes).payload);
+      const b = l.users.find((u) => u.name === "berta");
+      return {
+        count: window.__ngcSent.length,
+        seq: l.seq,
+        // SORTED BY NAME HERE AND NOT AS THEY STAND, because a list is
+        // sorted by ID and the ID of a new user is 16 random bytes: the
+        // order of these two is a coin toss. That the list really is sorted
+        // by ID is not this case'''s to prove - trust.validateList refuses a
+        // version that is not, and buildNextVersion runs it before it signs.
+        users: l.users.map((u) => u.name).sort(),
+        roles: b.roles,
+        keys: b.keys.map((k) => k.kind + "/" + k.alg + "/" + k.pub.length + "/" + k.credId.length),
+        kdf: b.keys[0].kdf.alg + "/" + b.keys[0].kdf.salt.length,
+        idLen: b.id.length,
+        // EVERYTHING THIS APP PUT ON ITS OWN WIRE, AND THE PAYLOADS INSIDE
+        // IT. The envelope alone is not enough and that is measured: what
+        // travels is {"payload": "<base64url>", "proof": …}, so a password
+        // written INTO the version would sit inside that base64url and no
+        // search of the envelope would ever see it. A mutant that carried
+        // the password in the key's salt lived through the first version of
+        // this case for exactly that reason. So both layers are searched.
+        wire: window.__ngcSent.map((x) => new TextDecoder().decode(x.bytes)).join("\n"),
+        payloads: await Promise.all(window.__ngcSent.map(async (x) => {
+          const t = await import("/assets/js/contracts/trust.js");
+          return JSON.stringify(await t.parseList(t.parseSigned(x.bytes).payload),
+            (k, v) => (v instanceof Uint8Array ? [...v] : v));
+        })).then((xs) => xs.join("\n")),
+      };
+    });
+    expect(sent.count).toBe(2); // the role, then the user: two versions, not one
+    expect(sent.seq).toBe(3);
+    expect(sent.users).toEqual(["admin", "berta"]);
+    expect(sent.roles).toEqual(["technik"]);
+    // ONE key, a password key, 32 bytes of Ed25519 public key and no credId -
+    // exactly what proof.UserKey.Validate takes for kind "password".
+    expect(sent.keys).toEqual(["password/EdDSA/32/0"]);
+    expect(sent.kdf).toBe("argon2id/16");
+    expect(sent.idLen).toBe(22); // 16 bytes in base64url, trust.ValidID
+
+    // THE FIRST PASSWORD IS NOWHERE. Plainly, form encoded and in both
+    // base64 alphabets, on this app's own wire and on every HTTP request the
+    // page made.
+    const b64 = btoa(FIRST);
+    const forbidden = [FIRST, encodeURIComponent(FIRST), b64,
+      b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+      // And as the bytes a JSON of this list spells them out as: a field of
+      // raw bytes is an array of numbers in the text searched above.
+      [...new TextEncoder().encode(FIRST)].join(","),
+    ];
+    for (const needle of forbidden) {
+      expect(sent.wire, needle).not.toContain(needle);
+      expect(sent.payloads, needle).not.toContain(needle);
+      expect(seen.join("\n"), needle).not.toContain(needle);
+    }
+    // A SEARCH THAT FOUND NOTHING BECAUSE THERE WAS NOTHING TO SEARCH would
+    // pass all eight lines above. The version with berta in it really went
+    // over this wire.
+    expect(sent.wire).toContain("payload");
+    expect(sent.payloads).toContain("berta");
+  });
+
+test("a user without a role is refused, and the sentence says a role is missing",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Benutzer");
+    await newUser(page, { login: "berta", roles: [], pass: "Erstpasswort-2026" });
+    // NOT "something went wrong": what is missing is named, and it is named
+    // as a thing the person can go and do.
+    await expect(app(page).locator(".panel.users .note"))
+      .toHaveText("W\u00e4hlen Sie mindestens eine Rolle. Ohne Rolle kann niemand angelegt werden.");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+  });
+
+test("two first passwords that differ are refused before a key is derived",
+  async ({ page }) => {
+    await skipWithoutLogin(page);
+    await mount(page, { signable: true });
+    await openTab(page, "Benutzer");
+    await newUser(page, { login: "berta", roles: ["admin"], pass: "eins", repeat: "zwei" });
+    await expect(app(page).locator(".panel.users .note"))
+      .toHaveText("Die beiden Passw\u00f6rter sind nicht gleich.");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+  });
+
+test("a login name that is already taken is refused by name", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Benutzer");
+  await newUser(page, { login: "admin", roles: ["admin"], pass: "Erstpasswort-2026" });
+  await expect(app(page).locator(".panel.users .note"))
+    .toHaveText("Den Anmeldenamen \u00bbadmin\u00ab gibt es schon.");
+  expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+});
+
+test("Abbrechen at the question for the key creates nobody", async ({ page }) => {
+  await skipWithoutLogin(page);
+  await mount(page, { signable: true });
+  await openTab(page, "Benutzer");
+  await newUser(page, { login: "berta", roles: ["admin"], pass: "Erstpasswort-2026" });
+  await page.getByRole("dialog").getByRole("button", { name: "Benutzer anlegen" }).click();
+  await expect(page.locator(".confirmbox")).toBeVisible();
+  await page.locator(".confirmbox").getByRole("button", { name: "Abbrechen" }).click();
+  await expect(app(page).locator(".panel.users .note")).toHaveText("Nichts ge\u00e4ndert.");
+  expect(await page.evaluate(() => window.__ngcSent.length)).toBe(0);
+});
+
+test("without a session the two forms say what is missing, not that something broke",
+  async ({ page }) => {
+    // THE RULE OF THIS WEEK, and the reason this case exists at all: an empty
+    // state must not look like an attack. A person who cannot do a thing has
+    // to read WHICH THING THEY LACK - not an error, not a red box, not a
+    // sentence about the installation.
+    await mount(page, { noSession: true });
+    await openTab(page, "Benutzer");
+    const u = app(page).locator(".newuser");
+    await expect(u).toContainText("Es kann gerade kein Benutzer angelegt werden.");
+    await openTab(page, "Rollen und Rechte");
+    const r = app(page).locator(".newrole");
+    await expect(r).toContainText("Es kann gerade keine Rolle angelegt werden.");
+    // No button that would do nothing, and nothing announced as an alarm.
+    await expect(u.getByRole("button")).toHaveCount(0);
+    await expect(r.getByRole("button")).toHaveCount(0);
+    expect(await app(page).locator("[role=alert]").count()).toBe(0);
+    // AND IT REALLY IS THE MISSING-THING SENTENCE, not a failure dressed up:
+    // neither word that this surface uses for a breakage stands in it.
+    for (const box of [u, r]) {
+      await expect(box).not.toContainText("nicht in Ordnung");
+      await expect(box).not.toContainText("antwortet gerade nicht");
+    }
+  });
