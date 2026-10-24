@@ -5258,3 +5258,160 @@ Die Messregel, die daraus folgt und die in jedem Blatt dieser Anlage gelten soll
 Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gemessen wurde.**
 
 Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".
+
+## Punkt 81: Eine Prüfrunde über die Nähte von zwei Tagen — die Nähte halten, der Satz darüber nicht
+
+Zwischen dem 19. und 24.10.2026 sind rund dreißig Pull Requests auf `main` gelandet, viele davon
+in Stunden, aus Sitzungen, die nebeneinander liefen. In genau diesem Zeitraum war der CI-Schritt
+„check.sh + counted test run" bei praktisch jedem Pull Request rot, weil die Zählung ihre Datei
+nie bekam (behoben mit PR 109). Rot war also kein Signal, und Grün gab es nicht. Jede Sitzung hat
+ihren Teil gemessen; **den entstandenen Stand im Zusammenhang hatte niemand gelesen.**
+
+Diese Runde liest ihn — Fenster `6cf5cef..17b9895`, 30 zusammengeführte Pull Requests.
+
+### Was gehalten hat, und wie es gemessen ist
+
+| Zusicherung | Wie gemessen | Ergebnis |
+|---|---|---|
+| `shared/` ist eingefroren | `git diff --numstat 6cf5cef..HEAD -- shared/` | **0 Zeilen**, kein Commit |
+| Kein Konfliktmarker steht noch im Baum | Suche nach den drei Markerzeilen über Go, JS, CSS, MD, SH, HTML | 0 Treffer |
+| Keine Hälfte fehlt in den Oberflächen | 41 ESM-Module einzeln in Node geladen (die Link-Zeit findet jeden fehlenden Export) | **0 Link- oder Parse-Fehler** |
+| Kein Fall ist beim Auflösen verlorengegangen | je Merge mit Konflikthunks: Fallnamen **beider** Eltern gegen das Ergebnis | **0 verlorene Fälle** in allen 24 geprüften Merges |
+| Die Oberfläche schreibt nichts | `grep -rc 'console\.'` über `apps/web/public/assets/js` | **0** |
+| Kein Fremdtext als Markup | jede Senke (`innerHTML`, `document.write`, `outerHTML`, …) einzeln gelesen | nur die eine gezäunte Ausnahme `shell/frame-boot.js` |
+| Kein Geheimnis in Protokollen oder Prozesslisten | jeder Log-Aufruf der geänderten Go-Dateien mit geheimnisverdächtigem Feld; jede `exec.Command` | 4 Treffer, alle Längen oder IDs; kein Geheimnis auf `argv` |
+| Punktnummern und CHANGELOG | Nummernfolge, doppelte Überschriften | keine Lücke, keine echte Dublette |
+
+Die von Hand aufgelösten Nähte sind einzeln gegen **beide** Eltern gelesen (`git show --cc`):
+`docs/vertraege-v1.2.md`, `apps/web/public/assets/css/shell.css`,
+`apps/web/public/assets/js/apps/users.js` und `store.js`, dazu `CHANGELOG.md` und
+`apps/server-controller/classes/serve/app.go`. Drei Ketten, bei denen zwei Sitzungen aufeinander
+angewiesen waren, sind **durchgegangen** statt nur angesehen:
+
+- `users.js` `appsNow()` → `this.ctx` → `desktop.js appCtx()` — dort steht ein echter Getter auf
+  `this.appList`, das `load()` ersetzt. Der Kommentar verspricht einen frischen Lesevorgang, und
+  es gibt einen.
+- `rights.Of` (ein Verwalter hält jedes App-Recht ohne Zeile) → `rights.Check` →
+  `Dispatcher.apps` — dieselbe Bedingung an allen drei Stellen, auch im Fehlerfall des Manifests.
+- `dispatch.go` `CloseBecause` → `reason.Screen` — die eine Zusicherung, die ein Leck wäre, wenn
+  sie fehlte: `AppUnknown` darf nicht auf den Schirm. `browser.go:409` filtert.
+
+### Der Fund: der Satz über dem Code sagt „zwei", der Code sagt „drei"
+
+`apps/server-api/classes/browser/browser.go:426`, vor dieser Änderung:
+
+> `closeChannel` … **and Close and CloseWith are the two ways in.**
+
+`CloseBecause` kam am 23.10.2026 mit „api: every refused channel names the check that said no"
+und ruft `closeChannel` ebenfalls (`browser.go:412`). Es sind **drei** Wege hinein, nicht zwei.
+Derselbe falsche Satz stand in `lint_test.go:233` — also in dem Fall, der die Aussage messen soll.
+
+**Was dabei schiefgeht:** der nächste Mensch liest einen Satz über eine Sicherheitszusicherung
+(„genau eine Stelle vermerkt einen CLOSE von uns"), der die Lage nicht mehr beschreibt, und
+schließt daraus entweder, ein neuer `Close*`-Weg sei nicht vorgesehen, oder er übersieht, dass ein
+neuer Weg durch `closeChannel` gehen **muss**. Der Prüfsatz konnte das nicht sehen: er zählt nur,
+**wo** `SentClose` steht, nicht **wer** `closeChannel` erreicht — und ein neuer Aufrufer
+verschiebt die Stelle des Vermerks nicht.
+
+**Gemessen, dass die Lücke echt war:** derselbe Mutant — ein vierter, nirgends aufgeschriebener
+Aufrufer von `closeChannel` — läuft am alten Fall `TestOnlyProtocolErrorHoldsANumber` grün durch
+(`ok`, Ausstiegscode 0) und tötet den neuen.
+
+**Behoben, und zwar als Messung statt als Prosa:** der Satz ist richtiggestellt, und
+`TestTheWaysIntoCloseChannelAreTheNamedOnes` misst jetzt die **Menge** der Aufrufer gegen die
+Liste, die im Kommentar steht. Nach `Z:\GitHub\claude-md\messen.md`: in einer **Kopie** des Baums,
+nie im Arbeitsbaum, jeder Lauf mit `-count=1`, und das Messskript bricht ab, statt eine Zahl zu
+nennen, wenn seine eigene Vorbereitung nicht genau einmal gegriffen hat.
+
+| | Mutation | Ergebnis |
+|---|---|---|
+| Dichtheitsprobe | keine | grün — sonst wäre die Kopie der Fund |
+| Sterbender Mutant | vierter Aufrufer `closeSneaky` von `closeChannel` | **gestorben**: „closeChannel is reached from [Close CloseBecause CloseWith closeSneaky]" |
+| Lebende Kontrolle | lokaler Parameter `cl` → `clo` in `closeChannel`, übersetzt | **gelebt** |
+
+### Abgewogen und verworfen: `E_TIMEOUT` heißt nicht „Rechner weg"
+
+Der Verdacht war eine echte Naht. PR 102 lässt einen App-Kanal, dessen Uhr abgelaufen ist, mit
+`E_TIMEOUT` statt `E_INTERNAL` enden (23.10., 18:02 Uhr), und `reason.ForCode` aus PR 120 bildet
+`E_TIMEOUT` auf `NodeAway` ab — „Der Rechner für diese Aktion ist gerade nicht verbunden."
+(18:11 Uhr, neun Minuten später, andere Sitzung). Das wäre genau die Klasse aus Punkt 50: ein
+Zustand wird als etwas anderes dargestellt.
+
+**Es ist keiner.** `relay.openAndPump` kürzt einen vom Controller geschlossenen Kanal auf
+`code = ""` ab (`relay.go:379-382`, Zweig `theirClose`), und `ForCode("")` ist `None`. Der
+`E_TIMEOUT` des Controllers erreicht `ForCode` nie; der Controller schreibt seinen eigenen Grund
+in sein eigenes Journal, was der Kommentar an `relay.Forward` auch sagt. **Gelesen, nicht
+gemessen.**
+
+### Zur Entscheidung, nicht behoben: `Serves` antwortet für eine Abhängigkeit zweimal verschieden
+
+`apps/server-controller/classes/serve/serve.go:292` trägt `installKey` **bedingungslos** in
+`s.acts` ein, während `activateKey` (Zeile 305) und `stageKey` (Zeile 306) nur eingetragen werden,
+wenn ihre Abhängigkeit da ist. `install` und `stage` brauchen **dieselbe** Abhängigkeit
+(`s.d.Updater`), und beide weisen bei `nil` mit demselben Code ab. Auf einem Controller ohne
+Updater antwortet `Serves(…/install)` also **wahr** und `Serves(…/stage)` **falsch** — über eine
+Abhängigkeit.
+
+Der Kommentar direkt darüber (Zeile 295–301) begründet das Gattern genau damit, dass `Serves` die
+Frage beantworten soll, die ihm gestellt wird. `stageKey` kam mit PR 121 am 24.10. und hat das
+neue Muster nur auf den **neuen** Schlüssel angewandt.
+
+**Was heute schiefgeht: nichts** — `Serves` hat im Produktionscode keinen einzigen Aufrufer, der
+Fund ist latent. Und `serve.go:433-441` nennt den bedingungslosen Eintrag von `installKey`
+ausdrücklich als Stand „seit Aufgabe 19". Eine dokumentierte Entscheidung umzudrehen ist nicht
+Sache dieser Runde: **Thomas entscheidet**, ob `installKey` auf `d.Updater != nil` gegattert wird
+— verhaltensneutral auf der Leitung, denn der unbekannte Schlüssel endet in `Server.core` mit
+demselben `E_INTERNAL` — oder ob der Satz über `Serves` die Ausnahme nennt.
+
+### Ein Fund außerhalb des Fensters, der Vollständigkeit wegen
+
+`apps/server-api/classes/rights/check.go:24` nennt als Nachrechenanweisung „`grep -n
+'Open\.[A-Za-z]*' check.go rights.go`, **five hits**". Der genannte Befehl liefert **sieben**. Die
+Aufzählung darunter ist weiter richtig — gelesen werden genau `Params`, `Action`, `Task`,
+`Confirm`, und `Window`/`E2E` nicht —, nur die Zahl reproduziert nicht. Gemessen über die
+Fassungen: es waren schon **sieben**, als der Satz am 12.10.2026 geschrieben wurde. Also **kein
+Fund dieser Nähte**, und hier nicht angefasst.
+
+### Was diese Runde nicht gelesen hat
+
+Ehrlichkeit ist hier mehr wert als Vollständigkeit.
+
+- **Nicht gelesen, weil fremde Arbeit:** `tools/erstlauf.sh`, `docs/app-weg.md`,
+  `docs/messungen-m1-m3.md`, `docs/thomas-entscheidet.md`.
+- **Nicht gelesen, weil nach dem Fenster:** alles, was nach `17b9895` auf `main` kam — beim
+  Schreiben dieses Punktes rund 44 Commits bis Punkt 80, darunter die PRs 125 bis 135. Dieser
+  Zweig führt sie mit, **geprüft sind sie nicht.**
+- **Nur überflogen, nicht Zeile für Zeile:** `tools/erstlauf-probe/main.go`,
+  `tools/proxmox-sechs*.sh`, `versuch-rust/sign`, `versuch-port/wordcraft` — dort nur, dass
+  `exec.Command` einen festen Pfad ohne Shell nimmt —, die Installations- und Proxmox-Dokumente.
+- **Ein Werkzeug, das nichts gemessen hat, und darum verworfen:** ein Scanner auf unexportierte
+  Go-Deklarationen ohne Leser — die typische Form einer stehengebliebenen Hälfte — hat
+  Methodenaufrufe der Form `empfaenger.name` nicht als Leser erkannt und `closeChannel` selbst
+  als „nirgends gelesen" gemeldet, bei drei belegten Aufrufen. Nach messen.md ist ein Lauf, dessen
+  Kontrolle sich falsch verhält, wertlos; der Scanner ist **verworfen, nicht geflickt**. Die
+  Klasse „unexportierte Hälfte ohne Aufrufer" ist damit **nicht geprüft**.
+- **Die Linux-Seite ist nicht gelaufen:** gemessen wurde auf dem Windows-Rechner, 88 Fälle
+  überspringen sich dort selbst (`check.sh` sagt die Zahl). `go test -race` ist nicht gelaufen.
+
+### Der Prüfsatz am Ende
+
+**Zwei Zahlen, weil sie zwei verschiedene Bäume messen** — darum stehen beide da:
+
+```
+am Kopf des Fensters (17b9895), also an dem Stand, der geprüft ist:
+  vorher   ->  ci-count: ok (3425 cases ran, 88 skipped)
+  nachher  ->  ci-count: ok (3426 cases ran, 88 skipped)
+
+am zusammengeführten Kopf dieses Zweiges, den der Pull Request anbietet:
+  bash tools/check.sh                 ->  check: ok, Ausstiegscode 0, 323 passed, 0 failed
+  bash tools/ci-count.sh <test.json>  ->  3451 passed, 0 FAILED, 88 SKIPPED
+                                          ci-count: ok (3451 cases ran, 88 skipped)
+```
+
+Der **eine** Fall zwischen 3425 und 3426 ist `TestTheWaysIntoCloseChannelAreTheNamedOnes`. Die
+**25** zwischen 3426 und 3451 sind **nicht** meine: sie kommen mit den rund 44 Commits, die nach
+`17b9895` auf `main` gelandet sind und die dieser Zweig mitführt — gelaufen sind sie, **geprüft
+nicht.** Wer die 3451 als Zahl dieser Prüfrunde liest, schreibt ihr fünfundzwanzig Fälle gut, die
+eine andere Sitzung gemessen hat.
+
+Herkunft: Prüfrunde über die Nähte des Fensters 19.–24.10.2026, Zweig `pruefrunde-naehte`.
