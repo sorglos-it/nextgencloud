@@ -384,3 +384,32 @@ Der Einmal-Code und der Fingerabdruck stehen auf der Maschine (`root`), nicht in
 Papier und in keinem Log. Wer `https://ngc.test` im Browser öffnen will, braucht den Namen
 auf seinem eigenen Rechner — **Schritt 0 der Anleitung**, mit `10.2.3.216   ngc.test`. Dann
 ist der kleine Fall ab der Ersteinrichtung wieder begehbar.
+
+---
+
+## 7. Nachtrag: vier der Messskripte sind geborgen
+
+**Entschieden (Thomas, 24.10.2026):** vier der 16 eigenen Skripte kommen ins Repo. VM 208 dafür
+ein zweites Mal angeworfen, gelesen, wieder sauber heruntergefahren. Es sind **16**, nicht 19 —
+die beiden `messen-boot.sh` sind bytegleich, und zwei Dateien gehören dem **ulh**-Repo.
+
+| jetzt im Repo | war |
+|---|---|
+| `tools/siegel-tpm.sh` | `~/smoke/run.sh` |
+| `tools/siegel-stick.sh` | `~/smoke/stick.sh` |
+| `tools/env-werkzeug-weg.sh` | `~/task6fix1/n9.sh` |
+| `tools/release-mutanten.sh` | `~/relbuild/mutanten.sh` |
+
+Alle vier sind auf einer Wegwerf-VM wirklich gelaufen, alle vier mit Ausstiegscode 0, mit
+Gegenproben zu jedem Riegel. **Die Einzelheiten und der dabei aufgedeckte Scheinbeweis stehen in
+`docs/vertraege-v1.2.md`, Punkt 83** — kurz: der erste Mutantenlauf meldete vier sterbende
+Mutanten, und keiner von ihnen hatte seine Mutation je erreicht; sie starben alle an einem
+fehlenden Paket. Rot ist kein Beweis, solange nicht gemessen ist, **woran** es rot wurde.
+
+**Die zwölf übrigen sind bewusst nicht geborgen:** sie hängen am Arbeitsbaum `dist/recovery/`,
+den es im Repo nicht gibt, und in ihren Ordnern liegen SoftHSM-Token, TPM-Zustand und drei
+**PIN-Dateien**. Die Stick-Schlüssel darin sind öffentliche Schlüssel; die PINs sind Geheimnisse
+und gehören in kein Repo.
+
+Die alte Maschine ist wieder aus, der Schnappschuss `vor-bergung-20261024` liegt, nichts ist
+gelöscht.
