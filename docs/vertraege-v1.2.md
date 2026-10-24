@@ -156,6 +156,14 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
 | 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
 | 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
+| 75 | Die Maschine der ersten Messungen ist aus – die Messungen gelten, die Anweisungen nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 76 | diese Nummer ist leer – kein Versehen, sondern eine Spur | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 77 | Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 78 | Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 79 | Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
 
 ### Die Widersprüche auf einen Blick
 
