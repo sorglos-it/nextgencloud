@@ -4911,3 +4911,228 @@ kein SSH, kein HTTPS. Um 12:0x lief sie noch — da wurden die zwei Dateien eing
 Browserprobe lief grün gegen sie. Was sie umgeworfen hat, ist **nicht gemessen**, und zwei
 statische Dateien einer Oberfläche sind keine plausible Ursache. Solange sie unten ist, kann
 niemand die Schritte aus `docs/zweiter-benutzer-schritte.md` gehen.
+
+## Punkt 74: Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen
+
+Gemessen am 24.10.2026 auf der verteilten Anlage, an den App-eigenen Containerspeichern der
+beiden Dienstmaschinen — nicht an den Namen der Maschinen und nicht an der Datenbank allein.
+
+Das Terminal läuft auf **beiden** Dienstmaschinen:
+
+```
+svc-1:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up About an hour
+svc-2:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up 39 minutes
+ngc_app.node: svc-2        (eine Zeile, eine Maschine)
+```
+
+Der Verlauf aus den Protokollen der beiden Controller:
+
+```
+svc-1  10:56:53  container create / init / start      erste Einrichtung
+svc-1  11:05:40  Controller neu gestartet -> container init / start
+svc-2  11:28:10  useradd ngc-terminal-439982dd
+svc-2  11:28:14  container create / init / start      zweite Einrichtung
+ngc_app.updated  etwa 11:28
+```
+
+**Was gemessen ist:** das Terminal wurde zuerst auf `svc-1` eingerichtet, später auf `svc-2`.
+Der Container auf `svc-1` wurde nie entfernt. Mehr noch: der Controller auf `svc-1` hat ihn nach
+seinem eigenen Neustart um 11:05 **wieder angeworfen** — die alte Einrichtung ist also nicht nur
+ein vergessener Prozess, sie ist dauerhaft und übersteht einen Neustart. `ngc_app` trägt nur die
+neueste Maschine, also weiß die Oberfläche von `svc-1` nichts und kann dort auch nichts
+abräumen.
+
+**Was das kostet, soweit es hier zu sehen ist:** CPU und Speicher einer App, die niemand zählt;
+ein Container mit den Rechten der App (beim Terminal: `root` in seinem Container) auf einer
+Maschine, auf der die Anlage ihn nicht mehr verzeichnet; und bei einer App mit eigenen Daten
+zwei Datenstände, von denen die Oberfläche einen nicht kennt.
+
+**Was nicht gemessen ist, und was darum zu entscheiden wäre:**
+
+- Ob das so **gemeint** ist. Dass eine App absichtlich auf mehreren Maschinen laufen soll, ist
+  möglich — dann fehlt aber die Stelle, die das verzeichnet, denn `ngc_app.node` ist ein
+  einzelnes Feld. Im Vertrag ist dazu nichts nachgelesen worden.
+- Ob eine Einrichtung auf einer neuen Maschine die alte **abräumen** soll (dann fehlt der
+  Schritt), oder ob die Anlage **beide** verzeichnen soll (dann fehlt die Spalte).
+
+Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
+Anlage sagt einmal.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
+---
+
+## Punkt 75: Die Maschine, auf der die ersten Messungen entstanden, ist aus — die Messungen gelten, die Anweisungen nicht
+
+> **Stand: gilt.** Art: Umgebung. Nummer 74 war beim Anhängen schon von einem anderen Zweig
+> belegt (PR 124); darum 75, damit nicht zwei Punkte dieselbe Nummer tragen.
+
+**Gemessen am 24.10.2026.** Die Einzel-VM (`ssh ngc`, 10.2.3.208, Name `ngc.test`), auf der die
+erste wirklich laufende Anlage stand, ist **abgeschaltet**:
+
+| Was | Ergebnis |
+|---|---|
+| `ssh ngc` | `connect to host 10.2.3.208 port 22: Connection timed out` |
+| TCP 10.2.3.208:22 | zu |
+| VM 208 auf dem Proxmox-Wirt | `stopped` |
+
+Sie antwortet nicht langsam und sie ist nicht gestört. Sie läuft nicht.
+
+**Was weiter läuft**, Rolle am laufenden Dienst abgefragt statt aus dem Namen geschlossen — denn
+die Namen lügen: 10.2.3.210 `api-1` trägt `ngc-api` **und** `ngc-controller`, 10.2.3.211
+`api-2` nur `ngc-api`, 10.2.3.212 `db-1` nur `ngc-controller` (**keine Datenbank**), 10.2.3.213
+`svc-1` und 10.2.3.214 `svc-2` `ngc-controller` + podman, 10.2.3.215 `store` kein NGC, nur
+nginx. `https://ngc.mein.lan` zeigt auf api-1.
+
+**Warum das ein eigener Punkt ist, und nicht nur eine Notiz.** 64 Zeilen in 9 Dateien zeigen auf
+diese Maschine, 30 davon in diesem Papier. Wer ihnen heute folgt, misst ins Leere — und schreibt
+dann „nicht erreichbar" als Befund über NGC auf, obwohl der Befund über eine ausgeschaltete
+Maschine lautet. Ein falscher Befund ist teurer als eine fehlende Messung.
+
+**Die Trennung, die hier gilt:**
+
+- **Die Messungen dieses Papiers bleiben unangetastet.** Keine der 30 Zeilen ist geändert. Sie
+  wurden gemacht, als die Maschine lief; ein ausgeschalteter Rechner macht eine richtige Messung
+  nicht falsch. Eine Messung umzuschreiben, weil die Maschine weg ist, wäre Geschichtsfälschung.
+  Betroffen sind die Punkte **56 bis 59, 64, 71, 72, 73** und die Nachträge dazu: sie gelten
+  weiter, sind aber **an dieser Maschine nicht mehr nachprüfbar**.
+- **Anweisungen, die dorthin zeigen, sind umgeschrieben** — in
+  `docs/zweiter-benutzer-schritte.md`, `docs/installation-kleines-system.md`, `docs/erstlauf.md`
+  und `README.md`. Die gefährlichste Stelle war eine `hosts`-Zeile zum Abtippen
+  (`10.2.3.208   ngc.test`); sie ist jetzt ein Platzhalter mit der alten Zeile als
+  gekennzeichnetes Muster darunter.
+- **`ngc.test` bleibt in der Anleitung ein Beispielname** und ist jetzt ausdrücklich als solcher
+  benannt: `.test` ist dafür reserviert (RFC 2606), der ganze Prüfsatz benutzt ihn, und ein
+  echter Name wäre ein fremdes Heimnetz. Die rund 250 Vorkommen in `shared/` und `apps/` sind
+  Prüfdaten und **nicht** diese Maschine.
+
+**Befund, der bleibt: vier Dinge lagen nur auf ihrem Datenträger** — die zwei Skripte des
+Prüfladens in `/home/berry/ngcapp/` (nicht im Repo, Punkt 71 / `app-weg.md` Befund 3), der
+Ladeninhalt unter `/srv/ngc-store` samt Katalog in Folge 1, ein von Hand übersetztes `ngc-store`
+in `~/uhr-bau/`, und die Sicherung `/root/zweiter-benutzer-backup-20261024/` zu Punkt 73. Nichts
+davon ist herübergeholt worden; das braucht eine laufende Maschine und eine Entscheidung. **Der
+eigentliche Befund ist nicht der Dateiverlust, sondern die Arbeitsweise: was nur auf einer
+Maschine liegt, ist nicht gesichert.**
+
+**Was damit ungemessen wird.** Der kleine Fall (alles auf einer Maschine) ist ein ausdrücklich
+unterstützter Fall mit eigener Anleitung und eigenem Vertragspunkt (47), und er hat die ersten
+sechs Hürden ans Licht gebracht (Punkt 71). Die verteilte Anlage kann ihn nicht ersetzen: sie
+unterscheidet sich genau dort, wo der kleine Fall seine eigenen Fehler hat — SQLite statt eigener
+Datenbankmaschine, ein Skript statt vier, ein Name statt mehrerer. **Ab heute ist der kleine Fall
+ohne Maschine und damit ungemessen.**
+
+**Zu entscheiden (Thomas).** Vorgelegt in `docs/alte-vm-verweise.md`, Abschnitt 5: (a) soll der
+kleine Fall weiter geprüft werden — Vorschlag **ja**; (b) alte Maschine zurück oder neue dazu —
+Vorschlag **neue dazu**, weil die alte ein über Monate gewachsener Handbau ist und niemand sie
+ein zweites Mal aufbauen kann, eine neue aus Release und Anleitung dagegen den kleinen Fall
+**und** die Anleitung zugleich prüft; (c) was mit der alten — Vorschlag **einmal starten**, die
+vier Dinge bergen, dann weg. **Nicht vorher löschen.**
+
+## Punkt 76: Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem
+
+Der Laden (`store`, eine eigene Maschine, die ausdrücklich **nicht** zur Anlage gehört) wurde am
+24.10.2026 um 14:42 auf dem Proxmox-Wirt mit `qm stop 306` abgeschaltet und nach rund 40 Sekunden
+wieder angefahren. Die Anlage hat das vollständig weggesteckt: die Oberfläche antwortete
+unverändert (10 von 10 Anfragen `200`, 19–28 ms wie vorher), und `nginx` auf dem Laden lief nach
+`qm start` von selbst wieder. **Das ist das gute Ergebnis** und der befürchtete schwere Befund —
+eine Anlage, die ohne ihren Laden nicht mehr arbeitet — ist nicht eingetreten.
+
+**Was gemessen ist, und was nur gelesen:** im Journal von api-1 und api-2 steht über den ganzen
+Ausfall `-- No entries --`. Diese Messung **beweist nichts**: das Fenster war 40 Sekunden lang,
+und in dieser Zeit war kein Takt fällig. Der Beleg steht im Code, nicht im Journal.
+
+`apps/server-api/classes/server/server.go`, `Server.rounds`, hat `hour := time.NewTicker(Hour)`
+(`Hour = time.Hour`) und daneben `first := time.NewTimer(FirstCatalog)` mit
+`FirstCatalog = time.Minute`. Die Katalogrunde läuft also eine Minute nach dem Start und danach
+stündlich. Dass `systemctl list-timers` auf api-1 keinen NGC-Timer zeigt, ist darum der erwartete
+Zustand und kein Befund.
+
+Die Runde selbst **hat** eine Meldung:
+
+```go
+func (s *Server) hour(ctx context.Context) {
+	if err := s.st.Refresh(ctx); err != nil {
+		slog.Warn("catalogs could not be fetched", "error", err)
+	}
+}
+```
+
+Erreichbar ist sie für diesen Fall nicht. `Stores.Refresh` (`fetch.go:175`) gibt einen Fehler nur
+zurück, wenn die **Vertrauensliste** nicht zu lesen war; der Fehler des einzelnen Ladens geht in
+`_ = st.note(ctx, s.ID, err)` und wird verworfen, am Ende steht `return nil`. Ein unerreichbarer
+Laden liefert also `nil`, und `slog.Warn` darüber feuert nie. Der Grund landet still in der Zeile
+des Ladens und ist nur in `ngc.store/sources` zu sehen — für den, der sich anmeldet und dorthin
+klickt. Über die Befehlszeile gibt es gar kein Nachsehen: `ngc-store --help` kennt nur Packen,
+Unterschreiben und Prüfen, `ngc-api --help` und `ngc-controller --help` keinen Katalogbefehl.
+
+Ein Laden, der eine Woche weg ist, hat damit **168 Mal erfolglos geklopft**, ohne eine Zeile zu
+hinterlassen, die ein Mensch findet, ohne sie zu suchen. Das `_ =` ist kein Versehen: der
+Kommentar darüber sagt, dass das Aufschreiben den nächsten Laden nicht verschlucken darf. Die
+Absicht ist richtig, die Folge ist Stille.
+
+**Was zu entscheiden wäre:**
+
+- Ob eine Katalogrunde, die einen Laden nicht erreicht, **ins Journal** gehört. Vorschlag:
+  ja, aber nicht jede Stunde dieselbe Zeile — beim ersten Fehlschlag eine `WARN`, danach erst
+  wieder, wenn sich etwas ändert (wieder erreichbar, oder ein anderer Grund). Sonst tauscht man
+  Stille gegen Rauschen, und 168 gleiche Zeilen findet auch niemand.
+- Ob `Stores.Refresh` den Fehler **zurückgeben** soll, statt ihn nur in die Zeile zu schreiben.
+  Die heutige Form verschluckt ihn zweimal: `_ =` am `note`, und `return nil` am Ende. Ein
+  gesammelter Fehler („k von n Läden nicht erreicht") würde die Warnzeile erreichbar machen, ohne
+  dass ein kaputter Laden den nächsten kostet.
+- Ob es einen Weg über die **Befehlszeile** geben soll, nach dem Laden zu sehen. Heute kann man
+  den Zustand der Läden nur über eine Anmeldung in der Oberfläche erfahren. Für jeden, der eine
+  Anlage aus der Ferne betreut, ist das eine Tür, die fehlt.
+
+Alle drei sind Entscheidungen und keine Messungen. Die Messung ist: sie fragt, sie scheitert, und
+es steht nirgends, wo man es sieht.
+
+Herkunft und die ganze Messreihe, samt zweier Messfallen, die den Lauf fast entwertet haben:
+`docs/ausfall-je-maschine.md`.
+
+## Punkt 77: Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen
+
+Gemessen am 24.10.2026. Der DNS des Netzes (10.2.3.102) liefert für **jeden** Namen
+`*.ngc.mein.lan` neben dem richtigen A-Satz auch einen AAAA-Satz `::`. Alles, was über NSS
+geht — `getent`, `curl`, `ping`, jedes Werkzeug, zu dem ein Mensch greift — nimmt das `::`
+zuerst und landet damit auf der **eigenen** Maschine, wo auf 443 der Apache von api-1 antwortet.
+
+Was das kostet, ist an zwei Zeilen zu sehen, beide von api-1 aus, bei **laufendem** und bei
+**abgeschaltetem** Laden:
+
+```
+curl -sk https://store.ngc.mein.lan/catalog.json                       Laden an  -> 404 von=::
+dieselbe Zeile                                                         Laden aus -> 404 von=::
+curl --resolve store.ngc.mein.lan:443:10.2.3.215 … /catalog.json       Laden an  -> 200 von=10.2.3.215
+dieselbe Zeile                                                         Laden aus -> 000
+```
+
+**Die naive Frage kann einen toten Laden nicht von einem lebenden unterscheiden.** Sie gibt beide
+Mal dieselbe Zahl, und die kommt von der falschen Maschine. `getent ahosts store.ngc.mein.lan`
+auf api-1 zeigt es direkt: erst `10.2.3.215`, dann `::`.
+
+Dass NGC selbst davon nicht stirbt, liegt daran, dass Go die Adressen einer Antwort der Reihe
+nach durchgeht und am `::` vorbeifällt. Die Anlage läuft also, **weil die Software die kaputte
+Adresse überspringt** — und der Mensch, der danach mit einem Werkzeug nachsieht, bekommt ein
+anderes Ergebnis als die Software und glaubt dem Werkzeug. Von einem Windows-PC aus beißt die
+Falle nicht: dessen `curl` überspringt das `::` ebenfalls und landet auf 10.2.3.210. Das ist der
+Grund, warum sie so lange unentdeckt blieb — sie zeigt sich nur dort, wo gemessen wird, nämlich
+auf den Knoten.
+
+Dazu eine zweite, kleinere Falle derselben Messung: `store.crt` ist mit **ED25519**
+unterschrieben. Beide `curl` unter Windows (`/mingw64/bin/curl` und `C:\WINDOWS\system32\curl`)
+brechen den Handshake mit `schannel: SEC_E_ILLEGAL_MESSAGE` ab, und `-k` hilft nicht, weil nicht
+die Prüfung scheitert, sondern der Handshake. Der Laden ist von einem Windows-PC aus gar nicht
+erreichbar.
+
+**Was zu entscheiden wäre:**
+
+- Ob der AAAA-Satz `::` aus dem DNS **weg** soll. Das ist keine Frage an NGC, sondern an das
+  Netz — aber solange er dort steht, ist jede Messung auf einem Knoten, die einen Namen auflöst,
+  verdächtig, und das betrifft jede Sitzung, die an dieser Anlage misst.
+- Ob NGC sich darauf **verlassen** darf, dass Go am `::` vorbeifällt. Heute hängt die
+  Erreichbarkeit der Läden daran. Ein Client, der anders auswählt, trifft den eigenen Apache.
+
+Die Messregel, die daraus folgt und die in jedem Blatt dieser Anlage gelten sollte: **auf einem
+Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gemessen wurde.**
+
+Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".

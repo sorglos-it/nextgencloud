@@ -222,17 +222,58 @@ irgendetwas passiert.
 | sagt die Anlage es? | leere Ladenliste befürchtet | **sie sagt gar nichts, nirgends** — siehe unten |
 | Selbstfang | ja | **ja.** 40 s nach `qm start` antwortet die Adresse, `nginx` läuft von selbst wieder, einziger Dienst auf der Maschine |
 
-**Die Anlage merkt den Ausfall nicht, weil sie nie fragt.** Im Journal von api-1
-und api-2 steht über den ganzen Ausfall hinweg `-- No entries --` — nicht eine
-Zeile. Das ist kein Messfehler: `journalctl -u ngc-api` liefert für die letzten
-neun Stunden 397 Zeilen, der Dienst schreibt also. Er hatte in diesem Fenster
-nur nichts zu sagen. Der Grund steht in `systemctl list-timers` auf api-1:
-**dort ist kein einziger NGC-Timer.** `phpsessionclean`, `apt-daily`,
-`man-db`, `fstrim` — und nichts, was den Katalog holt. Der Katalog wird nur auf
-Zuruf aus der Oberfläche geholt („Jetzt nachsehen"); ein Weg über die
-Befehlszeile existiert nicht (`ngc-store --help` kennt nur Packen,
-Unterschreiben und Prüfen; `ngc-api --help` und `ngc-controller --help` kennen
-kein Nachsehen).
+**Die Anlage fragt stündlich nach dem Laden — und schweigt darüber.**
+
+Hier stand zuerst der Satz „sie merkt es nicht, weil sie nie fragt", gestützt
+auf `systemctl list-timers` auf api-1, wo kein einziger NGC-Timer steht. Der
+Satz war falsch, und meine Messung dazu war wertlos. Beides gehört
+aufgeschrieben, weil der richtige Satz schlimmer ist als der falsche.
+
+Der Takt ist kein systemd-Timer, sondern steckt im Programm.
+`apps/server-api/classes/server/server.go`, `Server.rounds`:
+
+```go
+hour  := time.NewTicker(Hour)          // Hour = time.Hour
+first := time.NewTimer(FirstCatalog)   // FirstCatalog = time.Minute
+…
+case <-first.C: s.once(func() { s.hour(ctx) })
+case <-hour.C:  s.once(func() { s.hour(ctx) })
+```
+
+Eine Minute nach dem Start, danach jede Stunde. Ein fehlender systemd-Timer ist
+also der **erwartete** Zustand, kein Befund. Und mein Journalbefund ist damit
+keiner: mein Ausfallfenster war rund **40 Sekunden** lang, in denen überhaupt
+kein Takt fällig war. `-- No entries --` beweist in diesem Fenster nichts. Der
+richtige Beleg steht nicht im Journal, sondern im Code.
+
+Dort steht er dafür doppelt. `Server.hour` *hat* eine Meldung:
+
+```go
+func (s *Server) hour(ctx context.Context) {
+	if err := s.st.Refresh(ctx); err != nil {
+		slog.Warn("catalogs could not be fetched", "error", err)
+	}
+}
+```
+
+Aber `Stores.Refresh` (`fetch.go:175`) gibt einen Fehler **nur** zurück, wenn
+die Vertrauensliste nicht zu lesen war. Der Fehler des einzelnen Ladens geht in
+`_ = st.note(ctx, s.ID, err)` und wird verworfen; am Ende steht `return nil`.
+Ein unerreichbarer Laden liefert also `nil`, und die Warnzeile darüber ist für
+genau diesen Fall **nicht erreichbar**. Der Grund landet still in der Zeile des
+Ladens, sichtbar nur in `ngc.store/sources` — für den, der sich anmeldet und
+dorthin klickt.
+
+Dazu bleibt richtig: über die Befehlszeile gibt es kein Nachsehen.
+`ngc-store --help` kennt nur Packen, Unterschreiben und Prüfen; `ngc-api --help`
+und `ngc-controller --help` kennen keinen Katalogbefehl.
+
+Der Befund ist damit: **die Anlage fragt jede Stunde, bekommt keine Antwort,
+und sagt es niemandem.** Ein Laden, der eine Woche weg ist, hat 168 Mal
+erfolglos geklopft, ohne eine Zeile zu hinterlassen, die ein Mensch findet,
+ohne sie zu suchen. Das ist nicht gemessen worden, sondern am Code gelesen —
+die Messung, die es zeigen würde, braucht ein Fenster von über einer Stunde und
+steht unten unter „was offen ist".
 
 Damit ist der schwere Befund, den der Auftrag befürchtet hat, **nicht**
 eingetreten: die Anlage arbeitet ohne ihren Laden weiter, die Oberfläche steht,
@@ -249,3 +290,49 @@ anderen Seite. Zwei Dinge daran sind **abgewogen, nicht gemessen**: dass ein
 Zeitablauf nirgends hängt, habe ich nur an den Antwortzeiten der Oberfläche
 gesehen (keine Verlängerung, 19–28 ms) — nicht an dem Pfad, der wirklich zum
 Laden greift.
+
+Der schwere Befund, den der Auftrag befürchtet hat, ist damit **nicht**
+eingetreten: die Anlage arbeitet ohne ihren Laden weiter. Der Laden ist kein
+Teil der Anlage, und sie behandelt ihn auch nicht wie einen.
+
+## Was offen ist, und warum
+
+Vier der sechs Fälle sind nicht gefahren, und die Spalte „was der Benutzer
+dabei sieht" ist in dem einen gefahrenen Fall leer. Beides hat Gründe, die
+nicht an der Messung liegen:
+
+1. **Es fehlt ein Zugang.** In `ngc_user` steht genau ein Benutzer: `weiricth`,
+   `admin`, kein TOTP. Ohne dessen Kennwort sind (b) anmelden, (c) Apps sehen,
+   (d) App öffnen und (e) neu einrichten in **keinem** Fall zu messen — und das
+   ist genau die Spalte, um die es im Auftrag geht. Die Leitsitzung gibt das
+   Kennwort nicht weiter (richtig so, es ist nicht ihres). Der Sperrzähler ist
+   nachgelesen und harmlos genug für eine Messung:
+   `lock.go` hat `freeCount = 2`, danach verdoppelnde Wartezeit bis
+   `maxWait = 300` s, keine dauerhafte Sperre des Kontos.
+2. **api-1 und db-1 sind gesperrt.** Beide nehmen die ganze Anlage mit; an ihr
+   hängen gerade mehrere Sitzungen. Bei db-1 erwarte ich, dass sie ohne
+   `galera_new_cluster` von Hand nicht zurückkommt — heute früh lag die
+   Datenbank aus genau diesem Grund von 02:45 bis 09:30 tot. Ein Fenster dafür
+   liegt bei Thomas.
+3. **api-2, svc-1 und svc-2 sind freigegeben, aber das Abschalten wurde
+   abgelehnt.** Der erste `qm stop 302` wurde von der Prüfung dieser Sitzung mit
+   „Interfere With Workloads" zurückgewiesen. Das ist nicht umgangen worden.
+   Der Ladenfall lief vorher noch durch; ab api-2 braucht es eine Erlaubnis.
+4. **Die stündliche Katalogrunde ist nicht gemessen, nur gelesen.** Der Beleg
+   dafür, dass 168 erfolglose Versuche keine Zeile hinterlassen, braucht ein
+   Ausfallfenster von über einer Stunde. Vierzig Sekunden zeigen es nicht.
+
+Zwei Dinge aus den Nachbarsitzungen, die beim Wiederanlauf der Dienstknoten
+zählen und hier festgehalten sind, damit sie nicht in Nachrichten verschwinden
+— **von dort gemessen, nicht von mir**:
+
+- Kein App-Container hat auf dieser Anlage eine eigene cgroup;
+  `CgroupPath` zeigt auf `/system.slice/ngc-controller.service`. Was greift, ist
+  `TasksMax=3466` des Controllers, geteilt mit allen Apps des Knotens. Im
+  Leerlauf steht er bei `TasksCurrent=16`; ein leerer App-Container kostet rund
+  6 Aufgaben, eine offene Terminal-Sitzung rund 9,4. Für den Wiederanlauf heißt
+  das: die Container allein bringen den Deckel nicht in Gefahr. Hängt dort
+  etwas und `TasksCurrent` steht weit unter 100, ist es **nicht** der Deckel.
+- **svc-1 trägt `ngc-controller` 0.2.2, svc-2 trägt 0.2.1.** Die beiden Knoten
+  sind nicht gleich. Kommt einer anders zurück als der andere, muss das nicht am
+  Ausfall liegen.
