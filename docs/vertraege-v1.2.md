@@ -5187,7 +5187,24 @@ klickt. Über die Befehlszeile gibt es gar kein Nachsehen: `ngc-store --help` ke
 Unterschreiben und Prüfen, `ngc-api --help` und `ngc-controller --help` keinen Katalogbefehl.
 
 Ein Laden, der eine Woche weg ist, hat damit **168 Mal erfolglos geklopft**, ohne eine Zeile zu
-hinterlassen, die ein Mensch findet, ohne sie zu suchen. Das `_ =` ist kein Versehen: der
+hinterlassen, die ein Mensch findet, ohne sie zu suchen.
+
+**Nachgemessen am 24.10.2026, 13:01-13:05 UTC, mit einer Runde, die wirklich auf den toten Laden
+trifft** (Laden aus, `ngc-api` auf api-2 neu gestartet, Runde erzwungen - `FirstCatalog` erlaubt
+das in einer Minute statt in einer Stunde). Damit ist auch die gute Haelfte belegt, die der erste
+Lauf nicht zeigen konnte: die Runde kostet genau sich selbst. Der Katalog bleibt Byte fuer Byte
+auf Folge 7 (1116 B), die Vertrauensliste auf Folge 6, beide Apps aktiv. Und die Anlage faengt
+sich von selbst: Laden wieder an, naechste Runde, Fehlertext weg und `checked` neu, ohne eine
+Hand. Im Journal von api-2 stehen dazu **null Zeilen**, die Katalog, Store oder Laden erwaehnen -
+das ist jetzt gemessen und nicht mehr nur aus dem Code geschlossen.
+
+Dazu eine Einzelheit, die beim Lesen der Zeile wichtig ist: **`checked` rueckt beim Fehlschlag
+nicht vor.** Die Zeile ging von `{"checked":1792845105}` auf
+`{"checked":1792845105,"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` - der
+Wert bleibt auf dem letzten *erfolgreichen* Blick stehen, der Fehler wird nur angehaengt. Die
+Zeile traegt damit das Alter des letzten guten Blicks, und wer hinsieht, kann erkennen, dass der
+Laden seit einer Woche nicht geantwortet hat. Es fehlt nicht die Auskunft, sondern der Anlass,
+sie zu holen. Das `_ =` ist kein Versehen: der
 Kommentar darüber sagt, dass das Aufschreiben den nächsten Laden nicht verschlucken darf. Die
 Absicht ist richtig, die Folge ist Stille.
 
