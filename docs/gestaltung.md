@@ -120,6 +120,34 @@ fremder Text geht als Text in die Seite, nie als Markup.
   sich nach, wenn das System umstellt (`matchMedia`-Horcher) — nie
   „bitte neu laden", siehe den Grundsatz im Entscheidungsbuch.
 
+## 8. Vorlagen wie bei Joomla und PrestaShop
+
+- **Entschieden:** Es gibt einen **Vorlagen-Ordner** unter dem Webserver. Jede
+  Vorlage ist ein Ordner darin und bringt das ganze Aussehen mit. Der Benutzer
+  **wählt** eine aus, mehr nicht. **Hochladen darf nur ein Verwalter.**
+- **Warum:** Thomas hat es so entschieden, nach dem Vorbild von Joomla und
+  PrestaShop. Und sein Punkt trägt: weil nur ein Verwalter hochlädt, liegt die
+  Vorlage unter dem eigenen Webserver — damit ist es **kein fremdes CSS**, und
+  die Sicherheitsregel der Seite (`style-src 'self'`, `apps/web/classes/Page.php`)
+  bleibt **zu**. Sie muss für Vorlagen nicht aufgebohrt werden.
+- **Eine Vorlage darf auch das Aussehen einer App ersetzen.** Liegt in der
+  Vorlage ein Ordner für eine App — zum Beispiel `terminal` —, wird **sein**
+  Aussehen geladen statt des mitgelieferten der App.
+- **Heute:** Es gibt keine Vorlagen. Was es gibt, ist die Grundlage dafür: alle
+  Farben, Ecken, Schatten und die Mindestgröße eines Fensters stehen als Marken
+  an **einer** Stelle (`shell.css`, oben), und Farbe und Tapete sind schon
+  wählbar (`shell/theme.js`).
+- **Zu bauen:** Der Ordner, die Auswahl im Startmenü unter „Aussehen", das
+  Hochladen im Benutzer-und-Rechte-Fenster, und ein Recht dafür.
+- **Und ein Punkt, der vor dem Bauen zu klären ist, nicht hier entschieden:**
+  eine App läuft heute in einem Rahmen mit **eigenem Ursprung**, damit nichts von
+  der Oberfläche in sie hineinreicht (`shell/appframe.js`, Schritt 7). Das
+  Ersetzen des App-Aussehens reicht genau dort hinein. Wie weit eine Vorlage in
+  eine App darf, ohne diesen Riegel zu lösen, ist eine Frage für den Bau-Auftrag.
+  Dazu gehört: ein Verwalter, der eine Vorlage hochlädt, kann mit ihr Knöpfe
+  verschieben oder verdecken — die Vorlage ist also **kein** Beiwerk, sondern
+  etwas, das nur ein Verwalter anfassen darf. Genau so ist es entschieden.
+
 ---
 
 ## Wie geredet und geschrieben wird
