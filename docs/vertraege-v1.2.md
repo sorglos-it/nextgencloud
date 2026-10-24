@@ -9,14 +9,14 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 ---
 
-## Inhaltsverzeichnis (Stand 18.10.2026)
+## Inhaltsverzeichnis (Stand 24.10.2026)
 
 **Achtung, zwei Nummernreihen in einer Datei.** Die Nummern 19 bis 35 sind
 **doppelt vergeben**:
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 62"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 74"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -24,18 +24,23 @@ sofern nicht „dieser Liste" oder „des Vertrags" dabeisteht – dann Reihe A.
 **Darum die Überschrift zitieren, nicht die Nummer** (so steht es auch in
 `STAND.md`).
 
-Lücken gibt es in keiner der beiden Reihen.
+Lücken gibt es in keiner der beiden Reihen. **Nachgemessen am 24.10.2026** und
+seitdem bei jedem `tools/check.sh` wieder: `tools/check-buch.sh` liest diese
+Datei gegen sich selbst – keine Nummer zweimal, keine Lücke, kein Verweis auf
+einen Punkt, den es nicht gibt. **Wer einen Punkt anhängt, trägt ihn in die
+Tabelle der Reihe B ein** – sonst wird die Prüfung rot, und das ist Absicht:
+die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 ### Stand in Zahlen
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 34 | 69 |
+| gilt | 35 | 46 | 81 |
 | überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
 | offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **45** | **81** |
+| **Einträge** | **36** | **57** | **93** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -139,6 +144,18 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
 | 60 | Der Controller lässt sich nicht koppeln | **ÜBERHOLT durch Punkt 61 – in der Kernaussage falsch** | Messung |
 | 61 | Gekoppelt – Punkt 60 war falsch | gilt – **berichtigt Punkt 60** | Messung |
 | 62 | Die Anlage entsteht allein aus den Skripten | gilt – bestätigt **Punkt 61** an frischer Anlage | Umgebung |
+| 63 | Die Oberfläche ist auf `main` – 136 Dateien statt 2 | gilt – der Fund lag außerhalb des Umzugs | Umgebung |
+| 64 | Der erste Release auf einer echten Debian-VM, Terminal-Abbild gebaut | gilt | Umgebung |
+| 65 | „Noch nicht geholt" wird dem Verwalter als „nicht echt" gezeigt | gilt | Messung |
+| 66 | Eine frische Anlage hat eine Stunde lang keinen Laden | gilt – kein Abruf beim Start, keine Handauslösung | Messung |
+| 67 | Rust für NGC – bitgleich nachgebaut, und genau das spricht dagegen | gilt – Entscheidungspapier, Vorschlag ist eine Abwägung | Entscheidung |
+| 68 | Fremde Programme portieren – das Programm ja, die Oberfläche nie | gilt – **nicht** dieselbe Frage wie Punkt 67 | Entscheidung |
+| 69 | Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt | gilt – behoben, die CI sagt jetzt **warum** | Messung |
+| 70 | Ein Paket über eine Fenstergröße kommt unter Last nicht durch | gilt – Befund auf `main`, `E_PROTOCOL` statt `ok` | Messung |
+| 71 | Sechs Wände vom Release bis zur laufenden App | gilt – vier davon in keinem Prüfsatz; Wand 1 offen in `ulh` | Umgebung |
+| 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
+| 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
+| 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
