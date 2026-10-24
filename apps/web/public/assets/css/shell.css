@@ -353,6 +353,10 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .code{background:var(--field-bg);border:1px solid var(--win-border);border-radius:6px;
                 padding:8px;word-break:break-all;-webkit-user-select:text;user-select:text}
 .usersapp .role{border:1px solid var(--win-border);border-radius:8px;margin:0 0 12px;padding:8px 12px 12px}
+.usersapp .newrole,.usersapp .newuser{border:1px solid var(--win-border);border-radius:8px;
+  margin:16px 0 0;padding:8px 12px 12px}
+.usersapp .newrole legend,.usersapp .newuser legend{padding:0 6px;font-weight:600}
+.usersapp .newrole .muted,.usersapp .newuser .muted{margin:0 0 8px;font-size:12px}
 .usersapp .role legend{padding:0 6px;font-weight:600}
 .usersapp .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
 .usersapp .opt{display:flex;gap:8px;align-items:center;cursor:pointer}

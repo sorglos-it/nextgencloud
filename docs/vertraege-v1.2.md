@@ -4519,3 +4519,395 @@ auf einer echten VM ist keines von beiden geprüft.
   **Was davon bleibt,** klein, aber echt: `adminApps` und das Menü lassen eine **abgeschaltete**
   App beide aus (`!a.Active`). Deren Rechte lassen sich also nicht vorbereiten, solange sie aus
   ist — das ist so gewollt und hier nur vermerkt, nicht als Befund.
+
+## Punkt 72: Die Härtung des App-Containers liegt an — bis auf die drei Mengen-Grenzen, die der Kern nicht durchsetzt
+
+Punkt 36 hat die Hälfte offen gelassen, die ohne Linux-Server nicht zu haben ist: **ob podman die
+Schalter einhält.** Hier ist sie gemessen, am laufenden Terminal-Container der Debian-VM
+(24.10.2026, Kern 6.12.113+deb13-amd64, podman 5.4.2, Container `ngc-terminal-439982dd`,
+`dc15f0724b9f`, zu diesem Zeitpunkt 7 Stunden auf).
+
+**Welche Maschine.** Die **Einzel-VM aus Punkt 64** (`ssh ngc`, 10.2.3.208), auf der die
+eingerichtete Terminal-App steht — **nicht** die verteilte Anlage unter `ngc.mein.lan`, deren Apps
+seit dem 24.10.2026 auf `svc-1` und `svc-2` laufen. Jede Zahl dieses Punktes gilt für diese eine
+Maschine. Das ist nicht Vorsicht um ihrer selbst willen: Befund 1 ist eine Aussage über **eine
+systemd-Einheit und ihre cgroup**, und ob `Delegate=` auf `svc-1` und `svc-2` genauso steht, ist
+hier **nicht gemessen** und darf aus diesen Zahlen nicht geschlossen werden. Zwei Maschinen mit
+demselben Dienst sind genau die Falle, in der eine Zählung über den falschen Baum entsteht.
+
+**Wie gemessen wurde.** podman läuft dort rootlos als der App-Benutzer, also wurde jeder Aufruf
+aus `/tmp` heraus mit `setpriv --reuid=997 --regid=985 --clear-groups` und mit
+`HOME=/var/lib/ngc/apps/org.sorglos.terminal`, `XDG_RUNTIME_DIR=/run/ngc/ngc-terminal-439982dd`,
+`PATH=/usr/bin:/bin` gestartet — genau die vier, die `Podman.run` mitgibt. Das Werkzeug wurde vor
+der ersten Zählung geprüft (`podman --version` antwortet 5.4.2), und die entscheidende Probe (das
+Netz) trägt eine Gegenprobe, die *gelingt*. Gelesen wurden `podman inspect` **samt
+`.Config.CreateCommand`**, `/proc/946/status`, `/proc/946/uid_map`, `/proc/946/mountinfo`,
+`/proc/946/cgroup` und die cgroup-Dateien selbst.
+
+### Was der Controller mitgibt, und was anliegt
+
+Die Liste steht in `apps/server-controller/classes/runtime/podman.go`, in `createArgs`
+(Zeilen 247–298); die Begründung je Schalter steht dort im Quelltext und ist hier verkürzt.
+
+| Schalter | wozu laut Quelltext | gemessen |
+|---|---|---|
+| `--network none` (ohne `NeedNetwork`) | ohne Gewährung kein Netz; wie ein Netz entsteht sagt der Code bewusst nicht | **liegt an** — im Container nur `lo`, `/proc/net/route` leer |
+| `--read-only` | das Abbild bleibt unschreibbar, geschrieben wird nur unter `/data` | **liegt an** — `/` ist `ro`, Schreiben auf `/` und `/usr` fällt mit *Read-only file system* |
+| `--cap-drop ALL` (ohne `NeedRoot`) | wer ausbricht, soll nichts mitbringen | **nicht gesetzt** — Terminal hat `needs:["root"]`, also greift der `if !c.Root`-Zweig nicht (siehe unten) |
+| `--security-opt no-new-privileges` | zweite Lage gegen Rechtegewinn | **liegt an** — `NoNewPrivs: 1` in `/proc/946/status` |
+| `--volume …:/data:rw,nosuid,nodev` | set-user-id-Bit und Gerätedateien in den eigenen Daten zählen nicht | **liegt an** — `/data rw,nosuid,nodev` in `mountinfo` |
+| `--volume …/ngc-hold:ro,nosuid,nodev` | der Haltevorgang kommt nur aus `config.BinDir` und nur lesbar | **liegt an** — `ro,nosuid,nodev`, Quelle `/usr/lib/ngc/ngc-controller` |
+| `--user 0:0` | 0 im Container ist draußen der App-Benutzer | **liegt an** — `uid_map` ist `0 997 1`, der Prozess ist draußen `997:985` |
+| rootlos als System-Benutzer der App (`credential`) | wer ausbricht, landet auf einem Benutzer ohne eigene Rechte | **liegt an** — `/proc/946/status` `Uid: 997 997 997 997` |
+| `--cpus 1.000` | guter Nachbar sein | **kommt nicht an** (siehe Befund 1) |
+| `--memory 256m` | dito | **kommt nicht an** (siehe Befund 1) |
+| `--pids-limit 512` | die ganze Antwort auf eine Fork-Bombe (`PIDsLimit`) | **kommt nicht an** (siehe Befund 1) |
+
+Dazu die Härtung, die nicht in `createArgs` steht, aber dieselbe Trennung tragen soll:
+`/var/lib/ngc/apps` ist `0711 root`, der Datenordner der App `0700 997:985` und laut `lsattr`
+verschlüsselt (Merker `E`); `/run/ngc` ist `0711 root`, `/run/ngc/ngc-terminal-439982dd` ist
+`0700 997:985`. Alles vier wie in `data.go` und `run.go` beschrieben. Der App-Benutzer hat
+`/usr/sbin/nologin`.
+
+### Befund 1 — die drei Mengen-Grenzen stehen im Aufruf und wirken nicht
+
+`podman inspect` meldet `PidsLimit 512`, `Memory 268435456`, `NanoCpus 1000000000`, und
+`.Config.CreateCommand` zeigt, dass alle drei wirklich mitgegeben wurden. Durchsetzen muss sie die
+cgroup — und der Containerprozess hat keine eigene:
+
+```
+/proc/946/cgroup                 ->  0::/system.slice/ngc-controller.service
+cgroup.procs dieser cgroup       ->  690 (ngc-controller, uid 0), 894 catatonit, 944 conmon, 946 ngc-hold
+pids.max                         ->  9409      (nicht 512)
+memory.max                       ->  max       (nicht 256M)
+cpu.max                          ->  Datei gibt es nicht
+cgroup.controllers               ->  memory pids
+```
+
+Der Containerprozess sitzt also **in der cgroup des Controllers, zusammen mit dem Controller
+selbst.** Keine der drei Grenzen ist im Kern hinterlegt; die 9409 sind `TasksMax` der
+systemd-Einheit und werden mit dem Controller **geteilt**.
+
+Das ist die Art Abweichung, die Punkt 36 gesucht hat: der Schalter wird gesetzt, podman nimmt ihn
+an und schreibt ihn in seine eigenen Angaben — und verwirft ihn still. Die Ursache ist gemessen und
+liegt nicht in podman:
+
+```
+systemctl show ngc-controller.service -p Delegate   ->  Delegate=no
+/sys/fs/cgroup/system.slice/ngc-controller.service  ->  drwxr-xr-x root root
+   Schreibprobe als 997                             ->  Keine Berechtigung
+loginctl show-user 997                              ->  User ID 997 is not logged in or lingering
+podman-Warnung bei jedem Aufruf                     ->  "no systemd user session available …
+                                                        Falling back to --cgroup-manager=cgroupfs"
+podman inspect .HostConfig.CgroupManager            ->  cgroupfs
+podman inspect .State.CgroupPath                    ->  /system.slice/ngc-controller.service
+```
+
+Ohne `Delegate=` an der Einheit bekommt der App-Benutzer keinen eigenen Zweig im cgroup-Baum, darf
+in den vorhandenen nicht schreiben, und rootloses podman legt dann keine an — es sagt das nur als
+Warnung über den Kanal, den der Controller nicht liest (`p.run` gibt `errOut` für `create` als
+`nil` mit).
+
+**Was das praktisch heißt.** Der lange Kommentar an `PIDsLimit` nennt die Zahl „die ganze Antwort
+auf eine Fork-Bombe in einer App". Diese Antwort liegt auf dieser Maschine nicht an. Schlimmer als
+die fehlende Grenze ist das geteilte Fach: die Aufgaben einer App zählen gegen `TasksMax` des
+Controllers, eine App am Anschlag nimmt also dem Controller den Platz, Aufgaben zu starten. Das ist
+**abgewogen, nicht gemessen** — eine Fork-Bombe wäre auf dieser Maschine zerstörerisch, weil die
+anderen Sitzungen am laufenden Dienst arbeiten, und wurde darum nicht gefahren.
+
+### Befund 2 — `--cap-drop ALL` ist auf dieser Maschine überhaupt nicht zu messen
+
+Der Container hat 11 Fähigkeiten: `CapEff: 00000000800405fb` in `/proc/946/status`, dieselben 11 in
+`EffectiveCaps` und `BoundingCaps` — podmans Vorgabesatz, darunter `CAP_DAC_OVERRIDE`,
+`CAP_SETUID` und `CAP_SETFCAP`. Kein Fehler des Codes: Terminal trägt `needs:["root"]`
+(`apps/server-controller/templates/terminal/manifest.json`), `activate.go:467` setzt daraus
+`Root: true`, und `createArgs` lässt den `--cap-drop ALL`-Zweig dann aus. `.Config.CreateCommand`
+bestätigt es: der Schalter steht nicht im Aufruf.
+
+Der Befund ist die Lücke, nicht der Fehler: **Terminal ist die einzige App dieser Anlage, und sie
+ist genau die, an der dieser Schalter nicht anliegt.** Der am häufigsten genannte Härtungsschalter
+ist damit weiter ungemessen — gebaut, im Fall-Satz grün, auf keiner laufenden App der Welt je
+nachgesehen. Dazu passt eine Lesart, die der Quelltext selbst nicht ausspricht: der Kommentar sagt,
+die Fähigkeiten „kommen zurück", nennt aber nicht, welche. Gemessen sind es die 11 von podman —
+eine Vorgabe, die wie die 2048 aus Punkt 36 **nicht im Repo steht** und sich mit einer
+podman-Fassung ändern kann.
+
+### Befund 3 — ein Riegel liegt an, den niemand gesetzt hat
+
+`/proc/946/status` meldet `Seccomp: 2` und `Seccomp_filters: 1`: der Container läuft hinter einem
+seccomp-Filter. Im Repo steht davon nichts — kein `--seccomp-profile`, kein
+`--security-opt seccomp=…`. Es ist podmans eingebautes Profil. Das ist kein Mangel, aber dieselbe
+Art Abhängigkeit wie die 11 Fähigkeiten: eine Wand, die trägt, solange podman sie stellt, und die
+kein Fall dieses Repos halten würde, wenn sie wegfiele.
+
+### Befund 4 — ein App-Benutzer ohne App
+
+`getent passwd` nennt neben `ngc-terminal-439982dd` einen zweiten:
+`ngc-all-73e95399:x:999:987::/var/lib/ngc/apps/no.app.at.all:/usr/sbin/nologin`. Das zugehörige
+Heimverzeichnis gibt es nicht, jeder podman-Aufruf unter ihm scheitert mit
+`cannot resolve /var/lib/ngc/apps/no.app.at.all`. Ein Überrest einer früheren Messung, der kein
+Loch aufmacht (nologin, kein Ordner, keine Gruppe mit Rechten) — aber `DropUser` hat ihn
+offensichtlich nicht geholt, und ein Benutzer, der nach seiner App übrig bleibt, gehört in den
+Fall-Satz des Aufräumens.
+
+### Die drei Proben: trägt die Härtung?
+
+Gewählt wurden die drei Wände, die die Trennung wirklich tragen muss. Vorher angekündigt und
+danach entfernt wurde ein **Attrappen-Ordner** `/var/lib/ngc/apps/zz.probe.other`
+(`0700`, Benutzer `999:987`, eine Geheimdatei `0600`) — die Gestalt einer zweiten App, weil es
+auf dieser Anlage keine zweite gibt. Sonst wurde nichts verändert; der Terminal-Container war
+nach allen Proben unverändert auf.
+
+**Probe 1 — kommt die App an die Daten einer anderen App? Nein, zweifach.**
+Im Container existiert der Pfad nicht einmal: nur `/data` ist eingehängt, `ls /var/lib/ngc/apps`
+antwortet *No such file or directory*. Und in der Stellung, auf die es ankommt — nach einem
+Ausbruch, als `997` auf dem Wirt:
+
+```
+ls /var/lib/ngc/apps                                 ->  Keine Berechtigung   (0711 root)
+cat /var/lib/ngc/apps/zz.probe.other/secret.txt      ->  Keine Berechtigung
+cat /var/lib/ngc/controller/state.db                 ->  Keine Berechtigung
+ls /var/lib/ngc/apps/org.sorglos.terminal            ->  lesbar  (die eigenen)
+```
+
+Die Zeile aus `podman_linux.go` — „wer aus dem Container ausbricht, landet auf einem Benutzer ohne
+eigene Rechte" — trägt. Dass `CAP_DAC_OVERRIDE` im Container liegt, ändert daran nichts: die
+Fähigkeit gilt nur im Benutzer-Namensraum, und der kennt `999` nicht.
+
+**Probe 2 — kann der Container neue Rechte erlangen? Nein, aber eine Lage ist nicht trennbar
+gemessen.**
+
+```
+Schreiben auf /  und /usr          ->  Read-only file system
+mount -t proc  /  mount /dev/sda2  ->  permission denied   (CAP_SYS_ADMIN nicht im Satz)
+mount -o remount,rw /              ->  permission denied
+mount -o remount,suid /data        ->  permission denied
+dd if=/dev/sda2                    ->  No such file or directory  (kein Gerät im Container)
+NoNewPrivs                         ->  1
+```
+
+Kein Weg heraus gefunden — und die vier abgewiesenen `mount`-Aufrufe sind der schärfste Teil davon,
+weil `--read-only` und die `nosuid`-Optionen ohne sie zurückdrehbar wären.
+
+**Die Lage, die nicht trennbar ist, und das gehört dazu:** ob `nosuid` auf `/data` wirkt, ließ sich
+an *diesem* Container nicht einzeln zeigen. Eine set-user-id-Datei nützt nur einem Benutzer, der
+nicht schon 0 ist, und `/data` ist `0700` — der einzige Benutzer im Container, der hineinkommt, ist
+die 0, für die das Bit nichts ändert. Eine erste Zählung hat genau das als Beweis gelesen
+(`euid=0` vor **und** nach dem Aufruf) und war keiner. Als Gegenprobe wurde dieselbe Datei auf
+`/tmp` gelegt und als `1000` gestartet: `euid` blieb `1000`, der Kern lässt das Bit auf einer
+`nosuid`-Einhängung in diesem Container also fallen. Dass `/data` dieselbe Option trägt, ist aus
+`mountinfo` gemessen — die Wirkung auf `/data` selbst ist daraus **geschlossen, nicht gemessen**.
+Nebenbei aufgefallen: die Wurzel-Einhängung selbst trägt `ro,relatime` und **kein** `nosuid`. Sie
+ist unschreibbar, eine set-user-id-Datei könnte also nur aus dem Abbild der App kommen — und wäre
+drinnen die 0, draußen `997`. Kein Loch, aber die einzige Einhängung des Containers ohne diese
+Option.
+
+**Probe 3 — erreicht der Container das Netz der Anlage? Nein, und die Gegenprobe gelingt.**
+Dieselbe Perl-Probe, zweimal gefahren — im Container und als `997` auf dem Wirt:
+
+| Ziel | im Container | als `997` auf dem Wirt |
+|---|---|---|
+| `127.0.0.1:7443` (ngc-api) | Connection refused (eigenes `lo`) | **erreicht** |
+| `10.2.3.208:7443` (die VM selbst) | Network is unreachable | **erreicht** |
+| `10.2.3.208:443` (apache) | Network is unreachable | **erreicht** |
+| `10.2.3.208:22` | Network is unreachable | **erreicht** |
+| `10.2.3.1:22` (Tor der Anlage) | Network is unreachable | **erreicht** |
+| `8.8.8.8:53` | Network is unreachable | **erreicht** |
+
+`--network none` trägt vollständig, und die rechte Spalte ist der Grund, warum man das glauben
+darf: dieselbe Probe, dasselbe Perl, nur eine andere Stellung — und sie erreicht alles. Eine Null
+ohne diese Spalte wäre keine Messung gewesen. Die rechte Spalte sagt aber auch, wie weit der
+Schalter reicht: **er trennt den Container, nicht den App-Benutzer.** Wer wirklich ausbricht, hat
+das ganze Netz der Anlage, einschließlich `ngc-api`.
+
+### Was daraus zu bauen wäre
+
+1. **`Delegate=yes` an `ngc-controller.service`**, damit die drei Grenzen überhaupt eine cgroup
+   haben, in der sie stehen können — oder, wenn das nicht geht, `loginctl enable-linger` für den
+   App-Benutzer und ein `XDG_RUNTIME_DIR`, das zur Sitzung passt. Welcher der beiden Wege richtig
+   ist, ist eine Entscheidung und steht hier nicht.
+2. **Der Controller muss das Verwerfen bemerken.** Heute gibt `p.run` für `create` kein `errOut`
+   mit, und podmans Warnung über die fehlende Sitzung fällt auf den Boden. Ein Schalter, der still
+   verworfen wird, ist schlimmer als einer, der fehlt: der Fall-Satz bleibt grün, und `inspect`
+   bestätigt ihn. Ein Fall nach der Aktivierung, der `/proc/<pid>/cgroup` gegen die drei Grenzen
+   liest, wäre die einzige Messung, die das fängt.
+3. **Eine App ohne `needs:["root"]` auf diese Maschine**, allein damit `--cap-drop ALL` ein
+   einziges Mal an einer laufenden App gemessen ist. Solange Terminal die einzige App ist, ist
+   dieser Schalter ungeprüft.
+4. **`nosuid` auf die Wurzel-Einhängung**, oder eine Zeile im Quelltext, die sagt, warum sie dort
+   nicht nötig ist.
+5. **Den Überrest `ngc-all-73e95399` aufräumen** und einen Fall, der einen App-Benutzer ohne
+   Datenordner als Fehler zählt.
+6. Was der Quelltext über `NeedRoot` sagt, um die **11** ergänzen — oder die Fähigkeiten selbst
+   nennen, statt podmans Vorgabe zu erben.
+7. **Dieselbe Messung auf `svc-1` und `svc-2`**, den App-Knoten der verteilten Anlage. Befund 1
+   hängt an `Delegate=` einer systemd-Einheit, also an der Einrichtung der jeweiligen Maschine —
+   er könnte dort anliegen oder fehlen, und keine Zahl von hier sagt, welches. Dabei gilt die
+   Warnung aus der Anlage selbst: die Rolle am laufenden Dienst prüfen, nicht am Namen der
+   Maschine.
+
+**Getrennt gehalten:** gemessen sind die Tabelle der Schalter, die vier Befunde, die cgroup-Dateien
+und die drei Proben samt Gegenproben. Abgewogen sind die Folge des geteilten `TasksMax`, die
+Wirkung von `nosuid` auf `/data` und jeder der sechs Punkte dieser letzten Liste.
+
+## Punkt 73: Ein zweiter Mensch — der Vertrag konnte es die ganze Zeit, die Oberfläche hatte keine Tür
+
+**Gemessen am 24.10.2026** gegen `origin/main` (`9753a8c`) und gegen die laufende Anlage
+(`ssh ngc`, Vertrauensliste in Fassung 6).
+
+Jede Messung der letzten Wochen lief mit **einem** Menschen, dem Verwalter aus der
+Ersteinrichtung. Dieser Punkt sagt, was einen zweiten aufgehalten hat, was davon jetzt gebaut
+ist, und was nur ein Mensch tun kann.
+
+### Die vier Stationen, einzeln gemessen
+
+| Station | Stand vor dem 24.10.2026 | Beleg |
+|---|---|---|
+| Ein Verwalter legt einen zweiten Benutzer an | **gibt es gar nicht** | Im ganzen Webinterface fasst **keine** Zeile `users` oder `roles` einer neuen Fassung an. `buildNextVersion` (`apps/web/public/assets/js/apps/users.js:188`) ist allgemein, hat aber genau **einen** Aufrufer (`:1349`, in `joinNode`), und jeder `change`-Rumpf, der dort hineingeht, schreibt nur `next.nodes`. |
+| Der zweite Benutzer bekommt eine **Rolle**, die nicht `admin` ist | **gibt es gar nicht, und das ist die zweite Lücke** | Eine Anlage verlässt die Ersteinrichtung mit **genau einer** Rolle: `admin` (`apps/web/public/assets/js/auth/setup.js:178`–`:181`, „One role"). Gegengeprobt an den Testdaten: `shared/testdata/trust.json`, Fassung 1, `roles` = `[{"name":"admin","level":"critical"}]`. Und `trust.List.Validate` weist einen Benutzer ab, dessen Rolle nicht in derselben Liste steht (`shared/trust/trust.go:581`, `l.Role(name)` → `ErrInvalid`). **Ein zweiter Benutzer ohne neue Rolle ist also zwangsläufig ein zweiter Verwalter.** |
+| Der zweite Benutzer meldet sich an | **nicht messbar** | Es gab keinen zweiten Benutzer. Die Station liegt hinter der ersten und wurde deshalb nicht behauptet, weder so noch so. |
+| Er sieht die Apps, für die seine Rolle `benutzen` hat | **nicht messbar, aus demselben Grund** | Der Weg ist gebaut und gelesen (`rights.Of` über die Rollen des Benutzers, `apps/server-api/classes/rights/rights.go:31`–`:54`), aber ohne zweiten Benutzer läuft er nie durch. |
+
+### Was `shared/` dafür gebraucht hat: **keine Zeile**
+
+Das ist das Ergebnis, und es ist eine Antwort auf die Anfrage aus
+`docs/superpowers/specs/2026-10-23-zweiter-benutzer.md`, Abschnitt 3.1. Nachgemessen, Zeile für
+Zeile, und jede davon steht unverändert:
+
+- Die Aktion, eine neue Fassung einzuliefern: `shared/core/core.go:142` (`ActTrust`, `FlowIn`,
+  `MaxTrustIn`).
+- Ein Verwalter darf in einer neuen Fassung **jede** Änderung unterschreiben, nicht nur die an
+  Knoten: `shared/trust/trust.go:303` — `onlyOwnKeys` greift nur, wenn der Unterzeichner
+  **kein** Admin ist.
+- Form eines Benutzers und seines Schlüssels: `shared/trust/trust.go:117`,
+  `shared/proof/proof.go:123`.
+- Bis zu 10 000 Benutzer und 256 Rollen: `shared/trust/trust.go:26`.
+- Der Datenbankteil muss nichts tun: die Zeile in `ngc_user` entsteht bei der **ersten
+  Anmeldung** (`apps/server-api/classes/login/finish.go:285`), und sie trägt keinen Schlüssel.
+
+**Damit ist Abschnitt 3.1 beantwortet: ja, eine Shell darf eine Fassung mit einem neuen Benutzer
+bauen, ohne dass `shared/core` eine eigene Aktion dafür bekommt.** Gebaut wurde genau so, und
+nichts unter `shared/` ist angefasst. Der Einladungsablauf (Abschnitt 3.2, Weg (a)) bleibt die
+offene Anfrage; er ist hier **nicht** beantragt und **nicht** gebaut.
+
+### Was gebaut ist
+
+Zwei Formulare in `apps/web/public/assets/js/apps/users.js`, beide über den schon vorhandenen
+`joinNode` — dieselbe Maschinerie, die einen Server aufnimmt:
+
+1. **Neue Rolle** (Reiter „Rollen und Rechte"). Sie darf zunächst nichts; was sie darf, wird
+   über die Haken derselben Seite vergeben. `level: critical`, wie die Rolle `admin` — nicht
+   `off`.
+2. **Neuer Benutzer** (Reiter „Benutzer"). Anmeldename, Rollen, ein erstes Passwort. Der
+   Schlüssel wird im Browser des Verwalters gerechnet (Argon2id → Ed25519); der Startwert wird
+   in einem `finally` überschrieben, und auf die Leitung geht **nur** der öffentliche Schlüssel.
+
+Das ist **Weg (b)** des Entwurfspapiers, und sein Preis steht im Fenster, bevor unterschrieben
+wird: „Bis »<Name>« es ändert, kennen Sie seinen Schlüssel und könnten in seinem Namen
+unterschreiben." Weg (a) löst ihn später ab, ohne ihn umzubauen.
+
+### Zwei Regeln dieser Woche, hier eingehalten
+
+- **Rechte sind kein Beiwerk.** Unter den Rollenhaken des Benutzerformulars steht der Satz, der
+  das sagt: eine App sieht nur, wessen Rolle das Recht `benutzen` dafür hat. Er steht dort, wo
+  der Haken gesetzt wird, nicht erst, wenn jemand über einen leeren Schreibtisch klagt.
+- **Ein leerer Zustand sieht nicht wie ein Angriff aus.** Ohne Sitzung oder ohne geprüfte
+  Vertrauensliste zeichnen beide Formulare **keinen** Knopf, sondern einen Satz, der das
+  **fehlende Ding** nennt: „Dafür ist eine Anmeldung nötig. Es kann gerade kein Benutzer
+  angelegt werden." Kein `role="alert"`, kein Wort über einen Fehler. Ein Fall prüft genau das
+  und prüft zusätzlich, dass die beiden Worte dieser Oberfläche für einen Defekt
+  („nicht in Ordnung", „antwortet gerade nicht") **nicht** darin stehen.
+
+### Wie es gemessen ist
+
+Neun Fälle in `apps/web/tests/shell/users.spec.js`, chromium, und je Zusicherung **ein
+sterbender Mutant und eine lebende Kontrollmutation** (`Z:\GitHub\claude-md\messen.md`).
+Mutiert wurde in einer **Kopie** des Baums, nie im Arbeitsbaum; der Treiber bricht ab, wenn eine
+Ersetzung nicht genau einmal greift.
+
+| Zusicherung | Mutant, der stirbt | Kontrolle, die lebt |
+|---|---|---|
+| Eine neue Rolle geht als Fassung N+1 hinaus, und sonst bewegt sich nichts | `LEVEL_CRITICAL` → `LEVEL_OFF` | Lokale Variable im Formular umbenannt |
+| Der neue Benutzer trägt **einen** Passwortschlüssel in der Form, die `proof.UserKey.Validate` nimmt | `credId` von 0 auf 1 Byte | Das Benutzerobjekt umbenannt |
+| Das erste Passwort verlässt den Browser nie | Das Passwort reitet im Salz des Schlüssels mit | Die Ableitung umbenannt |
+| Ein Benutzer ohne Rolle wird abgewiesen, bevor irgendwer unterschreibt | Die Rollenprüfung abgeschaltet | Die Sperrliste umbenannt |
+| Der leere Zustand nennt das fehlende Ding, nicht einen Defekt | Der Satz durch „nicht in Ordnung" ersetzt | Die Wache umbenannt |
+
+**Und eine Messung hat sich selbst berichtigt:** die erste Fassung des Passwort-Falls durchsuchte
+nur den **Umschlag** (`{"payload": "<base64url>", …}`). Der Mutant „Passwort im Salz" **lebte**
+dadurch, weil ein Passwort *innerhalb* der Fassung in diesem base64url verschwindet. Der Fall
+dekodiert jetzt jede gesendete Fassung und durchsucht beide Schichten; danach ist der Mutant
+gestorben, und zwar an der Nadel, die die Passwortbytes nennt — nicht an einem Bauabbruch.
+
+`tools/check.sh` druckt `check: ok`, Ausstiegscode 0, ohne Pipe gelesen. Alle 62 Fälle von
+`users.spec.js` sind grün.
+
+### Am laufenden System
+
+**Gebaut ist nicht gelaufen**, also auf `ngc.test` nachgesehen. Die Anlage läuft auf `0.2.0`,
+also **älter als `main`**; darum wurde nicht `main` darübergelegt, sondern **nur dieser eine
+Unterschied** auf die dortigen Dateien gesetzt (`users.js`, `shell.css`), mit Sicherung unter
+`/root/zweiter-benutzer-backup-20261024/`. Beide Dateien sind über HTTPS ausgeliefert, und in
+einem echten Browser lädt das Modul samt seinem ganzen Importbaum ohne einen einzigen
+`pageerror`.
+
+**Was damit noch nicht gemessen ist, und das ist die Wahrheit über diesen Punkt:** dass ein
+zweiter Mensch wirklich angelegt wird, sich anmeldet und sein Startmenü sieht. Dafür wird eine
+neue Fassung der Vertrauensliste **im Browser mit dem Schlüssel der Person** unterschrieben, und
+dieser Schlüssel ist ihr Passwort. Kein Agent darf es tippen. Die Stationen 3 und 4 oben bleiben
+deshalb **ungemessen**, bis Thomas die Schritte gegangen ist; sie werden danach hier nachgetragen.
+
+### Nachtrag vom 24.10.2026, nachmittags: **welche** Anlage gemessen wurde
+
+Seit heute gibt es **zwei** Anlagen, und eine Zahl ohne ihren Namen ist hinterher wertlos.
+
+| | Einzel-VM | Verteilte Anlage |
+|---|---|---|
+| Name | `ngc.test` (10.2.3.208) | `ngc.mein.lan` → api-1 (10.2.3.210) |
+| Fassung von NGC | `0.2.0` | `0.2.1` |
+| Vertrauensliste | Fassung 6, `RB1CPN7b…` | Fassung 6, `JtyqTFme…` — **dieselbe Nummer, andere Anlage** |
+| `rp` | leer | `ngc.mein.lan`, Origin `https://ngc.mein.lan` |
+| Dieser Zweig eingespielt? | **ja**, die zwei Dateien | **nein** |
+
+**Alles oben in diesem Punkt ist an der Einzel-VM gemessen** — Einspielen, Auslieferung,
+Browserprobe. **Die Stationstabelle gilt trotzdem für beide**, und das ist jetzt stärker belegt
+als heute Vormittag: die verteilte Anlage läuft **exakt `origin/main`**. Gemessen, nicht
+geschlossen: ihre `users.js`, über HTTPS geholt, hat den git-Hash `83344ee` — Byte für Byte die
+Datei aus `origin/main`. Sie hat also ebenfalls **keine Tür** für einen zweiten Benutzer.
+
+**Die Namen lügen teilweise, am laufenden Dienst nachgesehen** (eine Warnung der
+Koordinationssitzung, hier nicht geglaubt, sondern geprüft):
+
+- **api-1** und **api-2** tragen wirklich eine NGC-API: beide antworten auf
+  `GET /api/v1/trust` mit `E_LOGIN` und auf `GET /api/v1/setup` mit `E_NOTFOUND` — also hat
+  jede von beiden schon einen Verwalter. api-1 liefert zusätzlich das Webinterface.
+- **db-1**, **svc-1**, **svc-2** haben von 22, 80, 443, 5432, 7443, 7444, 8443, 9443, 7000, 7001
+  **nur 22** offen. Für zwei Controller ist das richtig — „nobody dials a controller" —, für
+  die Datenbank sagt es nur, dass sie nach außen nichts anbietet.
+- **store** nimmt auf 443 eine Verbindung an, bricht aber im TLS-Handschlag ab
+  (`SEC_E_ILLEGAL_MESSAGE`). **Dort läuft kein brauchbares HTTPS.**
+
+### Zwei API-Server — was das für einen zweiten Benutzer heißt
+
+Die verteilte Anlage hat **zwei** APIs, und ihr Webinterface weiß das:
+`/config.json` nennt `https://api-1.ngc.mein.lan:7443` **und**
+`https://api-2.ngc.mein.lan:7443`. Ein zweiter Benutzer kann also an einem anderen API-Server
+landen als dem, an dem er angelegt wurde.
+
+**Gelesen, nicht gemessen:** das soll der Vertrag schon tragen. `ngc.users/api/trust` nimmt die
+Fassung nicht nur an, sondern verteilt sie — `AddVersion`, `settle`, **`pushTrust`**
+(`apps/server-api/classes/coreapp/users.go:250`, `:257`). Der zweite API-Server bekäme die
+Fassung damit, ohne dass die Oberfläche etwas dazutut.
+
+**Nicht gemessen, und es soll niemand glauben, es sei geprüft:** dass ein an api-1 angelegter
+Mensch sich an api-2 anmelden kann. Dafür müsste dieser Zweig auf der verteilten Anlage liegen,
+und dafür fehlt der Zugang (die sechs VMs stehen in keiner SSH-Konfiguration, und der
+NGC-Schlüssel öffnet sie nicht). **Das ist die nächste Messung, nicht ein Ergebnis dieser.**
+
+### Und ein Befund, der nicht zu dieser Arbeit gehört, aber gemessen ist
+
+**Die Einzel-VM `ngc.test` ist seit etwa 12:40 nicht mehr erreichbar**: 1 von 3 Ping-Antworten,
+kein SSH, kein HTTPS. Um 12:0x lief sie noch — da wurden die zwei Dateien eingespielt und die
+Browserprobe lief grün gegen sie. Was sie umgeworfen hat, ist **nicht gemessen**, und zwei
+statische Dateien einer Oberfläche sind keine plausible Ursache. Solange sie unten ist, kann
+niemand die Schritte aus `docs/zweiter-benutzer-schritte.md` gehen.

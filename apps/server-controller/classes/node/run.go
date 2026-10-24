@@ -61,6 +61,7 @@ import (
 	ctrlrt "github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/serve"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/state"
+	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/update"
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -649,19 +650,24 @@ func wireUp(version string, cfg *config.Controller, key noise.DHKey, st *state.S
 			_, err := ctrlrt.RunForApp(ctx, app)
 			return err
 		},
-		// No updater yet, and this is a seam named rather than papered over:
-		// update.Deps takes the trust list as a VALUE (update.Deps.List),
-		// while this controller's list is replaced version by version under
-		// it (chain.Keeper.Current). A Manager built here would install
-		// against the list of the moment it was built in, which is not the
-		// list the channel was decided on. Which of the two gives way is a
-		// change in package update and belongs to whoever owns it; until
-		// then an install channel ends E_INTERNAL, exactly as it did before
-		// this task.
-		Updater: nil,
-		// The installer is built per channel, not once here, and that is the
-		// same seam the updater above names - only on this side it can be
-		// closed. install.Deps takes the trust list as a VALUE as well, and
+		// The updater is built PER CHANNEL, and that is how the seam this
+		// field used to name is closed. update.Deps takes the trust list as
+		// a VALUE (update.Deps.List) while this controller replaces its list
+		// version by version underneath (chain.Keeper.Current), so a Manager
+		// built once here would work against the list of this instant and
+		// not against the one the channel was decided on. serve hands that
+		// list to every method of serve.Updater, so the Manager of a channel
+		// is built on it - the same answer the installer below gives, in the
+		// same shape.
+		//
+		// What it cost to leave open: a stage channel found no handler at
+		// all and an install channel ended E_INTERNAL, so an update round of
+		// an API stopped at its first node every hour after downloading the
+		// file. Measured on the six-machine installation, 24.10.2026.
+		Updater: updater{cfg: cfg, state: st, report: rep, node: nodeID},
+		// The installer is built per channel for the same reason, and it was
+		// the half that could already be closed when the updater could not.
+		// install.Deps takes the trust list as a VALUE as well, and
 		// serve hands the list the channel was decided on to every call
 		// (serve.Installer), so the Manager of a channel is built on that one
 		// version instead of on whatever the keeper holds in the instant the
@@ -868,6 +874,79 @@ func (i installer) deps(ctx context.Context, list *trust.List) install.Deps {
 func (i installer) Activate(ctx context.Context, list *trust.List, d access.Decision,
 	r io.Reader) ([]byte, error) {
 	return install.New(i.deps(ctx, list)).Activate(ctx, d, r)
+}
+
+// updater carries out the update channels of this server: laying a file of a
+// signed release ready (stage) and putting it in place (install), plus the
+// system packages (system).
+//
+// It holds no Manager. One is built per channel, for the reason written at
+// serve.Updater: update.Deps takes the trust list as a value, and the list a
+// channel was decided on is the only one its work may be built on.
+type updater struct {
+	cfg    *config.Controller
+	state  *state.Store
+	report *Reporter
+	// node is the ID of THIS server, asked afresh for every channel, for the
+	// same reason it is at installer: pairing empties config.Controller.Node,
+	// so a Manager that read the file would hold a signed task against "".
+	node func() string
+}
+
+// deps builds the dependencies of one update channel, on the list that channel
+// was decided on.
+func (u updater) deps(list *trust.List) update.Deps {
+	return update.Deps{
+		State:      u.state,
+		List:       list,
+		ReleaseKey: u.cfg.ReleaseKey,
+		StageDir:   config.StageDir,
+		// Empty is runtime.GOARCH, which is this server's architecture and
+		// the one the files of a release are named for. A case measures the
+		// other one; operation has no reason to say it twice.
+		Arch: "",
+		// store.MaxPackage is the ceiling of the contract (4 GiB), the same
+		// one the installer takes. Nothing is unpacked in a stage, so one
+		// file of n bytes costs n bytes of StageDir and not twice that.
+		Max:    store.MaxPackage,
+		Report: u.report,
+		Now:    func() int64 { return time.Now().Unix() },
+		// The roles of THIS server. An install of an NGC part is refused
+		// unless these roles run that part, which is the whole reason the
+		// field exists (update.Deps.Roles) - so a db server handed the
+		// ngc-api file lays it ready and installs nothing, which is exactly
+		// what the migration step of a rollout wants.
+		Roles:    u.cfg.Roles,
+		BinDir:   config.BinDir,
+		WebRoot:  config.WebRoot,
+		Services: update.Systemd{},
+		Health:   update.VersionOf,
+		// Apps stays nil, and it is named rather than left silent: it is what
+		// an update of an APP would be carried out through, and that path
+		// goes through the activation (install.Manager) on this controller.
+		// An NGC part needs none of it, and update.wired does not ask for it.
+		Apps: nil,
+	}
+}
+
+// Stage lays one file of a signed release ready, on the trust list of its
+// channel.
+func (u updater) Stage(ctx context.Context, list *trust.List, d access.Decision,
+	r io.Reader) ([]byte, error) {
+	return update.New(u.deps(list)).Stage(ctx, d, r)
+}
+
+// Install puts a file that lies ready in place, on the trust list of its
+// channel.
+func (u updater) Install(ctx context.Context, list *trust.List,
+	d access.Decision) ([]byte, error) {
+	return update.New(u.deps(list)).Install(ctx, d)
+}
+
+// System updates the system packages of this server with apt.
+func (u updater) System(ctx context.Context, list *trust.List,
+	d access.Decision) ([]byte, error) {
+	return update.New(u.deps(list)).System(ctx, d)
 }
 
 // webSync brings Apache in line with the API servers of the trust list: the

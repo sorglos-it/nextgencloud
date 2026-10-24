@@ -50,21 +50,28 @@
 // nothing here to cover - confirm.js has it for the app store. Where there is
 // no session and no verified list, the surface says the change cannot be made
 // and why; it does not draw a button that would do nothing.
-import { el, button, text, clear } from "../shell/dom.js";
+import { el, button, text, clear, field } from "../shell/dom.js";
 import * as core from "../contracts/core.js";
 import * as trust from "../contracts/trust.js";
 import * as tunnel from "../contracts/tunnel.js";
+import * as proof from "../contracts/proof.js";
 import { askSignature } from "../shell/confirm.js";
-import { PURPOSE_TRUST_LIST } from "../contracts/sign.js";
+import { PURPOSE_TRUST_LIST, keyIDAsync } from "../contracts/sign.js";
 import { b64encode } from "../contracts/b64.js";
 import { validTunnelURL } from "../contracts/url.js";
-import { coreApp, validAppID, validName } from "../contracts/text.js";
+import { coreApp, validAppID, validLoginName, validName } from "../contracts/text.js";
 import { APPS, NODES, RIGHTS, USERS } from "../shell/changed.js";
 import { freshness } from "../shell/stale.js";
 
 // How many log lines one page holds. The contract allows 1 to 500; fifty is
 // a screenful and a half, and paging is one button.
 const LOG_LIMIT = 50;
+
+// How many bytes the id of a user is. trust.ValidID takes 16 and nothing
+// else (Go: shared/trust/trust.go, ValidID -> len(b) == 16), and this is the
+// second place that makes one: auth/setup.js writes the id of the first
+// admin with the same number.
+const USER_ID_SIZE = 16;
 
 // The same sentence wherever an answer did not hold up. It says nothing about
 // what was wrong with it: that would describe the inside of the server, and
@@ -404,6 +411,15 @@ class Users {
     this.ctx = ctx ?? null;
     // The sentence to carry over the next build of the Server panel.
     this.keep = "";
+    // The same for the two panels that now write a version of the trust list
+    // themselves. A sentence put into the note and THEN followed by a
+    // rebuild is a sentence nobody reads: build() clears the panel and makes
+    // a new, empty note. Measured on the first run of the new cases - the
+    // note was "" where it should have said that the role was created. So
+    // the sentence travels the way the Server panel's does: it is parked
+    // here and the next build of that panel writes it.
+    this.keepUsers = "";
+    this.keepRights = "";
     this.link = ctx?.link ?? null;
     this.trust = ctx?.trust ?? null;
     this.session = ctx?.session ?? null;
@@ -572,6 +588,8 @@ class Users {
     msg.setAttribute("role", "status");
     const tbl = table(["Name", "Rollen", "Anmeldung in zwei Schritten", "Gesperrt", "Zuletzt angemeldet"]);
     p.append(el("h3", null, "Benutzer"), msg, tbl.el);
+    text(msg, this.keepUsers);
+    this.keepUsers = "";
     let list;
     try {
       list = await this.call(core.ACT_LIST);
@@ -592,6 +610,192 @@ class Users {
       );
       tbl.body.append(r);
     }
+    p.append(this.userForm(msg));
+  }
+
+  // ---- einen zweiten Benutzer anlegen -------------------------------------
+  //
+  // THE WHOLE POINT OF THIS FORM, and why it is here and not on the API: a
+  // user of this installation does not live in a database row. The row in
+  // ngc_user is written at the FIRST LOGIN out of the signed list
+  // (Go: login/finish.go) and carries no key at all. Who exists, what they
+  // are called and which roles they hold comes out of the trust list and out
+  // of nothing else (coreapp/users.go, ngc.users/list says so itself). So
+  // creating a user IS writing the next version of the trust list, signed by
+  // a person, and there is no shorter way that is not a lie.
+  //
+  // THE KEY IS THE PASSWORD. A user without a key is not a valid list
+  // (Go: validateUsers, len(u.Keys) == 0 -> ErrInvalid), and the key of a
+  // password user is derived from the password itself: Argon2id over the
+  // typed word, Ed25519 out of the seed (contracts/proof.js, deriveSeed ->
+  // publicFromSeed). The admin and the new person do not sit at the same
+  // browser, so somebody's password has to travel - and THAT is the whole
+  // design question, answered here the way
+  // docs/superpowers/specs/2026-10-23-zweiter-benutzer.md answers it: way
+  // (b), a first password the admin sets and the person replaces.
+  //
+  // THE PRICE IS IN THE QUESTION, not in a comment. Until the new person
+  // changes it, the admin knows their key and could sign in their name. That
+  // sentence stands in the dialog below, in German, where the admin reads it
+  // before they sign - because a cost that is only written in the source is
+  // a cost the person paying it never hears about.
+  //
+  // WHAT NEVER HAPPENS HERE: the first password is not sent anywhere. It is
+  // read out of the field, turned into a seed, the seed into a public key,
+  // and the seed is wiped in a finally - the same three lines auth/setup.js
+  // runs for the first admin. What goes on the wire is the public key.
+  userForm(msg) {
+    const box = el("fieldset", "newuser");
+    box.append(el("legend", null, "Neuer Benutzer"));
+    const stop = this.cannotChange("Es kann gerade kein Benutzer angelegt werden.");
+    if (stop !== "") {
+      box.append(el("p", "muted", stop));
+      return box;
+    }
+    const cur = this.trust.current();
+    const name = field("Anmeldename", "text");
+    name.input.maxLength = 64;
+    const pw1 = field("Erstes Passwort", "password");
+    const pw2 = field("Erstes Passwort wiederholen", "password");
+    const roleBox = el("div", "opts");
+    const boxes = new Map();
+    for (const r of cur.list.roles) {
+      const lab = el("label", "opt");
+      const cb = el("input", null);
+      cb.type = "checkbox";
+      cb.setAttribute("aria-label", "Rolle " + r.name);
+      lab.append(cb, el("span", "t", r.name));
+      roleBox.append(lab);
+      boxes.set(r.name, cb);
+    }
+    const go = button("go", "Benutzer anlegen", "Neuen Benutzer anlegen");
+    go.addEventListener("click", () => this.askNewUser({ name, pw1, pw2, boxes }, go, msg));
+    box.append(
+      name.box,
+      el("p", "muted", "Kleine Buchstaben, Ziffern und . _ - , das erste Zeichen ein Buchstabe "
+        + "oder eine Ziffer, höchstens 64 Zeichen."),
+      el("p", "hint", "Rollen"),
+      roleBox,
+      // A role is not a detail of a user: an app is invisible to this person
+      // for as long as no role of theirs holds its right "benutzen"
+      // (Go: rights.Of over the user's roles, coreapp Dispatcher.apps). Said
+      // here, where the haken is set, and not after the person complains
+      // that their desktop is empty.
+      el("p", "muted", "Ohne Rolle kann niemand angelegt werden, und eine App sieht nur, "
+        + "wessen Rolle das Recht »benutzen« dafür hat."),
+      pw1.box,
+      pw2.box,
+      go,
+    );
+    return box;
+  }
+
+  async askNewUser({ name, pw1, pw2, boxes }, from, msg) {
+    const login = name.input.value.trim();
+    const roles = [...boxes.entries()].filter(([, cb]) => cb.checked).map(([r]) => r).sort(plain);
+    const pass = pw1.input.value;
+    // Every one of these is said before a key is derived and long before
+    // anybody is asked to sign. The order is the order the person filled the
+    // form in, so the first thing they hear about is the first thing they
+    // typed.
+    if (!validLoginName(login)) {
+      text(msg, "»" + login + "« ist kein gültiger Anmeldename.");
+      return;
+    }
+    const cur = this.trust.current();
+    if (cur.list.users.some((u) => u.name === login)) {
+      text(msg, "Den Anmeldenamen »" + login + "« gibt es schon.");
+      return;
+    }
+    if (cur.list.users.length >= trust.MAX_USERS) {
+      text(msg, "Diese Anlage hat schon " + trust.MAX_USERS
+        + " Benutzer. Mehr trägt die Liste nicht.");
+      return;
+    }
+    if (roles.length === 0) {
+      text(msg, "Wählen Sie mindestens eine Rolle. Ohne Rolle kann niemand angelegt werden.");
+      return;
+    }
+    // TWO ROLE SETTINGS MAKE A PASSWORD USER IMPOSSIBLE, and they are named
+    // here instead of coming back as "Diese Änderung ergibt keine gültige
+    // Vertrauensliste." passkeyOnly forbids the one kind of key this form can
+    // make; passwordToo demands a passkey beside it, which this form cannot
+    // make at all (Go: validateUsers, both refusals). Neither is set on a
+    // role this surface creates - but a role can come from anywhere, so the
+    // sentence is here.
+    const hard = roles.filter((r) => {
+      const def = trust.role(cur.list, r);
+      return def === null || def.passkeyOnly === true || def.passwordToo === true;
+    });
+    if (hard.length > 0) {
+      text(msg, "Für die Rolle »" + hard[0] + "« kann hier niemand angelegt werden: "
+        + "sie verlangt einen Passkey, und dieses Formular legt ein Passwort an.");
+      return;
+    }
+    if (pass === "" || pass !== pw2.input.value) {
+      text(msg, pass === "" ? "Geben Sie ein erstes Passwort ein."
+        : "Die beiden Passwörter sind nicht gleich.");
+      return;
+    }
+
+    this.ask({
+      title: "Benutzer »" + login + "« anlegen",
+      body: [
+        el("p", null, "»" + login + "« wird in die Vertrauensliste dieser Anlage "
+          + "eingetragen und kann sich danach mit diesem Passwort anmelden."),
+        el("p", null, "Rollen: " + roles.join(", ") + "."),
+        // THE PRICE OF WAY (b), in the dialog, before the signature.
+        el("p", "who", "Sie haben das erste Passwort selbst getippt. Bis »" + login
+          + "« es ändert, kennen Sie seinen Schlüssel und könnten in seinem "
+          + "Namen unterschreiben. Geben Sie es ihm persönlich weiter und bitten Sie ihn, "
+          + "es gleich zu ändern."),
+      ],
+      go: "Benutzer anlegen",
+      from,
+      run: async () => {
+        // The KDF is new for this user: its salt is theirs, so two people
+        // with the same password do not get the same key (Go: proof.UserKey,
+        // and the same four lines auth/setup.js writes for the first admin).
+        const kdf = {
+          alg: proof.KDF_ARGON2ID,
+          salt: crypto.getRandomValues(new Uint8Array(proof.SALT_SIZE)),
+          m: proof.DEFAULT_MEM_KIB, t: proof.DEFAULT_TIME, p: proof.DEFAULT_PAR,
+        };
+        const seed = await proof.deriveSeed(pass, kdf);
+        let pub;
+        try {
+          pub = await proof.publicFromSeed(seed);
+        } finally {
+          // The seed lives for this one derivation and is gone whichever way
+          // this ends.
+          seed.fill(0);
+        }
+        const user = {
+          id: b64encode(crypto.getRandomValues(new Uint8Array(USER_ID_SIZE))),
+          name: login,
+          roles,
+          keys: [{
+            id: await keyIDAsync(pub), kind: proof.KIND_PASSWORD, alg: proof.ALG_EDDSA,
+            pub, credId: new Uint8Array(0), kdf,
+          }],
+        };
+        await this.joinNode((next) => {
+          next.users.push(user);
+        });
+        // The fields are cleared, and the two password fields first: a first
+        // password left standing on screen is a first password the next
+        // person at this desk reads.
+        pw1.input.value = "";
+        pw2.input.value = "";
+        name.input.value = "";
+        for (const cb of boxes.values()) cb.checked = false;
+        this.keepUsers = "»" + login + "« ist angelegt und kann sich anmelden.";
+        this.ctx?.changed?.tell(USERS);
+        this.rebuild("users");
+      },
+      failed: "Der Benutzer konnte nicht angelegt werden.",
+      msg,
+    });
   }
 
   // ---- Rollen und Rechte --------------------------------------------------
@@ -604,6 +808,8 @@ class Users {
       el("p", "hint", "Ein Haken heißt: alle mit dieser Rolle dürfen das."),
       msg,
     );
+    text(msg, this.keepRights);
+    this.keepRights = "";
     let roles;
     try {
       roles = await this.call(core.ACT_RIGHTS);
@@ -627,6 +833,114 @@ class Users {
     }
     const all = [...known].filter(core.validRight).sort(plain);
     for (const r of roles) p.append(this.roleBox(r, all, msg));
+    p.append(this.roleForm(msg));
+  }
+
+  // roleForm makes a new role. It stands under the roles that are there,
+  // because that is the order the work happens in: look at what exists, then
+  // add what is missing.
+  //
+  // WHY THIS HAD TO BE BUILT BEFORE A SECOND USER COULD EXIST, measured on
+  // origin/main: an installation leaves the setup with EXACTLY ONE role,
+  // admin (auth/setup.js, "One role, and it is the one the whole installation
+  // hangs from"), and trust.List.Validate refuses any user whose role is not
+  // in the same list (Go: shared/trust/trust.go, validateUsers -> l.Role(name)
+  // -> ErrInvalid). So before this form, the only role a second person could
+  // be given was admin - which is not a second user, it is a second key to
+  // everything. The rights panel above was unreachable for the same reason:
+  // it had one role to show and that role's rights are fixed and uncheckable.
+  //
+  // THE LEVEL IS critical AND NOT off. critical is what the admin role
+  // carries out of the setup, and it only ever asks for a second proof where
+  // the operation itself is critical (trust.needsConfirm: level critical
+  // reads op.critical and nothing else). off would ask for nothing, ever.
+  // Between two levels that behave the same for everything a new role can do
+  // today, the one that keeps asking later is the one to write down.
+  //
+  // THE BLACK AND WHITE LISTS STAY EMPTY, named rather than left out: they
+  // are the per-app exceptions to the level, and an exception nobody asked
+  // for is an exception nobody can see. They are changed where they are
+  // read, not handed out with a new role.
+  roleForm(msg) {
+    const box = el("fieldset", "newrole");
+    box.append(el("legend", null, "Neue Rolle"));
+    const stop = this.cannotChange("Es kann gerade keine Rolle angelegt werden.");
+    if (stop !== "") {
+      box.append(el("p", "muted", stop));
+      return box;
+    }
+    box.append(el("p", "hint", "Eine Rolle sammelt Rechte. Legen Sie sie an, haken Sie oben an, "
+      + "was sie darf, und geben Sie sie dann einem Benutzer."));
+    const f = field("Name der Rolle", "text");
+    f.input.maxLength = 32;
+    const why = el("p", "muted", "Kleine Buchstaben, Ziffern und Bindestriche, "
+      + "der erste Buchstabe keine Ziffer, höchstens 32 Zeichen.");
+    const go = button("go", "Rolle anlegen", "Neue Rolle anlegen");
+    go.addEventListener("click", () => this.askNewRole(f.input, go, msg));
+    box.append(f.box, why, go);
+    return box;
+  }
+
+  askNewRole(input, from, msg) {
+    const name = input.value.trim();
+    // Said HERE and not left to buildNextVersion: a refusal of the whole
+    // version would say "Diese Änderung ergibt keine gültige Vertrauensliste."
+    // about a typo in one field - the same reason askAddress says its own
+    // sentence. And it is said BEFORE anybody is asked for their key: a
+    // signature over bytes that were never going to be accepted is a password
+    // typed for nothing.
+    if (!validName(name)) {
+      text(msg, "»" + name + "« ist kein gültiger Rollenname.");
+      return;
+    }
+    const cur = this.trust.current();
+    if (trust.role(cur.list, name) !== null) {
+      text(msg, "Die Rolle »" + name + "« gibt es schon.");
+      return;
+    }
+    if (cur.list.roles.length >= trust.MAX_ROLES) {
+      text(msg, "Diese Anlage hat schon " + trust.MAX_ROLES + " Rollen. Mehr trägt die Liste nicht.");
+      return;
+    }
+    this.ask({
+      title: "Rolle »" + name + "« anlegen",
+      body: [
+        el("p", null, "Die Rolle wird in die Vertrauensliste dieser Anlage eingetragen. "
+          + "Sie darf zunächst nichts."),
+        el("p", null, "Was sie darf, haken Sie danach auf dieser Seite an. Eine App, für die "
+          + "die Rolle das Recht »benutzen« nicht hat, steht bei niemandem mit dieser Rolle "
+          + "im Startmenü."),
+      ],
+      go: "Rolle anlegen",
+      from,
+      run: async () => {
+        await this.joinNode((next) => {
+          next.roles.push({
+            name, level: trust.LEVEL_CRITICAL, black: [], white: [],
+            passkeyOnly: false, passwordToo: false,
+          });
+        });
+        input.value = "";
+        this.keepRights = "Die Rolle »" + name + "« ist angelegt. Sie darf noch nichts.";
+        // The panel is built again from here, and that is not the same as the
+        // rights question above, which only moves boxes that are already on
+        // screen: a new role is a whole box that is not there yet, and
+        // ngc.users/rights is the only thing that knows it now exists.
+        this.ctx?.changed?.tell(RIGHTS);
+        this.rebuild("rights");
+        // AND THE USERS PANEL, which has no idea a role was created and
+        // whose form offers one haken per role of the verified list. Without
+        // this line the new role is on this screen and not on that one, and
+        // the admin who just made it cannot give it to anybody until the
+        // page is reloaded - the exact complaint of 19.-21.10.2026, one
+        // panel further along. It is a local rebuild and not a tell(USERS):
+        // what moved is the trust list, not ngc.users/list, so no other ear
+        // in the shell has anything to do.
+        this.rebuild("users");
+      },
+      failed: "Die Rolle konnte nicht angelegt werden.",
+      msg,
+    });
   }
 
   roleBox(r, all, msg) {
@@ -1211,14 +1525,28 @@ class Users {
   // cannotChange says in one sentence why no server can be taken in right
   // now, and "" when one can. Nothing draws a button this sentence answers:
   // a button that cannot do its job is a promise the surface does not keep.
-  cannotChange() {
+  //
+  // WHAT IS MISSING, NOT WHAT IS BROKEN. Both sentences name a thing that is
+  // not there yet and will be - a list that has not arrived, a session that
+  // has not been opened. Neither says that anything failed, and neither is
+  // red: a surface that greets a second person with an alarm teaches them
+  // that this installation is broken, when all that happened is that they
+  // have not logged in yet. The same rule carries the forms below, where the
+  // missing thing is a right rather than a list.
+  //
+  // tail names what cannot be done right now. It is a parameter and not a
+  // fixed sentence because three different forms ask this question - a
+  // server, a role, a user - and "Es kann gerade kein Server aufgenommen
+  // werden." under a form about a person would be the surface talking about
+  // something else.
+  cannotChange(tail = "Es kann gerade kein Server aufgenommen werden.") {
     const cur = this.trust?.current?.();
-    if (!cur?.list) return "Die Vertrauensliste liegt noch nicht vor. Es kann gerade kein Server aufgenommen werden.";
+    if (!cur?.list) return "Die Vertrauensliste liegt noch nicht vor. " + tail;
     // A version of the trust list is signed by the PERSON, with a key that
     // stands in the list itself; without knowing whose session this is, there
     // is nobody to ask.
     if (typeof this.session?.user !== "string" || this.session.user === "") {
-      return "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.";
+      return "Dafür ist eine Anmeldung nötig. " + tail;
     }
     return "";
   }

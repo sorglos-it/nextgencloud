@@ -23,6 +23,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"io"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/update"
@@ -39,11 +40,24 @@ var installKey = name{core.AppStore, core.ServiceController, core.ActInstall}
 // type, so this package keeps the one direction it had: what a channel is
 // handed to is wired in from outside and never reached for from here.
 //
-// Both methods answer with the JSON of their result and an error of package
+// Every method answers with the JSON of its result and an error of package
 // update; code() turns that error into the CLOSE of the channel.
+//
+// EVERY METHOD TAKES THE TRUST LIST THE CHANNEL WAS DECIDED ON, and that is
+// the seam this interface used to name instead of closing. A Manager of
+// package update is built on a list as a VALUE (update.Deps.List), while this
+// controller replaces its list version by version underneath
+// (chain.Keeper.Current). A Manager built once, when the server was wired,
+// would therefore work against the list of that instant and not against the
+// one access.Check let this channel through on - which is why it was left nil
+// and every install channel ended E_INTERNAL. Handing the list down per call
+// makes the two the same list by construction, and costs a Manager per
+// channel: the same answer Installer gives for an activation (activate.go),
+// in the same shape on purpose.
 type Updater interface {
-	Install(ctx context.Context, d access.Decision) ([]byte, error)
-	System(ctx context.Context, d access.Decision) ([]byte, error)
+	Stage(ctx context.Context, list *trust.List, d access.Decision, r io.Reader) ([]byte, error)
+	Install(ctx context.Context, list *trust.List, d access.Decision) ([]byte, error)
+	System(ctx context.Context, list *trust.List, d access.Decision) ([]byte, error)
 }
 
 // emptyResult is what an install answers with. Both methods of package update
@@ -56,7 +70,8 @@ type emptyResult struct{}
 // install carries out ngc.store/controller/install. The input of this action
 // is empty - it is FlowCall (core.All), so its MaxIn is 0 and read gave back
 // nothing - and everything it does stands in its params.
-func (s *Server) install(ctx context.Context, d access.Decision, _ []byte) (any, *wire.Close) {
+func (s *Server) install(ctx context.Context, list *trust.List, d access.Decision,
+	_ []byte) (any, *wire.Close) {
 	if s.d.Updater == nil {
 		// A controller without an updater is this program wired wrong, not a
 		// peer's doing: which halves a server was built with is nothing an
@@ -69,9 +84,58 @@ func (s *Server) install(ctx context.Context, d access.Decision, _ []byte) (any,
 	}
 	var err error
 	if target == trust.AutoSystem {
-		_, err = s.d.Updater.System(ctx, d)
+		_, err = s.d.Updater.System(ctx, list, d)
 	} else {
-		_, err = s.d.Updater.Install(ctx, d)
+		_, err = s.d.Updater.Install(ctx, list, d)
+	}
+	if err != nil {
+		return nil, code(err)
+	}
+	return emptyResult{}, nil
+}
+
+// stageKey is ngc.store/controller/stage.
+var stageKey = name{core.AppStore, core.ServiceController, core.ActStage}
+
+// stage carries out ngc.store/controller/stage: the API hands over one file of
+// a signed release and this server lays it ready. It is a stream and not an
+// act, because the file arrives as it arrives (core.FlowTransfer) and nothing
+// here is willing to hold it in memory first.
+//
+// Until this function existed, a stage channel found no handler at all and
+// ended E_INTERNAL in Server.core, one line below the acts map - which is what
+// an update round of an API ran into at its FIRST node, every hour, after
+// downloading the file: "the round stopped at a node" with E_INTERNAL beside
+// it in the log of the installation. Measured on the six-machine installation
+// on 24.10.2026, three rounds in a row at db-1.
+//
+// What is NOT read here is the target: a stage decides nothing by it, and
+// update.Manager.Stage reads it through the contract's own parser together
+// with the version it belongs to (update.params). The fork that install.go
+// has above has no counterpart here, because there is only one way to lay a
+// file ready.
+func (s *Server) stage(ctx context.Context, list *trust.List, d access.Decision,
+	r *chanReader) (any, *wire.Close) {
+	if s.d.Updater == nil {
+		// Nothing is read: a channel that cannot be served is over before it
+		// costs this server a byte of the file. The same order activate.go
+		// keeps, and for the same reason.
+		return nil, refuse(wire.CodeInternal)
+	}
+	_, err := s.d.Updater.Stage(ctx, list, d, r)
+	// The channel is asked FIRST, and unconditionally, exactly as at activate:
+	// an updater that stopped halfway because the input stopped answers with
+	// an error of its own (update.ErrVerify, ErrDisk), and naming the package
+	// broken when the channel broke would send the API looking at the package.
+	// What the channel said about itself outranks what the updater made of
+	// the half it got.
+	//
+	// drain and not close: an updater that refused after the first bytes left
+	// the rest of the file unread, and what it did not read this side has not
+	// noticed yet. drain reads it out, which is also what frees a channel the
+	// API is still sending into (stream.go).
+	if cl := r.drain(); cl != nil {
+		return nil, cl
 	}
 	if err != nil {
 		return nil, code(err)
