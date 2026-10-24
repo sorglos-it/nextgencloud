@@ -248,9 +248,9 @@ P13 (20) bleibt offen. P14 (21) ist ein Satz. P15 (22) kommt nach dem Schnitt.
 - **Heute:** `MaxUIFile = 16 MiB`, `MaxUITotal = 64 MiB` (`shared/store/pack.go:22`) gegen `MaxPackage = 4 GiB`. Gemessen: ein portierter Rust-Bau war 44 MB, also 2,6-mal über der Dateigrenze.
 - **Entschieden (24.10.2026):** **(b)** — die Grenzen bleiben, mit einem Satz, warum.
 - **Warum:**
-  - **STABILITÄT entscheidet.** (a) heißt: die Shell hält mehr im Speicher und hasht mehr in einem Zug, bei acht offenen Apps achtmal. Was dieses Achtfache an Speicher kostet, ist **nicht gemessen** — und eine Grenze anzuheben, deren Preis man nicht kennt, ist genau der Handel, den „Stabilität zuerst" verbietet. Gemessen sind nur die 44 MB auf der anderen Seite; die sagen, dass jemand anstoßen wird, nicht, dass der Deckel gefahrlos höher kann.
+  - **STABILITÄT entscheidet, und jetzt mit einer Zahl.** (a) heißt: die Shell hält mehr im Speicher und hasht mehr in einem Zug, bei acht offenen Apps achtmal. Was das kostet, war zuerst nicht gemessen — **jetzt ist es gemessen** (**M2**, 24.10.2026): acht Apps mit 64 MiB kosten den Browser **1089 MiB statt 209**. Mehr als das Fünffache. Eine Grenze um diesen Preis anzuheben ist genau der Handel, den „Stabilität zuerst" verbietet. Die 44 MB auf der anderen Seite sagen, dass jemand anstoßen wird — nicht, dass der Deckel gefahrlos höher kann.
   - Sicherheit und Leistung werden nicht gebraucht.
-  - **Das ist kein Nein für immer**, sondern ein Nein ohne Messung. Wird der Speicherpreis bei acht offenen Apps gemessen (**M2** unten), kann die Frage mit einer Zahl zurückkommen.
+  - **Die Messung, die diese Frage hätte umdrehen können, ist gemacht** und hat sie nicht umgedreht. Aus einem „Nein ohne Messung" ist ein **Nein mit Messung** geworden. Zahlen und Messaufbau: `docs/messungen-m1-m3.md`.
 - **Zu bauen:** Ein Satz im Vertrag: NGC-Oberflächen bleiben klein und handgeschrieben, 16 MiB je Datei sind Absicht — damit niemand ein halbes Jahr in eine Portierung steckt, die an einer Zahl ohne Begründung endet.
 
 ### 22. P15 — Jede App erfindet ihre eigenen Nachrichtengrenzen
