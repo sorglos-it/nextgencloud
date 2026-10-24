@@ -5434,6 +5434,46 @@ nennen, wenn seine eigene Vorbereitung nicht genau einmal gegriffen hat.
 | Sterbender Mutant | vierter Aufrufer `closeSneaky` von `closeChannel` | **gestorben**: „closeChannel is reached from [Close CloseBecause CloseWith closeSneaky]" |
 | Lebende Kontrolle | lokaler Parameter `cl` → `clo` in `closeChannel`, übersetzt | **gelebt** |
 
+### Der zweite Fund, und er stand quer im Weg: das Buch war rot auf seiner eigenen Prüfung
+
+`tools/check-buch.sh` ist in diesem Fenster entstanden, genau gegen den Fehler, den ich beim
+Anhängen dieses Punktes selbst getroffen habe: eine andere Sitzung hatte die **81** schon
+vergeben, während dieser Zweig geschrieben wurde. Der Prüfer hat die Dublette gefangen, der Punkt
+ist auf 82 weitergezählt — das Werkzeug tut, was es soll.
+
+**Nur war es selbst eine stehengebliebene Hälfte.** Das Buch verlangt in seinem eigenen Kopf: „Wer
+einen Punkt anhängt, trägt ihn in die Tabelle der Reihe B ein — sonst wird die Prüfung rot, und
+das ist Absicht." Gemessen am Buch von `origin/main`, ohne eine Zeile von mir:
+
+```
+buch: these points have a chapter but no row in the Reihe-B table of contents:
+      75 76 77 78 79 80 81
+buch: NOT ok
+```
+
+**Sieben** Kapitel ohne Zeile — und `check.sh` ruft `tools/check-buch.sh` auf. `main` war damit
+**rot auf seiner eigenen Prüfung**, und zwar an der Stelle, die laut Kommentar „die Stelle ist, an
+der die nächste freie Nummer abgelesen wird". Die Prüfung kam, die Zeilen kamen nicht mit: der
+Prüfer landete am 24.10., die sieben Punkte entstanden am selben Tag aus anderen Sitzungen, und
+niemand hat beides zusammen gesehen. Genau der Grund, warum es diese Runde gibt.
+
+**Was dabei schiefgeht:** solange `check.sh` rot ist, weil das Buch rot ist, liest niemand mehr
+hin — und ein echter Fund in derselben Prüfung geht im Dauer-Rot unter. Das ist dieselbe Klasse
+wie das kaputte CI-Zählwerk, das diese Runde überhaupt nötig gemacht hat: **eine Prüfung, die
+immer rot ist, prüft nichts.**
+
+**Behoben:** die acht Zeilen 75 bis 82 stehen jetzt in der Tabelle, jede aus dem eigenen Kapitel
+geschrieben (Stand und Art bei Punkt 75 aus dessen eigenem Vorspann). Danach:
+
+```
+buch: ok (64 points, 19-82, no duplicate, no gap, no dead reference)
+```
+
+**Was ich dabei NICHT getan habe:** die Aufstellung „Stand in Zahlen" zählt die Reihe B weiter bis
+Punkt 74. Sie für fremde Punkte auf „gilt / überholt / offen" aufzuteilen hieße, über deren Stand
+zu entscheiden; das steht dem Koordinator zu. Statt zu raten steht die Lücke jetzt **als Lücke**
+über der Tabelle, mit der gemessenen Kapitelzahl daneben.
+
 ### Abgewogen und verworfen: `E_TIMEOUT` heißt nicht „Rechner weg"
 
 Der Verdacht war eine echte Naht. PR 102 lässt einen App-Kanal, dessen Uhr abgelaufen ist, mit
@@ -5484,7 +5524,7 @@ Ehrlichkeit ist hier mehr wert als Vollständigkeit.
 - **Nicht gelesen, weil fremde Arbeit:** `tools/erstlauf.sh`, `docs/app-weg.md`,
   `docs/messungen-m1-m3.md`, `docs/thomas-entscheidet.md`.
 - **Nicht gelesen, weil nach dem Fenster:** alles, was nach `17b9895` auf `main` kam — beim
-  Schreiben dieses Punktes rund 44 Commits bis Punkt 80, darunter die PRs 125 bis 135. Dieser
+  Schreiben dieses Punktes **59 Commits** bis Punkt 81, darunter die PRs 124 bis 138. Dieser
   Zweig führt sie mit, **geprüft sind sie nicht.**
 - **Nur überflogen, nicht Zeile für Zeile:** `tools/erstlauf-probe/main.go`,
   `tools/proxmox-sechs*.sh`, `versuch-rust/sign`, `versuch-port/wordcraft` — dort nur, dass
@@ -5514,7 +5554,7 @@ am zusammengeführten Kopf dieses Zweiges, den der Pull Request anbietet:
 ```
 
 Der **eine** Fall zwischen 3425 und 3426 ist `TestTheWaysIntoCloseChannelAreTheNamedOnes`. Die
-**25** zwischen 3426 und 3451 sind **nicht** meine: sie kommen mit den rund 44 Commits, die nach
+**25** zwischen 3426 und 3451 sind **nicht** meine: sie kommen mit den 59 Commits, die nach
 `17b9895` auf `main` gelandet sind und die dieser Zweig mitführt — gelaufen sind sie, **geprüft
 nicht.** Wer die 3451 als Zahl dieser Prüfrunde liest, schreibt ihr fünfundzwanzig Fälle gut, die
 eine andere Sitzung gemessen hat.
