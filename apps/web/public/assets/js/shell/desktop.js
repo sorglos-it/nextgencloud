@@ -14,6 +14,7 @@ import { APPS, Changed, RIGHTS } from "./changed.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
 } from "./theme.js";
+import { applyLook, currentLook, looks } from "./look.js";
 
 // The apps whose face the web interface itself builds: app id to the function
 // that fills the window's body. Every other app runs in the fenced frame of
@@ -306,7 +307,33 @@ class Desktop {
     }
     this.paperRow = papers;
 
-    box.append(head, themes, colors, papers);
+    // The templates, under the same heading, because for the person choosing
+    // one it is the same question: what does this look like (docs/gestaltung.md,
+    // point 8). The row is built empty and filled when the list has been
+    // fetched - the start menu is the shell's own and never waits for a server.
+    const tpl = el("div", "looks");
+    this.lookRow = tpl;
+    const shipped = button(null, "Mitgeliefert", "Vorlage Mitgeliefert");
+    shipped.dataset.look = "";
+    shipped.addEventListener("click", () => {
+      applyLook("");
+      this.markLook();
+    });
+    tpl.append(shipped);
+    looks().then((list) => {
+      for (const l of list) {
+        const b = button(null, l.name, "Vorlage " + l.name);
+        b.dataset.look = l.id;
+        b.addEventListener("click", () => {
+          applyLook(l.id);
+          this.markLook();
+        });
+        tpl.append(b);
+      }
+      this.markLook();
+    });
+
+    box.append(head, themes, colors, papers, tpl);
     return box;
   }
 
@@ -320,6 +347,8 @@ class Desktop {
     for (const b of this.colorRow.children) b.classList.toggle("on", b.dataset.accent === accent);
     const bg = this.wallpaper.style.background;
     for (const b of this.paperRow.children) b.classList.toggle("on", b.style.background === bg);
+    const look = currentLook();
+    for (const b of this.lookRow.children) b.classList.toggle("on", b.dataset.look === look);
   }
 
   buildFoot() {
@@ -569,7 +598,7 @@ class Desktop {
     const mount = BUILTIN[appID];
     if (typeof mount === "function") {
       try {
-        win.onClose = mount(win, this.appCtx()) || null;
+        win.onClose = mount(win, this.appCtx(win)) || null;
       } catch {
         this.placeholder(win, "Diese App konnte nicht geöffnet werden.",
           "Bitte das Fenster schließen und es noch einmal versuchen.");
@@ -582,10 +611,14 @@ class Desktop {
       // listeners with it.
       openAppUI(win, {
         app: a, link: this.link, trust: this.trust, cache: this.uiCache,
-        // The strip of this desktop, for the reason a refused channel of this
-        // app has (appframe, doOpen): an app says what it likes in its own
-        // window, and this says it where the shell speaks.
-        notice: (level, txt) => this.notice(level, txt),
+        // OVER THIS APP'S OWN WINDOW, and no longer over the whole screen.
+        // The reason a refused channel of this app has still holds (appframe,
+        // doOpen): an app says what it likes inside its interface, and this
+        // says it where the shell speaks - which is now the popup of the
+        // window the app is in, not the strip at the bottom edge. One app in
+        // trouble must not stop the installation: the clock beside it goes on
+        // running and stays clickable (docs/gestaltung.md, point 4).
+        notice: (level, txt) => win.notice(level, txt),
       });
     }
     return win;
@@ -596,7 +629,12 @@ class Desktop {
   // place a message goes. It is built anew for every window, so an app holds
   // no reference to the desktop itself and cannot reach the other windows
   // through it.
-  appCtx() {
+  //
+  // The window it is built for is what ctx.notice talks over: a built-in app
+  // says what went wrong over its own window and nowhere else. Without a
+  // window (there is none today, and the fallback is here so a later caller
+  // does not silently lose the message) it falls back to the strip.
+  appCtx(win) {
     const self = this;
     return {
       link: this.link,
@@ -615,7 +653,7 @@ class Desktop {
       // another one changed. Handed over in appCtx and nowhere else, for the
       // reason written above it: one place builds what a built-in app gets.
       changed: this.changed,
-      notice: (level, txt) => this.notice(level, txt),
+      notice: (level, txt) => (win ? win.notice(level, txt) : this.notice(level, txt)),
     };
   }
 
@@ -682,9 +720,20 @@ class Desktop {
     } catch {
       return;
     }
-    this.notice(n.level, n.text);
+    // A notice that NAMES AN APP belongs to that app's window, and goes over
+    // that window alone (docs/gestaltung.md, point 4). Names an app that has
+    // no window open, or names none at all, and it belongs to no window: then
+    // it is the strip's, because the alternative is a message nobody is ever
+    // shown.
+    const win = n.app ? [...this.windows.values()].find((w) => w.appID === n.app) : null;
+    if (win) win.notice(n.level, n.text);
+    else this.notice(n.level, n.text);
   }
 
+  // The strip at the bottom edge, FOR WHAT BELONGS TO NO APP: the list of apps
+  // that could not be loaded, an app that opens no window at all, a notice of
+  // the session itself. What belongs to an app says it over that app's window
+  // (Win.notice), so one app in trouble does not stop the installation.
   notice(level, txt) {
     clearTimeout(this.noticeTimer);
     text(this.status, txt);

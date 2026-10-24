@@ -1,0 +1,40 @@
+/* Vorlage „Klar": weich, rund, ruhig.
+ *
+ * Eine Vorlage schreibt die Marken um, die oben in css/shell.css stehen —
+ * mehr braucht es für das meiste Aussehen nicht, und genau dafür stehen sie
+ * an einer Stelle. Dieses Stylesheet wird NACH shell.css geladen.
+ *
+ * Beide Fälle von hell und dunkel stehen hier. Die Wahl des Benutzers
+ * (Punkt 7) setzt die Oberfläche als data-theme ans <html>; eine Vorlage
+ * bedient, was dort steht, und zieht die Wahl nicht an sich. Die Farbe
+ * (--accent) steht als Angabe am Element selbst und bleibt deshalb obenauf:
+ * was hier steht, ist Voreinstellung, nicht Vorschrift. */
+:root{
+  --win-bg: #1b2030;
+  --win-fg: #eef1f7;
+  --win-border: #333c52;
+  --title-bg: #252c40;
+  --title-bg-active: #2f3850;
+  --bar-bg: rgba(18,22,34,.66);
+  --menu-bg: rgba(24,29,43,.90);
+  --shadow: 0 24px 60px rgba(0,0,0,.45);
+  --radius: 18px;
+  --field-bg: #141927;
+  --page-bg: #0b0e18;
+}
+html[data-theme="light"]{
+  --win-bg:#fdfdff; --win-fg:#1b2333; --win-border:#dde3ee;
+  --title-bg:#f1f4fa; --title-bg-active:#e8edf7;
+  --bar-bg: rgba(252,253,255,.80); --bar-fg:#1b2333;
+  --menu-bg: rgba(253,254,255,.95);
+  --shadow: 0 24px 60px rgba(40,55,85,.18);
+  --field-bg:#ffffff; --muted:#6a7689;
+  --page-bg:#eef2f9;
+}
+
+/* Rund ist hier nicht nur die Marke: die Titelleiste bekommt die Rundung
+   mit, sonst sitzt eine eckige Kappe auf einem runden Fenster. */
+.titlebar{border-radius:calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0}
+.win.max .titlebar{border-radius:0}
+.titlebar .g{border-radius:50%}
+#smlook button, #smfoot button{border-radius:999px}

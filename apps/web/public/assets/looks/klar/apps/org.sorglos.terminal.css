@@ -1,0 +1,19 @@
+/* Das Aussehen des Terminals in der Vorlage „Klar".
+ *
+ * Liegt in einer Vorlage ein Ordner für eine App, wird SEIN Aussehen geladen
+ * statt des mitgelieferten (Punkt 8). Die Oberfläche holt diese Datei vom
+ * eigenen Webserver, putzt sie und hängt sie als data:-Stylesheet ans Ende
+ * des Kopfes, den sie für die App baut — der Rahmen holt weiter nichts, und
+ * seine Regel wird nicht angefasst. Warum das den Riegel nicht löst, steht
+ * in docs/vorlagen-und-der-rahmen.md.
+ *
+ * Die Datei heißt wie die App HEISST, voll: org.sorglos.terminal. Punkt 8
+ * nennt als Beispiel „terminal“, den kurzen Namen - aber kurze Namen sind die
+ * Namen, die sich zwischen zwei Stores treffen, und eine Vorlage, die dann die
+ * falsche App trifft, ist genau der Fehler, den eine Vorlage anrichten kann.
+ *
+ * Darum steht hier nur CSS. Ein url(...) auf etwas anderes als data: wird
+ * beim Putzen entfernt. */
+.term .out{border-radius:16px;border-width:0;background:#141927}
+html[data-theme="light"] .term .out{background:#f3f6fb}
+.term .ask input{border-radius:999px}

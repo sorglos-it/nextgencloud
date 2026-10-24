@@ -27,6 +27,7 @@ import { validName, validPath } from "../contracts/text.js";
 import { CODES, MAX_PARAMS, validParams, message as codeMessage } from "../contracts/wire.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
 import { currentTheme, onThemeChange } from "./theme.js";
+import { appCSS } from "./look.js";
 
 // Where an app window comes from. It is a document of this server and not a
 // srcdoc frame, because only a document fetched over http gets a policy of
@@ -212,9 +213,22 @@ export async function openAppUI(win, { app, link, trust, cache, notice } = {}) {
     streams.clear();
   });
 
-  let files, library;
+  let files, library, lookCSS;
+  // The template's stylesheet for this app is fetched HERE, beside the two
+  // others, and not later: everything this window needs is in hand before
+  // buildDocument starts, so nothing new ever sits between the hash of the
+  // ui-tar and the walk over it (steps 3 and 4 at the top of this file).
+  //
+  // THE SHELL FETCHES IT, NOT THE FRAME. The frame keeps connect-src 'none'
+  // and an origin of its own; what goes in is text, as one more data:
+  // stylesheet, which is exactly what FRAME_CSP already allows. How far a
+  // template may reach into an app, and why this does not loosen step 7, is
+  // written out in docs/vorlagen-und-der-rahmen.md. appCSS never throws and
+  // answers "" where there is no template or no file for this app.
   try {
-    [files, library] = await Promise.all([verifiedUI(app, link, trust, cache), ngcLibrary()]);
+    [files, library, lookCSS] = await Promise.all([
+      verifiedUI(app, link, trust, cache), ngcLibrary(), appCSS(app?.id ?? ""),
+    ]);
   } catch (e) {
     if (!gone) refuse(win, e);
     return;
@@ -229,7 +243,7 @@ export async function openAppUI(win, { app, link, trust, cache, notice } = {}) {
   const token = crypto.randomUUID();
   let html;
   try {
-    html = buildDocument(app, files, token, library);
+    html = buildDocument(app, files, token, library, lookCSS);
   } catch (e) {
     refuse(win, e);
     return;
@@ -348,21 +362,24 @@ const whyOpenFailed = (e) => {
       streams.delete(m.id);
       const why = whyOpenFailed(e);
       toFrame({ id: m.id, op: "closed", status: "error", message: why });
-      // AND ON THE DESKTOP'S OWN STRIP, once per window.
+      // AND IN A POPUP OVER THIS WINDOW, once per window.
+      // It covers this window and nothing else (docs/gestaltung.md, point 4):
+      // a channel this app was refused is this app's trouble, so the window
+      // beside it stays clickable.
       //
       // Telling the app is not enough, and that is measured rather than
       // reasoned: on 23.10.2026 the terminal of the Debian machine showed its
       // own sentence and nothing else, because the app that was installed
       // there was built before there was a reason to pass on. An app decides
       // for itself what it does with what it is told - an old one, or one that
-      // ignores the message, leaves the person with nothing - while the strip
+      // ignores the message, leaves the person with nothing - while the popup
       // belongs to the shell and says the same thing whatever the app does.
       //
       // ONCE PER WINDOW. An app that opens channels in a loop would otherwise
       // write the desktop full, and the second strip says nothing the first
       // did not.
       //
-      // "error" AND NOT "warn", because this strip has to WAIT FOR THE PERSON:
+      // "error" AND NOT "warn", because this message has to WAIT FOR THE PERSON:
       // a warn goes by itself after NOTICE_MS (8 s, desktop.js), and measured
       // on 23.10.2026 that is what happened - the reason stood on the strip,
       // Thomas looked at the window first and by the time he looked up the
@@ -744,7 +761,7 @@ function uiTar(bytes, want) {
 // would simply be a page with holes in it. The replacing happens on the
 // parsed tree and never on the text - a search for src="..." in a string
 // finds what a browser does not and misses what it does.
-function buildDocument(app, files, token, library) {
+function buildDocument(app, files, token, library, lookCSS) {
   // The entry page of the manifest has to be a safe relative path before it
   // is looked up at all - store.validPath, the same rule the archive holds
   // its own names to.
@@ -848,6 +865,21 @@ function buildDocument(app, files, token, library) {
   lib.setAttribute("src", dataURL("text/javascript", new TextEncoder().encode(library)));
   lib.dataset.token = token;
   csp.after(lib);
+
+  // The template's stylesheet for this app, as the LAST child of the head:
+  // last because it is meant to win over the look the app brought along -
+  // that is the whole of "a template may replace an app's look" in point 8
+  // of docs/gestaltung.md.
+  //
+  // It is a data: address like every other stylesheet in this document, so
+  // there is ONE rule for all of them and no second way to spell it. The text
+  // was cleaned in look.js: no @import, and no url() that is not data:.
+  if (typeof lookCSS === "string" && lookCSS !== "") {
+    const look = doc.createElement("link");
+    look.setAttribute("rel", "stylesheet");
+    look.setAttribute("href", dataURL("text/css", new TextEncoder().encode(lookCSS)));
+    head.append(look);
+  }
 
   // What the shell looks like, before the first paint rather than after it.
   doc.documentElement.dataset.theme = currentTheme() || "dark";

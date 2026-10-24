@@ -126,8 +126,21 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
 #smsearch:focus{border-color:var(--accent)}
 #smhead,#smlookhead{padding:0 16px 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
                     color:var(--muted)}
+/* The list of apps is the way to the apps, and on a phone it is the ONLY one:
+   the desktop icons are gone below 640 px (docs/gestaltung.md, point 1). So it
+   is the part of the menu that gets the room left over, and it never falls
+   below two rows of tiles - measured on a 640 x 360 phone held sideways, where
+   "Aussehen" took all 290 px of the menu and left the list 16: seven apps in
+   it, three of them within a hair of the edge, and no way to scroll to the
+   rest because the list had no height to scroll in. */
 #smlist{overflow:auto;padding:8px;display:grid;
-        grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px}
+        grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px;
+        flex:1 1 auto;min-height:124px}
+/* Appearance gives way to the apps, rather than the other way round: it keeps
+   its natural height where there is room, and scrolls inside itself where
+   there is not. min-height:0 is what lets a flex item shrink at all. */
+#smlook{flex:0 1 auto;min-height:0;overflow:auto}
+#smsearch,#smhead,#smfoot{flex:0 0 auto}
 .smitem{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 6px;
         border-radius:10px;cursor:pointer;text-align:center;font-size:12.5px}
 .smitem:hover{background:rgba(127,160,220,.20)}
@@ -151,6 +164,16 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
 .wpgrid button{height:40px;border-radius:8px;border:2px solid transparent;cursor:pointer;
                background-size:cover;padding:0}
 .wpgrid button.on{border-color:var(--accent)}
+
+/* Die Vorlagen (docs/gestaltung.md, Punkt 8). Sie stehen als Namen da und
+   nicht als Vorschaubild: was eine Vorlage ausmacht, ist der ganze
+   Schreibtisch, und ein Daumennagel davon wäre ein Bild, das geholt werden
+   müsste - dafür macht diese Seite keine Verbindung auf. */
+.looks{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.looks button{padding:6px 12px;border-radius:8px;border:1px solid var(--win-border);
+              background:transparent;color:inherit;font:inherit;cursor:pointer}
+.looks button:hover{background:rgba(127,160,220,.2)}
+.looks button.on{border-color:var(--accent);color:var(--accent)}
 
 /* ---------- Fenster ---------- */
 .win{position:absolute;display:flex;flex-direction:column;
@@ -272,7 +295,12 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .alarmbox:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
 /* ---------- Meldungen ---------- */
-/* One strip at the bottom edge, for one message at a time. The live region
+/* THE STRIP IS FOR WHAT BELONGS TO NO APP - the list of apps that could not be
+   loaded, an app that cannot be opened at all, a notice of the session.
+   What belongs to an app says it over that app's own window (.winmsg below),
+   so one app in trouble does not talk over the whole installation
+   (docs/gestaltung.md, point 4).
+   One strip at the bottom edge, for one message at a time. The live region
    stays in the page whether it holds anything or not, because a region that
    appears only when there is news is announced by nobody. */
 /* pointer-events:none on the strip itself: while it is empty it is a box of
@@ -303,6 +331,10 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 @media (max-width:640px){
   #icons{display:none}
   .task .lbl{display:none}
+  /* The start menu IS the desktop on a phone, so it uses the screen it has:
+     the 8 px margin at the left stays, the rest of the width and all of the
+     height below the taskbar is the menu's. */
+  #startmenu{max-height:calc(100vh - var(--bar-h) - 12px)}
 }
 
 /* ---------- Benutzer und Rechte ---------- */
@@ -373,19 +405,61 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
                     color:inherit;font:inherit;padding:6px 12px;cursor:pointer}
 .usersapp button.go:hover{border-color:var(--accent)}
 .usersapp button.go[disabled]{opacity:.5;cursor:default}
-.usersapp .askback{position:absolute;inset:0;z-index:10;display:flex;align-items:center;
-                   justify-content:center;padding:16px;background:rgba(0,0,0,.45)}
-.usersapp .ask{max-width:30rem;width:100%;max-height:100%;overflow:auto;padding:18px;
-               border:1px solid var(--win-border);border-radius:var(--radius);
-               background:var(--win-bg);box-shadow:var(--shadow)}
-.usersapp .ask h2{margin:0 0 10px;font-size:16px}
-.usersapp .ask p{margin:0 0 8px}
-.usersapp .ask ul{margin:0 0 10px;padding-left:20px}
-.usersapp .ask .who{color:var(--muted)}
-.usersapp .ask .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-.usersapp .ask .no{border:1px solid var(--win-border);border-radius:8px;background:var(--win-bg);
-                   color:inherit;font:inherit;padding:7px 14px;cursor:pointer}
-.usersapp .ask .danger{background:#e13e3e;border-color:transparent;color:#fff;font-weight:600}
+
+/* ---------- Popup über einem Fenster ---------- */
+/* THE FORM EVERY WINDOW USES, and no longer a habit of "Benutzer und Rechte".
+   position:absolute and inset:0 inside a .win: it covers the window it
+   belongs to and nothing else, so the clock next to a store that is having
+   trouble goes on running and stays clickable (docs/gestaltung.md, point 4).
+   The rules used to be written as ".usersapp .askback"; the prefix is gone so
+   a second window does not grow a second form of its own. */
+.askback{position:absolute;inset:0;z-index:10;display:flex;align-items:center;
+         justify-content:center;padding:16px;background:rgba(0,0,0,.45)}
+.ask{max-width:30rem;width:100%;max-height:100%;overflow:auto;padding:18px;
+     border:1px solid var(--win-border);border-radius:var(--radius);
+     background:var(--win-bg);box-shadow:var(--shadow)}
+.ask h2{margin:0 0 10px;font-size:16px}
+.ask p{margin:0 0 8px}
+.ask ul{margin:0 0 10px;padding-left:20px}
+.ask .who{color:var(--muted)}
+.ask .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.ask .no{border:1px solid var(--win-border);border-radius:8px;background:var(--win-bg);
+         color:inherit;font:inherit;padding:7px 14px;cursor:pointer}
+.ask .danger{background:#e13e3e;border-color:transparent;color:#fff;font-weight:600}
+
+/* ---------- Meldung im Fenster ---------- */
+/* The error of an app, in the same form as the question above it: centred over
+   its own window, with one button that takes it away.
+   .winmsg IS IN EVERY WINDOW FROM THE MOMENT IT OPENS, empty or not, and the
+   live region .winnote inside it with it. That is the rule .status:empty was
+   written for, one level further in: a region that is only put into the page
+   once there is news is a region no screen reader was watching when the news
+   came, so nothing is read out. While it is empty it is a layer of no paint
+   and no veil, and pointer-events:none keeps it from swallowing a click
+   meant for the app behind it. */
+.winmsg{position:absolute;inset:0;z-index:11;display:flex;align-items:center;
+        justify-content:center;padding:16px;pointer-events:none}
+/* THE TITLE BAR STAYS ABOVE THE MESSAGE, and that is not a detail of taste: a
+   message that lies over the three buttons of its own window is a window that
+   cannot be minimized, moved or closed while it stands. The message has a
+   button of its own, but a window one may not close is the one way this popup
+   could trap somebody. */
+.win > .titlebar{position:relative;z-index:12}
+.winmsg.on{background:rgba(0,0,0,.45);pointer-events:auto}
+.winmsgbox{max-width:30rem;width:100%;max-height:100%;overflow:auto;padding:18px;
+           border:1px solid var(--win-border);border-radius:var(--radius);
+           background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+/* NOT display:none, for the reason written above: the box and the region in it
+   stay in the page and take up no room until there is something to say. */
+.winmsg:not(.on) .winmsgbox{padding:0;border:0;background:none;box-shadow:none}
+.winmsg.warn .winmsgbox{border-color:#d2932a}
+.winmsg.error .winmsgbox{border-color:#e13e3e}
+.winnote{margin:0}
+.winmsgrow{display:flex;justify-content:flex-end;margin-top:14px}
+.winmsgclose{border:1px solid var(--win-border);border-radius:8px;background:var(--title-bg);
+             color:inherit;font:inherit;padding:7px 14px;cursor:pointer}
+.winmsgclose:hover{border-color:var(--accent)}
+.winmsgclose[hidden]{display:none}
 
 /* ---------- Anmeldung ---------- */
 /* One box in the middle of an empty page, and nothing else on it: the person

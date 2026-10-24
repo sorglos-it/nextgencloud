@@ -1,0 +1,4 @@
+/* Das Aussehen des Terminals in der Vorlage „Kante". Siehe
+ * klar/apps/terminal.css für das, was hier gilt und warum. */
+.term .out{border-radius:0;border-width:2px}
+.term .ask input{border-radius:0;border-width:2px}

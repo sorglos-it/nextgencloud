@@ -2,6 +2,7 @@
 // the configuration, then the desktop.
 import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
+import { initLook } from "./look.js";
 import { loadConfig } from "../net/config.js";
 import { load as loadLang, t } from "./lang.js";
 import { anchorFor } from "./trustlist.js";
@@ -133,6 +134,13 @@ async function start() {
   // The theme first, before anything is drawn: the page would otherwise be
   // painted dark and repainted light one frame later.
   initTheme();
+  // The template right after it, and for the same reason: it is one more
+  // stylesheet of this server behind shell.css, and a page that was drawn
+  // without it and redrawn with it is the flicker initTheme exists to avoid.
+  // It does not wait for the list of templates - a chosen id is checked
+  // against its grammar here, and an id with no folder behind it is a
+  // stylesheet that does not load, which is the shipped look.
+  initLook();
   // The sentences next, and before any mask is drawn, for the same reason:
   // a mask that appeared in German and swapped its texts a frame later would
   // be read in the wrong language by whoever was quick. It never throws - a

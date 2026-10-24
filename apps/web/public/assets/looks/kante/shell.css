@@ -1,0 +1,35 @@
+/* Vorlage „Kante": eckig, hart, kontrastreich.
+ *
+ * Sie steht neben „Klar" als Beweis, dass eine Vorlage wirklich das Aussehen
+ * trägt und nicht nur eine Farbe: dieselbe Oberfläche, keine Rundung, eine
+ * scharfe Kante statt eines weichen Schattens.
+ *
+ * Wie bei „Klar" gilt: beide Fälle von hell und dunkel stehen hier, die
+ * Wahl des Benutzers bleibt seine. */
+:root{
+  --win-bg: #11151c;
+  --win-fg: #f2f5f8;
+  --win-border: #5a6472;
+  --title-bg: #1b212b;
+  --title-bg-active: #273040;
+  --bar-bg: rgba(10,13,18,.92);
+  --menu-bg: rgba(14,18,25,.98);
+  --shadow: 0 0 0 1px rgba(0,0,0,.9), 6px 6px 0 rgba(0,0,0,.55);
+  --radius: 0px;
+  --field-bg: #0b0e13;
+  --muted: #8b97a8;
+  --page-bg: #05070a;
+}
+html[data-theme="light"]{
+  --win-bg:#ffffff; --win-fg:#000000; --win-border:#000000;
+  --title-bg:#dfe3e8; --title-bg-active:#c6ccd4;
+  --bar-bg: rgba(223,227,232,.98); --bar-fg:#000000;
+  --menu-bg: rgba(255,255,255,1);
+  --shadow: 0 0 0 1px #000, 6px 6px 0 rgba(0,0,0,.25);
+  --field-bg:#ffffff; --muted:#3c4450;
+  --page-bg:#b9c0c9;
+}
+
+/* Eckig heißt eckig, auch wo shell.css eine eigene Rundung mitbringt. */
+.titlebar .g, .wbtn, .dicon, #smlook button, #smfoot button{border-radius:0}
+.titlebar{border-bottom-width:2px}
