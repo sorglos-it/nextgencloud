@@ -161,11 +161,32 @@ test("names that try to be markup become text, and nothing of them runs", async 
   await page.locator("#icons").getByRole("button", { name: bad[0], exact: true }).click();
   expect(await page.locator(".win .t").textContent()).toBe(bad[0]);
   // Nowhere a name is shown may an element out of that name have appeared.
-  const made = await page.evaluate(() =>
-    document.querySelectorAll("#desktop img, #desktop script, #desktop svg, #desktop iframe, "
-      + "#startmenu img, #startmenu script, #startmenu svg, #startmenu iframe, "
-      + "#taskbar img, #taskbar script, #taskbar svg, #taskbar iframe").length);
-  expect(made).toBe(0);
+  //
+  // Since the badges carry icons (js/shell/icon.js) there ARE svg elements in
+  // these three places, so the case asks the sharper question instead of the
+  // easy one: every svg here is one the shell built itself, and it holds
+  // nothing but shape. A name that became an <svg onload=…> would be an svg
+  // without the class, or one with an attribute out of that name - both of
+  // them counted below.
+  const made = await page.evaluate(() => {
+    const where = ["#desktop", "#startmenu", "#taskbar"];
+    const out = { foreign: 0, svg: 0, attrs: [] };
+    for (const w of where) {
+      const root = document.querySelector(w);
+      if (!root) continue;
+      out.foreign += root.querySelectorAll("img, script, iframe, object, embed").length;
+      for (const s of root.querySelectorAll("svg")) {
+        if (!s.classList.contains("ico")) { out.svg++; continue; }
+        for (const e of [s, ...s.querySelectorAll("*")]) {
+          for (const a of e.getAttributeNames()) {
+            if (a.startsWith("on") || a === "href" || a === "xlink:href") out.attrs.push(a);
+          }
+        }
+      }
+    }
+    return out;
+  });
+  expect(made).toEqual({ foreign: 0, svg: 0, attrs: [] });
   await stillADesktop(page);
 });
 
