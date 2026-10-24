@@ -153,7 +153,7 @@ func (a *apiSide) marker(n uint32) {
 //
 // Measured 24.10.2026 with 50 ms laid between the write of a CLOSE and the
 // bookkeeping behind it: TestFramesAfterOwnCloseAreDropped counted one handler
-// of two, which is the failure the Linux -race run showed in 4 of 90 runs. It
+// of two, which is the failure the Linux -race run showed in 4 of 90 runs (counting the attempts a rerun hides, the two cases were 12 of 90). It
 // waits and does not spin on the counter, so a handler that really stays away
 // is still a finding and not a green run.
 func cameBack(t *testing.T, done <-chan struct{}, n int) {

@@ -5786,6 +5786,47 @@ dass etwas kaputt war, und einmal ist derselbe Commit (`97945b6`) bei der Wieder
 Änderung grün geworden. Eine Prüfung, die gelegentlich ohne echten Fehler rot wird, ist
 schlimmer als keine Prüfung (`tools/recovery-ci.sh`) — also war zu messen, nicht zu drehen.
 
+**Was gemessen ist.** Die Laufliste der Prüfung, 200 Einträge gelesen, davon **90 abgeschlossene
+Läufe** (ohne abgebrochene). In **12 von 90 = 13 %** war die Aufgabe `-race` rot wegen zweier
+Fälle des Pakets `apps/server-controller/classes/link`: `TestFramesAfterOwnCloseAreDropped`
+(10×) und `TestChannelNumberFreeOnlyAfterBothCloses` (2×). Vier weitere rote `-race`-Läufe
+gehören woanders hin: `TestAOneTimeCodeReachesNoLog` (`users`), `TestAFaultEndsTheTerminalAtOnce`
+und zweimal `TestNormalCloseGivesTheNumberBackAtOnce` (Terminal), dazu ein Lauf (40114506408), in
+dessen Protokoll keine `--- FAIL`-Zeile zu finden war und der hier **nicht untersucht** ist.
+
+**Und 13 % ist eine Untergrenze, keine Quote.** Die erste Fassung dieses Punktes nannte 9 von 90
+= 10 %, und das war zu niedrig gezählt. `gh run list` zeigt je Lauf nur den **letzten Versuch**:
+ein Lauf, den jemand mit `gh run rerun --failed` wiederholt hat, steht dort als `success`, und der
+rote erste Versuch ist aus der Liste verschwunden. Nachgemessen über die API
+(`runs/<id>/attempts/1`): von den 90 Läufen sind **6 wiederholt** worden, und in **vier** davon
+war Versuch 1 in der Aufgabe `-race` rot — dreimal an genau diesen beiden Fällen (40119921187 und
+40087877366 mit `TestFramesAfterOwnCloseAreDropped` nach 30,06 bzw. 30,07 s, 40109214083 mit
+`TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s), einmal an einem Terminal-Fall. Diese
+drei fehlten in der ersten Zählung.
+
+Daraus folgt zweierlei. Erstens: wer das Flattern aus der Laufliste zählt, zählt zu niedrig, und
+zwar um so mehr, je fleissiger wiederholt wird. Zweitens, und das ist der unangenehmere Teil:
+**eine Wiederholung löscht den Beleg aus der Liste.** Ein roter Lauf, den niemand wiederholt hat,
+steht darin; ein roter Versuch unter einem wiederholten Lauf ist nur über die API zu finden, und
+nur, wenn man weiß, dass man danach suchen muss. 13 % ist also das, was sich **nachweisen** lässt,
+nicht das, was war.
+
+**Der eine Lauf, der das Flattern beweist.** Lauf 40109214083 auf Commit `97945b6` ist
+`run_attempt` **2** und grün; Versuch 1 desselben Laufs, derselbe Commit, derselbe Baum, ist rot
+mit `TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s. Dazwischen lag nichts als
+`gh run rerun --failed`. Das ist der Nachweis an einem unveränderten Baum und stärker als jede
+Statistik: der Zweig, auf dem es auffiel, ändert **keine** Codedatei (nur `docs/` und
+`tools/*.sh`) und kann die Ursache nicht sein. Berichtigt am 24.10.2026: hier stand erst, der
+einzige echte Lauf auf diesem Commit sei grün gewesen — das war falsch gelesen, weil die
+Laufliste den roten Versuch 1 nicht zeigt, und es hätte den eigenen Befund geschwächt.
+
+**Auf dieser Maschine ist nichts geflattert.** In WSL (Debian, go1.27.2, `-race`): 3000 Läufe der
+beiden Fälle auf **einem** Prozessorkern, 500 Läufe mit allen Kernen, 20 Läufe des ganzen Pakets
+auf zwei Kernen — **0 Fehlschläge**. Die natürliche Flatterquote hier ist 0 %, und damit war der
+Beweis einer Besserung durch Wiederholen allein nicht zu führen. Gemessen wurde deshalb **durch
+Einspritzen**: eine Verzögerung an genau der Stelle, an der das Wettrennen vermutet wurde, und
+dann der Vergleich der Fehlermeldung mit der aus der CI.
+
 **Zur Nummer, und was mit ihr geschehen ist.** Dieser Punkt hat die 83 getragen und ist nach dem
 Zusammenführen von PR 139 auf die **84** umgeschrieben worden. Gemessen am 24.10.2026 an den
 offenen Pull Requests, bevor 139 herein kam: `main` endete bei 82, die **83 war von fünf Zweigen
@@ -5820,7 +5861,10 @@ Die Protokolle zeigen zwei Erscheinungen mit ganz verschiedenen Laufzeiten:
 | Erscheinung | Laufzeit | Meldung | Läufe |
 |---|---|---|---|
 | A | 0,03–0,05 s | `the handler was called 2 times and came back 1 times` | 4 |
-| B | 30,04–30,08 s | `waiting for 4 on channel 1: ...`, dazu `Run did not end` | 5 |
+| B | 30,04–30,08 s | `waiting for 4 on channel 1: ...`, dazu `Run did not end` | 8 |
+
+Die 8 sind 5 aus der Laufliste und 3 aus verdeckten ersten Versuchen. **B ist also die Mehrheit,
+zwei Drittel** — und B ist der Fehler, der hier nicht behoben wird.
 
 **A ist ein Testfehler.** Der Fall liest `opened` und `back` unmittelbar nach `waitFor`, also
 sobald `Run` zurück ist. Das Ende von `Run` ist aber **nicht** das Ende der Handler: die Goroutine
@@ -5892,7 +5936,7 @@ Auf dem heutigen `main` (f77143c) ist `bash tools/check-buch.sh` grün
 
 | | vorher | nachher |
 |---|---|---|
-| CI, Aufgabe `-race`, 90 abgeschlossene Läufe | 9 rot (10 %), davon 4 × A und 5 × B | **unvermessen** — braucht neue Läufe |
+| CI, Aufgabe `-race`, 90 abgeschlossene Läufe | mindestens 12 rot (13 %), davon 4 × A und 8 × B | **unvermessen** — braucht neue Läufe |
 | hier, 3000 Läufe auf einem Kern, `-race` | 0 | 0 |
 | hier, 500 Läufe, `-race` | 0 | 0 |
 | hier, Einspritzung A (50 ms) | **rot** (0,08 s) | **grün** |
@@ -5901,8 +5945,10 @@ Auf dem heutigen `main` (f77143c) ist `bash tools/check-buch.sh` grün
 ### Was ungemessen bleibt
 
 - **Die CI-Quote nach der Änderung.** Sie ist erst nach genug neuen Läufen zu haben. Erwartet
-  wird, dass die 4 Erscheinungen vom Typ A verschwinden und die 5 vom Typ B bleiben — also etwa
-  die Hälfte des Flatterns, nicht alles. Wer diese Prüfung jetzt für still hält, irrt.
+  wird, dass die 4 Erscheinungen vom Typ A verschwinden und die 8 vom Typ B bleiben — also
+  **ein Drittel** des nachweisbaren Flatterns, nicht alles. Wer diese Prüfung jetzt für still
+  hält, irrt. Und wer sie nachzählt, muss die Versuche mitzählen (`runs/<id>/attempts/1`), sonst
+  sieht sie stiller aus, als sie ist.
 - **Das natürliche Eintreten von B.** Hier nie gesehen, nur durch Einspritzen erzwungen. Warum
   es auf einem 4-Kern-Runner unter `-race` mit über zwanzig gleichzeitig laufenden Paketen in
   etwa jedem zwanzigsten Lauf auftritt und auf dieser Maschine in 3000 Läufen nie, ist nicht
