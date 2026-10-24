@@ -19,7 +19,11 @@ K=$HOME/Documents/ssh/keys/id_ed25519_ngc
 SSH="ssh -i $K -o StrictHostKeyChecking=no -o ConnectTimeout=8 -o BatchMode=yes"
 API2=10.2.3.211
 DB=10.2.3.212
+# Die einzigen VMIDs, die dieses Skript anfassen darf - wie in den anderen
+# ausfall-*.sh. Auf demselben Wirt liegt das NAS dieses Hauses als VMID 200.
+erlaubt() { case "$1" in 301|302|303|304|305|306|308|309) return 0;; *) return 1;; esac; }
 VMID=306
+erlaubt "$VMID" || { echo "ABBRUCH: VMID $VMID steht nicht auf der Liste"; exit 2; }
 ADDR=10.2.3.215
 
 zeile() { $SSH "root@$DB" 'mysql ngc -N -e "select data from ngc_blob where kind=\"setting\" and id=\"store.global\";"' 2>&1; }

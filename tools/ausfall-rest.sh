@@ -15,7 +15,7 @@ A1=10.2.3.210
 S1=10.2.3.213
 S2=10.2.3.214
 
-erlaubt() { case "$1" in 301|302|303|304|305|306) return 0;; *) return 1;; esac; }
+erlaubt() { case "$1" in 301|302|303|304|305|306|308|309) return 0;; *) return 1;; esac; }
 
 VMID=${1:?}; ADDR=${2:?}; NAME=${3:?}
 erlaubt "$VMID" || { echo "ABBRUCH: VMID $VMID nicht auf der Liste"; exit 2; }

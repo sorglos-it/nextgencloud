@@ -26,7 +26,7 @@ DB=10.2.3.212
 A1=10.2.3.210
 A2=10.2.3.211
 
-erlaubt() { case "$1" in 301|302|303|304|305|306) return 0;; *) return 1;; esac; }
+erlaubt() { case "$1" in 301|302|303|304|305|306|308|309) return 0;; *) return 1;; esac; }
 erlaubt "$VMID" || { echo "ABBRUCH: VMID $VMID nicht auf der Liste"; exit 2; }
 
 q() { $SSH "$PVE" "qm $*"; }

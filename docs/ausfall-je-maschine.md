@@ -742,9 +742,49 @@ die Datenbank misst, misst die Firewall und nicht den Ausfall — und ein
 beitretender Knoten wartet, db-1 muss zuerst stehen. Damit sind es **zwei**
 Fälle und nicht einer: „der Erste fällt" und „ein Beitretender fällt".
 
-Gefahren ist keiner davon. Die neuen Maschinen stehen nicht auf der Liste der
-sechs erlaubten VMIDs, die in `tools/ausfall-*.sh` hart im Code steht, und sie
-kommen dort nicht dazu, ohne dass Thomas es sagt.
+### Der Umbau ist fertig, und die Warnung hat sich erledigt
+
+Wenig später gemessen, und beides hat sich geändert:
+
+```
+db-1   wsrep_cluster_size=3  wsrep_cluster_status=Primary
+       incoming = 10.2.3.212:0, db-3.ngc.mein.lan:0, db-2.ngc.mein.lan:0
+db-2, db-3   mariadb active
+api-1 und api-2   db.nodes = ['db-1...:3306', 'db-2...:3306', 'db-3...:3306']
+```
+
+**`db.nodes` nennt jetzt auf beiden APIs alle drei.** Die Gestalt „Ersatzteil,
+an das nichts angeschlossen ist" ist hier damit nicht eingetreten — anders als
+bei api-2, wo sie steht. Erst damit ist der Fall überhaupt messbar: vorher
+wusste ich das Ergebnis, jetzt nicht.
+
+### Was ich für die zwei neuen Fälle erwarte (geschrieben vor dem Abschalten)
+
+Thomas hat 308 und 309 auf die Liste genommen; der Riegel ist neu geprüft (200
+und 307 brechen weiter mit Code 2 ab, ohne Pipe gemessen).
+
+**„Ein Beitretender fällt" — db-2 oder db-3 aus.** Erwartung: **kein sichtbarer
+Unterschied.** Zwei von drei Knoten halten das Quorum (2 > 3/2), beide APIs
+haben zwei gesunde Einträge in `db.nodes`, und nichts zeigt allein auf den
+fehlenden. Oberfläche 200, Anmeldung geht, `wsrep_cluster_size` fällt auf 2.
+Die Sorge liegt nicht beim Ausfall, sondern bei der Rückkehr: ein beitretender
+Knoten **wartet** auf den Verbund, und der Verbund ist dann ja da — also
+erwarte ich, dass er von selbst zurückkommt, schneller als db-1 heute.
+
+**„Der Erste fällt" — db-1 aus, mit drei Knoten.** Das ist der Fall, für den der
+Umbau gemacht wurde, und meine Erwartung ist **jetzt die umgekehrte von heute
+Mittag**: die Anmeldung soll **weiterlaufen**. Zwei Knoten halten das Quorum,
+und beide APIs kennen sie. Wenn stattdessen wieder
+`E_UNREACHABLE` kommt, liegt es nicht mehr am Quorum, sondern daran, wie ein API
+seine Knotenliste abarbeitet — und das wäre der schwerere Befund, weil dann drei
+Knoten und eine richtige Liste nicht reichen.
+
+Zwei Dinge, die ich dabei gezielt ansehe, weil sie heute Mittag nicht zu sehen
+waren: **ob die erste Anfrage nach dem Ausfall anders aussieht als die zehnte**
+(ein Verbindungsaufbau, der in einen Zeitablauf läuft, statt sofort auf den
+nächsten Knoten zu gehen — dasselbe Muster wie bei api-2, wo jede vierte
+Anmeldung 500 bekam), und **ob db-1 als der Knoten, der den Verbund gebootet
+hat, beim Zurückkommen anders behandelt wird** als ein Beitretender.
 
 ## Was offen bleibt
 
