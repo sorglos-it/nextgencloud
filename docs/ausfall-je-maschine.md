@@ -147,7 +147,105 @@ ist ein App-Container nach einer Neuinstallation **auf dem alten Knoten stehen
 geblieben** (Punkt 74 der Verträge). Wenn ein Rest auf dem jeweils anderen
 Knoten liegt, kann der Ausfall harmloser aussehen, als er ist.
 
+## Wie hier gemessen wird — und warum der naheliegende Weg lügt
+
+Das steht vor den Ergebnissen, weil es sie alle trägt. Zwei Fallen, beide am
+24.10.2026 gemessen, beide hätten diesen ganzen Auftrag entwertet.
+
+### Der DNS liefert für jeden Namen ein AAAA `::`
+
+`nslookup <name> 10.2.3.102` von diesem PC, für alle sechs Namen einzeln: neben
+dem richtigen A-Satz steht immer ein AAAA-Satz `::`. Alles, was über NSS geht —
+`getent`, `curl`, `ping`, jedes Werkzeug, zu dem ein Mensch greift — nimmt das
+`::` zuerst. Auf api-1 gemessen:
+
+```
+getent ahosts store.ngc.mein.lan   ->  10.2.3.215 STREAM …  und  :: STREAM
+curl … https://store.ngc.mein.lan/catalog.json            ->  code=404 von=::
+curl --resolve store.ngc.mein.lan:443:10.2.3.215 …        ->  code=200 von=10.2.3.215
+```
+
+Das `::` landet auf der eigenen Maschine, und dort antwortet auf 443 der Apache
+von api-1. **Die naive Frage nach dem Laden wird also von api-1 selbst
+beantwortet.** Wie teuer das ist, zeigt der Fall unten: dieselbe naive Zeile
+sagt `404 von=::`, *egal ob der Laden läuft oder abgeschaltet ist*. Ein Mensch,
+der so nachsieht, kann einen toten Laden nicht von einem lebenden
+unterscheiden.
+
+Von diesem PC aus beißt die Falle **nicht**: Windows-curl überspringt das `::`
+und landet auf 10.2.3.210. Das ist der Grund, warum sie so lange unentdeckt
+blieb — und der Grund, warum in diesem Blatt zu jeder Zahl steht, **von wo**
+gemessen wurde. Dass NGC selbst läuft, liegt daran, dass Go die Adressen der
+Reihe nach durchgeht und am `::` vorbeifällt. Die Anlage steht damit auf einem
+Bein: die Software überlebt den kaputten Satz, der Mensch mit dem Werkzeug
+nicht. (Den Hinweis auf diese Falle hat die Leitsitzung gegeben; die Zahlen
+oben sind nachgemessen.)
+
+### Der Laden ist von Windows aus nicht erreichbar
+
+`store.crt` ist mit **ED25519** unterschrieben, Schlüssel ebenfalls ED25519.
+Beide `curl` unter Windows (`/mingw64/bin/curl` und
+`C:\WINDOWS\system32\curl`) brechen den Handshake ab:
+`schannel: next InitializeSecurityContext failed: SEC_E_ILLEGAL_MESSAGE`. `-k`
+hilft nicht, weil nicht die Prüfung scheitert, sondern der Handshake. Der Laden
+wird in diesem Blatt darum **von api-1 aus** gefragt, immer mit `--resolve`.
+
+Mein erster Lauf des Ladenfalls ist genau daran gestorben und war **kein
+Ergebnis**: die Ladensonde sagte `code=000` schon *vor* dem Abschalten. Dass
+das auffiel, liegt nur an der Vorher-Runde — eine Sonde, die erst im Ausfall
+zum ersten Mal gefragt wird, hätte „der Laden ist weg" gemeldet und damit das
+Instrument gemessen, nicht die Anlage.
+
+### Was ein „aus" hier heißt
+
+Geschaltet wird auf dem Proxmox-Wirt mit `qm stop <VMID>` / `qm start <VMID>` —
+also Strom weg, nicht Dienst gestoppt und nicht Route geschwärzt. Das Messskript
+glaubt das „aus" nicht, sondern prüft es: erst wenn `qm status` *stopped* sagt
+**und** die Adresse stumm ist, wird gemessen; sonst bricht es ab und fährt die
+Maschine wieder an. Und es trägt eine Liste der sechs erlaubten VMIDs, weil auf
+demselben Wirt das NAS dieses Hauses (VMID 200), zwei Kameras und loxberry
+laufen. Der Riegel ist geprüft: `fall.sh 200 …` bricht mit Code 2 ab, bevor
+irgendetwas passiert.
+
 ## Was gemessen wurde
 
-*(noch nichts — dieser Abschnitt wird nach jedem Fall gefüllt, je Fall in einem
-eigenen Stand)*
+### store aus — gemessen am 24.10.2026, 14:42–14:43
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | unverändert | **unverändert.** `code=200 von=10.2.3.210`, 10 von 10 Anfragen in Folge 200, Zeiten wie vorher (19–28 ms) |
+| (b) anmelden | unverändert | **nicht gemessen** — ohne Kennwort für `weiricth` nicht zu messen |
+| (c) Apps sehen | unverändert | **nicht gemessen** (dito) |
+| (d) App öffnen | unverändert | **nicht gemessen** (dito) |
+| (e) neu einrichten | fällt aus | **nicht gemessen** (dito) |
+| Laden selbst | — | `200` → `000` → `200`; mit `--resolve` sauber unterscheidbar |
+| sagt die Anlage es? | leere Ladenliste befürchtet | **sie sagt gar nichts, nirgends** — siehe unten |
+| Selbstfang | ja | **ja.** 40 s nach `qm start` antwortet die Adresse, `nginx` läuft von selbst wieder, einziger Dienst auf der Maschine |
+
+**Die Anlage merkt den Ausfall nicht, weil sie nie fragt.** Im Journal von api-1
+und api-2 steht über den ganzen Ausfall hinweg `-- No entries --` — nicht eine
+Zeile. Das ist kein Messfehler: `journalctl -u ngc-api` liefert für die letzten
+neun Stunden 397 Zeilen, der Dienst schreibt also. Er hatte in diesem Fenster
+nur nichts zu sagen. Der Grund steht in `systemctl list-timers` auf api-1:
+**dort ist kein einziger NGC-Timer.** `phpsessionclean`, `apt-daily`,
+`man-db`, `fstrim` — und nichts, was den Katalog holt. Der Katalog wird nur auf
+Zuruf aus der Oberfläche geholt („Jetzt nachsehen"); ein Weg über die
+Befehlszeile existiert nicht (`ngc-store --help` kennt nur Packen,
+Unterschreiben und Prüfen; `ngc-api --help` und `ngc-controller --help` kennen
+kein Nachsehen).
+
+Damit ist der schwere Befund, den der Auftrag befürchtet hat, **nicht**
+eingetreten: die Anlage arbeitet ohne ihren Laden weiter, die Oberfläche steht,
+der Laden steht in keinem Pfad, der ohne ihn gebraucht wird. Der Befund ist ein
+anderer und leiser: **ein Laden, der eine Woche weg ist, fällt niemandem auf.**
+Keine Zeile im Journal, kein Timer, der stolpert, keine Meldung. Es merkt nur,
+wer sich anmeldet und hinsieht — und was der dann sieht, ist die offene Hälfte
+dieses Falls.
+
+Was die Erstlauf-Sitzung mit einer geschwärzten Route gemessen hat (die Anlage
+behält den letzten guten Katalog, schreibt den Fehler in die Zeile des Ladens,
+aber nichts ins Journal), deckt sich damit und erklärt dieselbe Stelle von der
+anderen Seite. Zwei Dinge daran sind **abgewogen, nicht gemessen**: dass ein
+Zeitablauf nirgends hängt, habe ich nur an den Antwortzeiten der Oberfläche
+gesehen (keine Verlängerung, 19–28 ms) — nicht an dem Pfad, der wirklich zum
+Laden greift.
