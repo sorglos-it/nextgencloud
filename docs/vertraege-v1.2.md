@@ -4911,3 +4911,98 @@ kein SSH, kein HTTPS. Um 12:0x lief sie noch — da wurden die zwei Dateien eing
 Browserprobe lief grün gegen sie. Was sie umgeworfen hat, ist **nicht gemessen**, und zwei
 statische Dateien einer Oberfläche sind keine plausible Ursache. Solange sie unten ist, kann
 niemand die Schritte aus `docs/zweiter-benutzer-schritte.md` gehen.
+
+## Punkt 74: Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen
+
+Gemessen am 24.10.2026 auf der verteilten Anlage, an den App-eigenen Containerspeichern der
+beiden Dienstmaschinen — nicht an den Namen der Maschinen und nicht an der Datenbank allein.
+
+Das Terminal läuft auf **beiden** Dienstmaschinen:
+
+```
+svc-1:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up About an hour
+svc-2:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up 39 minutes
+ngc_app.node: svc-2        (eine Zeile, eine Maschine)
+```
+
+Der Verlauf aus den Protokollen der beiden Controller:
+
+```
+svc-1  10:56:53  container create / init / start      erste Einrichtung
+svc-1  11:05:40  Controller neu gestartet -> container init / start
+svc-2  11:28:10  useradd ngc-terminal-439982dd
+svc-2  11:28:14  container create / init / start      zweite Einrichtung
+ngc_app.updated  etwa 11:28
+```
+
+**Was gemessen ist:** das Terminal wurde zuerst auf `svc-1` eingerichtet, später auf `svc-2`.
+Der Container auf `svc-1` wurde nie entfernt. Mehr noch: der Controller auf `svc-1` hat ihn nach
+seinem eigenen Neustart um 11:05 **wieder angeworfen** — die alte Einrichtung ist also nicht nur
+ein vergessener Prozess, sie ist dauerhaft und übersteht einen Neustart. `ngc_app` trägt nur die
+neueste Maschine, also weiß die Oberfläche von `svc-1` nichts und kann dort auch nichts
+abräumen.
+
+**Was das kostet, soweit es hier zu sehen ist:** CPU und Speicher einer App, die niemand zählt;
+ein Container mit den Rechten der App (beim Terminal: `root` in seinem Container) auf einer
+Maschine, auf der die Anlage ihn nicht mehr verzeichnet; und bei einer App mit eigenen Daten
+zwei Datenstände, von denen die Oberfläche einen nicht kennt.
+
+**Was nicht gemessen ist, und was darum zu entscheiden wäre:**
+
+- Ob das so **gemeint** ist. Dass eine App absichtlich auf mehreren Maschinen laufen soll, ist
+  möglich — dann fehlt aber die Stelle, die das verzeichnet, denn `ngc_app.node` ist ein
+  einzelnes Feld. Im Vertrag ist dazu nichts nachgelesen worden.
+- Ob eine Einrichtung auf einer neuen Maschine die alte **abräumen** soll (dann fehlt der
+  Schritt), oder ob die Anlage **beide** verzeichnen soll (dann fehlt die Spalte).
+
+Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
+Anlage sagt einmal.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
+
+---
+
+## Punkt 75: Gesichert wird genau der Teil, den die Anlage ohnehin wiederbekäme — und „ngc-db backup" gibt es nicht
+
+Gemessen am 24.10.2026 an der verteilten Anlage, Stand `17b9895`.
+
+**Was gemessen ist.** Die Anlage hat genau ein Sicherungskommando: `ngc-controller backup
+<Datei>`. Es schreibt die eigene SQLite-Datei des Controllers — Zeilen der Apps mit ihren
+Manifesten, Lizenzen, Vertrauenslisten-Versionen, gelegte Aktualisierungen. Das läuft, der
+Controller läuft dabei und danach weiter (auf api-1, db-1 und svc-1 je `active` vor und nach dem
+Lauf, Ausstiegscode 0).
+
+Zwei Stellen im Code schicken einen Admin für die Benutzerdaten an ein zweites Programm:
+`state/backup.go:60` und `register/register.go:127` nennen beide `"ngc-db backup"`. **Dieses
+Programm existiert nicht.** `apps/server-db/` hat kein `main.go`, und auf keiner der fünf
+Maschinen liegt ein `ngc-db` (`ls /usr/lib/ngc/`: `ngc-api`, `ngc-controller`, `ngc-store` und
+Vorgängerstände). Für `ngc_user` (1 Zeile), `ngc_blob` (15), `ngc_session` (27) und `ngc_log`
+(470) auf db-1 gibt es damit heute kein Sicherungskommando — nur `mariabackup` 11.8.6 aus der
+Distribution, das zur Probe in 1 s eine 49-MB-Sicherung schrieb, bei weiterlaufender Datenbank.
+
+**Und die Sicherung hängt allein am Schlüssel, nicht an der Maschine.** Die Kopie von svc-1 auf
+einem fremden Rechner geöffnet (Windows, nie gekoppelt): mit dem dbKey aus `controller.json`
+**offen**, zwei App-Zeilen. Ein Bit des Schlüssels gekippt: `sqlite3: file is not a database`.
+Mit dem dbKey von api-1: dasselbe. Jeder Rechner hat seinen eigenen dbKey, vier verschiedene auf
+dieser Anlage. Dasselbe gilt für die App-Datenordner: die fscrypt-Schlüsselkennung, die der Kern
+von svc-1 für `org.sorglos.terminal` und `org.sorglos.uhr` hält, ist bitgleich mit der, die HKDF
+über den dbKey dieses Rechners liefert. Und für die MariaDB ein drittes Mal: die Tabellen sind
+`FORCE`-verschlüsselt, der Schlüssel liegt in `/etc/ngc/db-keys/` und nicht in der Sicherung —
+der Benutzername `weiricth` steht in keiner der neun `.ibd` der Probe-Sicherung.
+
+**Was nicht gemessen ist.** Zurückgespielt wurde nichts, auf keiner Maschine: weder `state.db`
+noch die MariaDB noch ein App-Datenordner, und kein neuer Rechner wurde mit einem alten
+`controller.json` gekoppelt. Dafür fehlt eine Wegwerf-Maschine; an der laufenden Anlage wird es
+nicht geübt.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob die dbKeys bei einer Neuinstallation **vorgegeben** werden dürfen. Ohne das kann „dieselbe
+  Maschine wiederherstellen" nicht funktionieren — der neue Rechner bekommt einen neuen
+  Schlüssel und öffnet die alte Sicherung nicht. Wer sie vorgeben darf, kann sie falsch vorgeben.
+- Ob die beiden Code-Stellen auf `ngc-db backup` zeigen dürfen, solange es das nicht gibt. Eine
+  Fehlermeldung, die einen Admin an ein Programm schickt, das nicht existiert, kostet ihn den
+  Abend, an dem er sie braucht.
+- Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
