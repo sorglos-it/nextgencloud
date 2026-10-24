@@ -248,6 +248,10 @@ läuft eine eingerichtete Terminal-App, mehrere Sitzungen arbeiten gleichzeitig 
 eine Wiederherstellung schreibt genau die Dateien, an denen sie arbeiten. Die alte Einzel-VM
 .208 ist aus und gehört nicht dieser Sitzung.
 
+Punkt 75 der Verträge stellt dieselbe Frage von der anderen Seite und schlägt eine **neue**
+Maschine aus Release und Anleitung vor. Das ist genau die Maschine, die dieser Befund braucht —
+die drei offenen Punkte oben sind der Grund, sie nicht nur für den Erstlauf zu bauen.
+
 **Die Bitte an Thomas:** eine Wegwerf-Maschine (eine VM reicht, Debian wie die anderen), auf
 der die drei Punkte oben wirklich gefahren werden dürfen. Erst danach darf in diesem Repo ein
 Satz stehen, der mit „wiederhergestellt" anfängt.
