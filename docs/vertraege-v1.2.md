@@ -9,14 +9,14 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 ---
 
-## Inhaltsverzeichnis (Stand 18.10.2026)
+## Inhaltsverzeichnis (Stand 24.10.2026)
 
 **Achtung, zwei Nummernreihen in einer Datei.** Die Nummern 19 bis 35 sind
 **doppelt vergeben**:
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 62"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 74"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -24,18 +24,23 @@ sofern nicht „dieser Liste" oder „des Vertrags" dabeisteht – dann Reihe A.
 **Darum die Überschrift zitieren, nicht die Nummer** (so steht es auch in
 `STAND.md`).
 
-Lücken gibt es in keiner der beiden Reihen.
+Lücken gibt es in keiner der beiden Reihen. **Nachgemessen am 24.10.2026** und
+seitdem bei jedem `tools/check.sh` wieder: `tools/check-buch.sh` liest diese
+Datei gegen sich selbst – keine Nummer zweimal, keine Lücke, kein Verweis auf
+einen Punkt, den es nicht gibt. **Wer einen Punkt anhängt, trägt ihn in die
+Tabelle der Reihe B ein** – sonst wird die Prüfung rot, und das ist Absicht:
+die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 ### Stand in Zahlen
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 34 | 69 |
+| gilt | 35 | 46 | 81 |
 | überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
 | offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **45** | **81** |
+| **Einträge** | **36** | **57** | **93** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -139,6 +144,18 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
 | 60 | Der Controller lässt sich nicht koppeln | **ÜBERHOLT durch Punkt 61 – in der Kernaussage falsch** | Messung |
 | 61 | Gekoppelt – Punkt 60 war falsch | gilt – **berichtigt Punkt 60** | Messung |
 | 62 | Die Anlage entsteht allein aus den Skripten | gilt – bestätigt **Punkt 61** an frischer Anlage | Umgebung |
+| 63 | Die Oberfläche ist auf `main` – 136 Dateien statt 2 | gilt – der Fund lag außerhalb des Umzugs | Umgebung |
+| 64 | Der erste Release auf einer echten Debian-VM, Terminal-Abbild gebaut | gilt | Umgebung |
+| 65 | „Noch nicht geholt" wird dem Verwalter als „nicht echt" gezeigt | gilt | Messung |
+| 66 | Eine frische Anlage hat eine Stunde lang keinen Laden | gilt – kein Abruf beim Start, keine Handauslösung | Messung |
+| 67 | Rust für NGC – bitgleich nachgebaut, und genau das spricht dagegen | gilt – Entscheidungspapier, Vorschlag ist eine Abwägung | Entscheidung |
+| 68 | Fremde Programme portieren – das Programm ja, die Oberfläche nie | gilt – **nicht** dieselbe Frage wie Punkt 67 | Entscheidung |
+| 69 | Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt | gilt – behoben, die CI sagt jetzt **warum** | Messung |
+| 70 | Ein Paket über eine Fenstergröße kommt unter Last nicht durch | gilt – Befund auf `main`, `E_PROTOCOL` statt `ok` | Messung |
+| 71 | Sechs Wände vom Release bis zur laufenden App | gilt – vier davon in keinem Prüfsatz; Wand 1 offen in `ulh` | Umgebung |
+| 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
+| 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
+| 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -4958,6 +4975,17 @@ zwei Datenstände, von denen die Oberfläche einen nicht kennt.
 Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
 Anlage sagt einmal.
 
+**Unabhängig bestätigt:** die Erstlauf-Sitzung sieht dasselbe von ihrer Seite und ohne von
+diesem Punkt zu wissen — ihre Station D4 zählt **zwei** vollständig eingerichtete Apps auf
+`svc-1` und eine auf `svc-2`, gemessen an `useradd`, `image loadfromarchive` und
+`container start` im Journal sowie am laufenden `conmon` des jeweiligen App-Benutzers. Zwei
+Messwege, dasselbe Ergebnis.
+
+**Eine Folge, die über die Buchhaltung hinausgeht** und die beim Abschalten einer Maschine
+auffallen wird: wer `svc-2` ausschaltet und feststellt, dass das Terminal weiter antwortet,
+hat **keinen** Ausfallschutz gemessen, sondern diesen Befund. Die Anlage nennt `svc-2`, laufen
+tut es auch auf `svc-1`.
+
 Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
 ---
 
@@ -5040,7 +5068,6 @@ die ihre Bedeutung wechselt, ist schlimmer als eine, die fehlt.
 
 Was daraus zu lernen ist, steht schon im Buch: **ein Buch, das nur hinten waechst,
 braucht einen Riegel gegen doppelte Nummern.** Daran arbeitet ein eigener Strang.
-
 ## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
 
 Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
@@ -5275,3 +5302,104 @@ Die Messregel, die daraus folgt und die in jedem Blatt dieser Anlage gelten soll
 Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gemessen wurde.**
 
 Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".
+
+---
+
+## Punkt 81: Gesichert wird genau der Teil, den die Anlage ohnehin wiederbekäme — und „ngc-db backup" gibt es nicht
+
+Gemessen am 24.10.2026 an der verteilten Anlage, Stand `17b9895`.
+
+**Was gemessen ist.** Die Anlage hat genau ein Sicherungskommando: `ngc-controller backup
+<Datei>`. Es schreibt die eigene SQLite-Datei des Controllers — Zeilen der Apps mit ihren
+Manifesten, Lizenzen, Vertrauenslisten-Versionen, gelegte Aktualisierungen. Das läuft, der
+Controller läuft dabei und danach weiter (auf api-1, db-1 und svc-1 je `active` vor und nach dem
+Lauf, Ausstiegscode 0).
+
+Zwei Stellen im Code schicken einen Admin für die Benutzerdaten an ein zweites Programm:
+`state/backup.go:60` und `register/register.go:127` nennen beide `"ngc-db backup"`. **Dieses
+Programm existiert nicht.** `apps/server-db/` hat kein `main.go`, und auf keiner der fünf
+Maschinen liegt ein `ngc-db` (`ls /usr/lib/ngc/`: `ngc-api`, `ngc-controller`, `ngc-store` und
+Vorgängerstände). Für `ngc_user` (1 Zeile), `ngc_blob` (15), `ngc_session` (27) und `ngc_log`
+(470) auf db-1 gibt es damit heute kein Sicherungskommando — nur `mariabackup` 11.8.6 aus der
+Distribution, das zur Probe in 1 s eine 49-MB-Sicherung schrieb, bei weiterlaufender Datenbank.
+
+**Und die Sicherung hängt allein am Schlüssel, nicht an der Maschine.** Die Kopie von svc-1 auf
+einem fremden Rechner geöffnet (Windows, nie gekoppelt): mit dem dbKey aus `controller.json`
+**offen**, zwei App-Zeilen. Ein Bit des Schlüssels gekippt: `sqlite3: file is not a database`.
+Mit dem dbKey von api-1: dasselbe. Jeder Rechner hat seinen eigenen dbKey, vier verschiedene auf
+dieser Anlage. Dasselbe gilt für die App-Datenordner: die fscrypt-Schlüsselkennung, die der Kern
+von svc-1 für `org.sorglos.terminal` und `org.sorglos.uhr` hält, ist bitgleich mit der, die HKDF
+über den dbKey dieses Rechners liefert. Und für die MariaDB ein drittes Mal: die Tabellen sind
+`FORCE`-verschlüsselt, der Schlüssel liegt in `/etc/ngc/db-keys/` und nicht in der Sicherung —
+der Benutzername `weiricth` steht in keiner der neun `.ibd` der Probe-Sicherung.
+
+**Was nicht gemessen ist.** Zurückgespielt wurde nichts, auf keiner Maschine: weder `state.db`
+noch die MariaDB noch ein App-Datenordner, und kein neuer Rechner wurde mit einem alten
+`controller.json` gekoppelt. Dafür fehlt eine Wegwerf-Maschine; an der laufenden Anlage wird es
+nicht geübt.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob die dbKeys bei einer Neuinstallation **vorgegeben** werden dürfen. Ohne das kann „dieselbe
+  Maschine wiederherstellen" nicht funktionieren — der neue Rechner bekommt einen neuen
+  Schlüssel und öffnet die alte Sicherung nicht. Wer sie vorgeben darf, kann sie falsch vorgeben.
+- Ob die beiden Code-Stellen auf `ngc-db backup` zeigen dürfen, solange es das nicht gibt. Eine
+  Fehlermeldung, die einen Admin an ein Programm schickt, das nicht existiert, kostet ihn den
+  Abend, an dem er sie braucht.
+- Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
+
+## Punkt 81: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
+
+Dies ist kein neuer Einzelbefund, sondern das Muster über drei, die am 24.10.2026 unabhängig
+voneinander an verschiedenen Stellen gemessen wurden. Es steht hier zusammen, weil es dreimal
+verstreut harmlos aussieht und einmal zusammen nicht mehr.
+
+In allen drei Fällen **hat** die Anlage die Information. Sie ist nicht verloren, nicht ungenau,
+nicht teuer zu beschaffen. Was fehlt, ist jedes Mal der **Anlass**, sie zu holen:
+
+1. **Der Laden antwortet nicht** (Punkt 79, hier gemessen). Der Grund steht in der Zeile des
+   Ladens — `{"checked":…,"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` — und
+   die Zeile trägt sogar das Alter des letzten guten Blicks, weil `checked` beim Fehlschlag nicht
+   vorrückt. Im Journal stehen dazu **null Zeilen**, gemessen an einer Runde, die wirklich
+   gescheitert ist. Über die Befehlszeile gibt es keinen Weg, danach zu fragen. Sichtbar ist es
+   allein in `ngc.store/sources`, hinter einer Anmeldung.
+2. **Die Meldung ist gebaut, aber unerreichbar** (Punkt 79, am Code gelesen). `Server.hour`
+   enthält ein `slog.Warn("catalogs could not be fetched", …)`. Es feuert nie, weil
+   `Stores.Refresh` für diesen Fall keinen Fehler zurückgibt: der Fehler des einzelnen Ladens geht
+   in `_ = st.note(...)` und die Funktion endet auf `return nil`. Der Code **will** melden und
+   kann nicht.
+3. **Der Text, den niemand aufschreibt** (Punkt 78, von einer anderen Sitzung gemessen). Der
+   Controller protokolliert `bytes=510`, aber nie den Text selbst, und ein Schalter dafür steht in
+   keiner Konfiguration. Die Zahl ohne den Text macht den Vorfall unzuordenbar.
+
+Dazu gehört ein vierter Fall, der nicht NGC gehört, aber dasselbe tut und darum hier genannt ist:
+der DNS dieses Netzes (Punkt 80) beantwortet die naive Frage nach einer Maschine mit der eigenen,
+und zwar **mit derselben Zahl**, ob die gemeinte Maschine läuft oder abgeschaltet ist. Auch hier
+ist die Wahrheit greifbar — ein `--resolve` genügt — und nichts weist darauf hin, dass man sie
+braucht.
+
+**Was gemessen ist:** die drei Stellen, jede an ihrem Ort, mit den Belegen in den Punkten 78, 79
+und 80.
+
+**Was abgewogen ist, und was darum zu entscheiden wäre:**
+
+- Ob NGC eine **Regel** haben soll, wann ein stiller Zustand laut wird. Vorschlag zur
+  Entscheidung: ein Zustand, den die Anlage selbst als Fehler in eine Zeile schreibt, gehört
+  **beim Übergang** ins Journal — beim ersten Mal und beim Verschwinden, nicht bei jeder
+  Wiederholung. Das trifft Fall 1 und 3 und kostet nichts an Rauschen, denn 168 gleiche Zeilen
+  findet auch niemand.
+- Ob es eine Stelle geben soll, die **alle** stillen Zustände einer Anlage auf einmal zeigt — eine
+  Übersicht oder einen Befehl. Heute muss man wissen, dass es die Zeile des Ladens gibt, um sie zu
+  lesen. Wer eine Anlage aus der Ferne betreut, hat dafür keine Tür.
+- Ob ein `_ =` vor einem Fehler im Quelltext eine **Begründung** daneben braucht. In Fall 2 ist
+  das Verwerfen beabsichtigt und der Kommentar sagt auch, warum (ein kaputter Laden darf den
+  nächsten nicht kosten) — nur die Folge, dass die Warnung darüber unerreichbar wird, steht
+  nirgends. Das ist die Art Nebenwirkung, die beim Lesen nicht auffällt und beim Messen Stunden
+  kostet.
+
+Keine der drei ist für sich ein schwerer Fehler. Zusammen sind sie der Grund, warum diese Woche
+dreimal etwas erst beim gezielten Hinsehen aufgefallen ist.
+
+Herkunft: `docs/ausfall-je-maschine.md` für die Fälle 1 und 2, Punkt 78 für Fall 3.

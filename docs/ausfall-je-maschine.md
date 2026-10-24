@@ -147,6 +147,51 @@ ist ein App-Container nach einer Neuinstallation **auf dem alten Knoten stehen
 geblieben** (Punkt 74 der Verträge). Wenn ein Rest auf dem jeweils anderen
 Knoten liegt, kann der Ausfall harmloser aussehen, als er ist.
 
+### Nachtrag zu den beiden svc-Fällen, geschrieben vor dem Schalten
+
+Diese vier Zeilen sind am 24.10.2026 gemessen, nachdem die Erwartungen oben
+schon standen, und sie schärfen sie, ohne sie umzuschreiben:
+
+| | svc-1 | svc-2 |
+|---|---|---|
+| App-Benutzer | `ngc-terminal-439982dd` **und** `ngc-uhr-ad8c00e2` | nur `ngc-terminal-439982dd` |
+| `ngc-controller` | 0.2.2 | 0.2.1 |
+
+**Punkt 74 ist von der Benutzerseite bestätigt**, bevor ich schalte: svc-1 trägt
+den Benutzer *und* den Containerspeicher des Terminals, obwohl `ngc_app` das
+Terminal auf svc-2 führt. Wenn also nach dem Abschalten von svc-2 ein Terminal
+antwortet, ist das **dieser Befund und kein Ausfallschutz**. Genau darum steht
+es hier vorher.
+
+Und die **Fassungen stehen gemischt** (0.2.2 gegen 0.2.1, dazu db-1 auf 0.2.1).
+Ein Ausfall gegen gemischte Fassungen misst zwei Dinge auf einmal; kommt einer
+der beiden Knoten anders zurück als der andere, ist das zuerst eine Frage an die
+Fassung und erst danach an den Ausfall.
+
+Dazu eine **Erwartung einer Nachbarsitzung**, die ich übernehme, weil sie die
+richtige Stelle trifft — als Erwartung, nicht als Behauptung, und von dort,
+nicht von mir: nach einem harten Abschalten ist die interessante Frage nicht, ob
+der Dienst wieder läuft, sondern **ob die Containerspeicher heil sind.** Was ich
+dazu gemessen habe:
+
+- `/var/lib/ngc/apps` ist auf beiden Knoten ein **eigenes Dateisystem**,
+  `/dev/sdb`, ext4, `rw,relatime` — mit gesetztem `encrypt`-Merkmal, also
+  fscrypt für die App-Verzeichnisse.
+- Darin läuft `podman` **rootless mit `overlay`**, und seine Datenbank ist
+  `db.sql` (SQLite) unter
+  `/var/lib/ngc/apps/<app-id>/.local/share/containers/storage/`.
+
+Ein Stromausfall mitten in einem Schreibvorgang trifft damit eine SQLite-Datei
+und einen overlay-Baum auf einem eigenen ext4. Das ist die Stelle, an der ich
+beim Wiederanlauf zuerst hinsehe — und die Frage ist nicht „läuft der
+Controller", sondern „kann der App-Benutzer sein Abbild noch lesen".
+
+Eine Zahl, die das Ausmessen abkürzt, **von der Lastsitzung gemessen**: im
+Leerlauf steht `ngc-controller.service` bei `TasksCurrent=16` von
+`TasksMax=3466`, ein leerer App-Container kostet rund 6 Aufgaben, eine offene
+Terminal-Sitzung rund 9,4. Hängt nach dem Hochfahren etwas und `TasksCurrent`
+steht weit unter 100, ist es **nicht** der Deckel.
+
 ## Wie hier gemessen wird — und warum der naheliegende Weg lügt
 
 Das steht vor den Ergebnissen, weil es sie alle trägt. Zwei Fallen, beide am
