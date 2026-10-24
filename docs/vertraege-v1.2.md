@@ -5625,14 +5625,40 @@ das Argument praktisch macht und nicht nur richtig. Und geprüft, ob die Trennun
 Die Wortfunde (`dbKey`, `PRIVATE KEY`) sind Feldnamen im NGC-Programm und Fehlermeldungen in
 `libapt-private.so` des Grundabbilds, keine Schlüssel.
 
-`app-daten.tar` bleibt die Ausnahme: Klartext, 110 bis 201 MB, zu groß für einen
-Passwortmanager, und es liegt deshalb bei den Daten, obwohl es ohne jeden Schlüssel aufgeht.
-**Entschieden ist es** — von der Sitzung, der Thomas die Sicherungsform übergeben hat: die
-App-Daten gehören verschlüsselt, bevor sie die Maschine verlassen, mit einem Schlüssel, der
-nicht mitfährt und in den Schlüssel-Ordner gehört. **Gebaut ist es nicht**, und zwar aus ihrer
-eigenen dritten Bedingung: ein verschlüsseltes Tar, das niemand mehr aufmacht, ist schlechter
-als ein Klartext-Tar, also muss der Weg zurück mit getrenntem Schlüssel erst **einmal gegangen**
-sein. Die Maschine dafür ist abgeräumt. Bis dahin: Klartext mit einer Notiz, die sagt, was er
-ist.
+**Und die Ausnahme ist geschlossen, gefahren und nicht beschlossen.** `app-daten.tar` war
+Klartext und der einzige Teil der Sicherung, der ohne jeden Schlüssel aufging. Die Sitzung, der
+Thomas die Sicherungsform übergeben hat, entschied: verschlüsselt, bevor die Daten die Maschine
+verlassen, mit einem Schlüssel, der nicht mitfährt — und mit drei Bedingungen, deren dritte
+verlangt, dass der Weg zurück erst einmal gegangen ist. Thomas hat eine Maschine gegeben, also
+ist er gegangen.
+
+`tools/sicherung.sh` erzeugt jetzt je Rechner und Lauf einen eigenen Schlüssel (32 Byte,
+`openssl rand`), legt ihn **nur** in den Schlüssel-Ordner (45 Byte je Rechner) und
+verschlüsselt den Datenordner mit AES-256-CTR, bevor er die Maschine verlässt. Der Schlüssel
+reist über ssh-stdin in eine Datei mit Modus 0600 und wird `shred`-et — nie als Argument, denn
+ein Argument steht in `ps`. Der Klartext wird nirgends eine Datei: `tar` schreibt in `openssl`.
+Lauf über alle fünf Maschinen: `ok`, **473 s** gegen 313 s ohne Verschlüsselung.
+
+Auf **VM 311**, einem Klon der Vorlage, der der Anlage nie gehört hat: `tar` auf die Datei,
+Entschlüsseln mit leerem und mit falschem Schlüssel — jedes Mal
+`This does not look like a tar archive`. Mit dem Schlüssel aus dem Schlüssel-Ordner: **6720
+Dateien**. Danach der ganze Weg — `/etc/ngc` aus dem Schlüssel-Ordner, `state.db` aus dem
+Daten-Ordner, `sicherung-zurueck`, entschlüsseln (2 s für 199 MB) — und dann:
+
+```
+org.sorglos.terminal   localhost/ngc-terminal:1.0.0   Up 45 seconds
+org.sorglos.uhr        localhost/ngc/uhr:1.0.0        Up 45 seconds
+```
+
+**Beide Apps**, ohne eine einzige Warnung des Controllers. Damit öffnet kein Teil dieser
+Sicherung mehr ohne Schlüssel, und die Anlage läuft trotzdem daraus wieder an.
+
+Was AES-256-CTR **nicht** gibt, und das steht dabei statt vorausgesetzt zu werden: eine
+Beglaubigung. Es ist Vertraulichkeit; was ein verändertes Byte fängt, ist die sha256 im
+Verzeichnis, auf der Maschine genommen und hier gegengerechnet.
+
+Nebenbefund: die Uhr, die beim ersten Weg zurück **nicht** mitkam, lief diesmal. Einziger
+Unterschied zwischen den Läufen ist das Alter ihres Container-Objekts beim Sichern (sieben
+Minuten gegen Stunden). Das stützt die Erklärung aus Punkt 83 oben und beweist sie nicht.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.

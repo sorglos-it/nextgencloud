@@ -24,13 +24,14 @@
 #   2. the controller's own database, through the command that already exists,
 #      while the controller keeps running.
 #   3. the MariaDB, with mariabackup, where one runs.
-#   4. the data directories of the apps. On the machine they are encrypted
-#      with a key derived from dbKey (measured: the key identifier the kernel
-#      holds for every app directory on svc-1 is the one HKDF over that dbKey
-#      gives) - but the service is running while this reads them, so the
-#      kernel hands them over in the CLEAR and this tar is plaintext. It is
-#      the one part of the backup that needs no key, and therefore the one
-#      that has to be locked away hardest.
+#   4. the data directories of the apps, ENCRYPTED before they leave the
+#      machine. On the machine they are encrypted with a key derived from
+#      dbKey - but the service is running while this reads them, so the kernel
+#      hands them over in the clear, and the first version of this script
+#      wrote that clear text to a disk. It was the one part of the backup that
+#      needed no key at all. Now a key of its own is made for every machine,
+#      it goes in the KEY folder, and the plaintext never touches a disk
+#      anywhere: tar writes into openssl and openssl writes the file.
 #   5. a manifest with a sha256 of every file.
 #
 # What it does NOT do is play anything back, and it needs no program for most
@@ -130,6 +131,59 @@ her() {
 	fern "$ziel" cat "$PROBE/$name" >"$aus"
 	gleich "$ziel" "$PROBE/$name" "$aus" || return 1
 	fern "$ziel" rm -f "$PROBE/$name"
+}
+
+# krypt fetches a path as an ENCRYPTED tar stream and answers with the key it
+# made, which the caller puts in the key folder and nowhere else.
+#
+# WHY THIS EXISTS. The data directory of an app is encrypted on the machine,
+# but a backup taken while the service runs reads it THROUGH the kernel's
+# keyring and is therefore clear text. The session that decided the shape of
+# this backup put it as the same calculation as the 224 bytes of db-keys, one
+# step further: an object that opens the installation with nothing else needed
+# is exactly what keeping keys apart is for, and being 200 MB large makes it
+# unhandy, not harmless.
+#
+# THE THREE CONDITIONS OF THAT DECISION, and where each one is met here:
+#   - the key is a NEW secret and belongs with the other keys: one per MACHINE
+#     per run, written only into that machine's folder under the key target.
+#     A key for svc-1 does not open svc-2.
+#   - a key that travels with the data is no key: nothing of it is written
+#     beside the data, and the manifest there says which file it needs and
+#     that it is not there.
+#   - an encrypted backup nobody can open again is worse than a plain one, so
+#     the way back is walked with the key out of the key folder, on a machine
+#     that never belonged to the installation. docs/sicherung-und-weg-zurueck.md
+#     has that run.
+#
+# HOW THE KEY REACHES THE MACHINE: over ssh's stdin into a file of mode 0600,
+# never as an argument - an argument stands in "ps" for every user of that
+# machine. It is shredded at the end of the machine. That it exists there for
+# the seconds of the run is no new exposure: the clear data are on that
+# machine anyway.
+#
+# WHAT THIS DOES NOT GIVE: AES-256-CTR is not authenticated, so this is
+# confidentiality and not a seal. What catches a changed byte is the sha256 in
+# the manifest, taken on the machine and held against the file here (gleich) -
+# and that is said rather than left to be assumed.
+krypt() {
+	local ziel=$1 pfad=$2 aus=$3 schl=$4 name key
+	name=$(basename -- "$aus")
+	key=$(openssl rand -base64 32) || return 1
+	printf '%s' "$key" | fern "$ziel" "cat >$PROBE/k && chmod 600 $PROBE/k" || return 1
+	# tar writes into openssl and openssl writes the file: the clear tar is
+	# never a file on any disk, not on the machine and not here.
+	fern "$ziel" "tar -C / --numeric-owner -cf - '${pfad#/}' 2>/dev/null | openssl enc -aes-256-ctr -pbkdf2 -iter 600000 -md sha256 -salt -pass file:$PROBE/k -out $PROBE/$name" || return 1
+	fern "$ziel" "shred -u $PROBE/k 2>/dev/null || rm -f $PROBE/k"
+	fern "$ziel" cat "$PROBE/$name" >"$aus"
+	gleich "$ziel" "$PROBE/$name" "$aus" || return 1
+	fern "$ziel" rm -f "$PROBE/$name"
+	# The key goes to the OTHER target, in its own file, readable by nobody
+	# else. It is written only after the ciphertext has arrived and matched:
+	# a key for a file that is not there would be the worse of the two halves
+	# to keep.
+	( umask 077; printf '%s\n' "$key" >"$schl" )
+	return 0
 }
 
 # gleich holds the file that just arrived against the machine it came from, and
@@ -253,6 +307,11 @@ for ziel in "$@"; do
 			printf '  api.json         signKey, storeKey, secretKey, challengeKey, das Datenbank-Kennwort.\n'
 			printf '  db-keys          224 Byte, die 285 MB verschluesselte MariaDB aufschliessen.\n'
 			printf '  tls, db-ca       Zertifikate und ihre Schluessel.\n\n'
+			printf 'app-daten.schluessel  DER SCHLUESSEL DER APP-DATEN DIESES RECHNERS.\n'
+			printf '  In diesem Lauf neu erzeugt, 32 Byte aus openssl rand, nur fuer diesen\n'
+			printf '  Rechner. Ohne ihn geht app-daten.tar.enc im Daten-Ordner nicht mehr auf -\n'
+			printf '  von niemandem. Liegt nur hier; steht die Datei nicht da, hat dieser Rechner\n'
+			printf '  keine App-Datenordner.\n\n'
 			printf 'DIESER ORDNER IST NUR DIE DURCHFUHR. Was hier liegt, gehoert in den\n'
 			printf 'Passwortmanager und danach von dieser Platte geloescht. Solange es hier\n'
 			printf 'liegt, ist dieser Rechner so empfindlich wie %s selbst.\n\n' "$name"
@@ -313,15 +372,22 @@ for ziel in "$@"; do
 	#    putting them back needs no key either - measured, both apps' data came
 	#    back onto a fresh machine out of this tar.
 	if fern "$ziel" test -d /var/lib/ngc/apps; then
-		her "$ziel" /var/lib/ngc/apps "$ordner/app-daten.tar" || fehlt "app-daten.tar"
-		notiz "app-daten.tar        die Datenordner der Apps - UNVERSCHLUESSELT, im Klartext."
-		notiz "                     Auf der Maschine sind sie verschluesselt (fscrypt, Schluessel aus"
-		notiz "                     dbKey), aber der Dienst lief beim Sichern, also hat der Kern sie"
-		notiz "                     entschluesselt vorgelegt. Diese Datei oeffnet JEDER, ohne Schluessel."
-		notiz "                     Sie ist das Empfindlichste in dieser Sicherung - und zugleich der"
-		notiz "                     Grund, dass die App-Daten einen Verlust des dbKey ueberleben."
+		if krypt "$ziel" /var/lib/ngc/apps "$ordner/app-daten.tar.enc" \
+			"$sordner/app-daten.schluessel"; then
+			notiz "app-daten.tar.enc    die Datenordner der Apps, VERSCHLUESSELT (AES-256-CTR)."
+			notiz "                     Der Schluessel dafuer ist in diesem Lauf neu erzeugt worden, gilt nur"
+			notiz "                     fuer diesen Rechner und liegt im Schluessel-Ordner als"
+			notiz "                     app-daten.schluessel - NICHT hier. Ohne ihn geht diese Datei nicht auf."
+			notiz "                     Zurueck: openssl enc -d -aes-256-ctr -pbkdf2 -iter 600000 -md sha256"
+			notiz "                              -pass file:<schluessel> -in app-daten.tar.enc | tar -x -C /"
+			notiz "                     Auf der Maschine sind die Ordner mit fscrypt verschluesselt (Schluessel"
+			notiz "                     aus dbKey), aber der Dienst lief beim Sichern - der Kern legte sie"
+			notiz "                     entschluesselt vor. Darum diese zweite Verschluesselung."
+		else
+			fehlt "app-daten.tar.enc"
+		fi
 	else
-		notiz "app-daten.tar        keine App-Datenordner auf diesem Rechner."
+		notiz "app-daten.tar.enc    keine App-Datenordner auf diesem Rechner."
 	fi
 
 	fern "$ziel" rm -rf "$PROBE"
@@ -348,11 +414,14 @@ jedes Controllers und die Datenordner aller Apps. Ohne diese Dateien ist alles
 in diesem Ordner Geheimtext - von niemandem zu oeffnen, auch nicht von
 NextGenCloud.
 
-MIT EINER AUSNAHME, UND SIE IST WICHTIG: app-daten.tar ist KEIN Geheimtext.
-Auf der Maschine sind die Datenordner der Apps verschluesselt, aber beim
-Sichern lief der Dienst, also hat der Kern sie entschluesselt vorgelegt. Diese
-Datei oeffnet jeder, ohne Schluessel. Sie ist zu gross fuer einen
-Passwortmanager und liegt darum hier - behandeln wie einen Zugang.
+DAS GILT AUCH FUER DIE APP-DATEN, und das war einmal anders: app-daten.tar.enc
+ist mit einem Schluessel verschluesselt, der in diesem Lauf neu erzeugt wurde
+und je Rechner im Schluessel-Ordner liegt (app-daten.schluessel). Auf der
+Maschine sind die Ordner mit fscrypt verschluesselt, aber beim Sichern lief
+der Dienst, also legte der Kern sie entschluesselt vor - ohne diese zweite
+Verschluesselung waere diese Datei der einzige Teil der Sicherung, der ohne
+jeden Schluessel aufgeht. Wie sie zurueckkommt, steht in der inhalt.txt des
+Rechners.
 
 JEDER RECHNER HAT SEINEN EIGENEN dbKey (vier verschiedene auf dieser Anlage,
 gemessen): es gibt keinen einen Schluessel der Anlage, den man einmal
@@ -370,8 +439,8 @@ Sicherung einer NextGenCloud-Anlage - DIE SCHLUESSEL, $STEMPEL
 DIESER ORDNER IST NUR DIE DURCHFUHR, KEIN AUFBEWAHRUNGSORT.
 
 Was hier liegt, gehoert in den Passwortmanager dieses Hauses und danach von
-dieser Platte geloescht. Je Rechner ein etc-ngc.tar; die Dateien sind klein
-genug dafuer (Groessenordnung 10 bis 20 KB je Rechner).
+dieser Platte geloescht. Je Rechner ein etc-ngc.tar (10 bis 20 KB) und, wo der
+Rechner Apps traegt, ein app-daten.schluessel von 45 Byte.
 
 Solange dieser Ordner hier steht, ist dieser Rechner so empfindlich wie die
 Anlage selbst: wer ihn und den Daten-Ordner hat, hat die Anlage - die
@@ -381,8 +450,8 @@ Darum liegt er nicht neben den Daten. Zwei Ordner auf derselben Platte waeren
 keine Trennung: dieselbe Maschine, dasselbe Konto, dieselben Rechte.
 
 UND NICHT WEGWERFEN, SOLANGE ER NICHT UMGEZOGEN IST: ohne diese Dateien ist
-der Daten-Ordner Geheimtext. Der Verlust ist endgueltig. Mehrere
-Verwahrstellen fuer die Schluessel, eine fuer die Daten.
+der Daten-Ordner Geheimtext, vollstaendig und ohne Ausnahme. Der Verlust ist
+endgueltig. Mehrere Verwahrstellen fuer die Schluessel, eine fuer die Daten.
 EOF
 
 if [ "$fehler" -ne 0 ]; then

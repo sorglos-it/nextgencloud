@@ -581,44 +581,77 @@ Daten-Ordner:
 **Null von achtzehn.** Die Trennung ist eine. Der ausgepackte Prüfordner ist danach wieder
 gelöscht.
 
-### Die eine Ausnahme: `app-daten.tar`
+### Die Ausnahme ist keine mehr: `app-daten.tar.enc` (gemessen)
 
-`app-daten.tar` ist Klartext (Abschnitt 4) und mit 110 bis 201 MB zu groß für einen
-Passwortmanager. Es liegt also im Daten-Ordner, obwohl es ohne jeden Schlüssel aufgeht. Das
-`LIESMICH.txt` sagt es in zwei Sätzen, statt es zu verschweigen: diese eine Datei ist wie ein
-Zugang zu behandeln.
+Thomas hat Ort **und** Maschine gegeben, also ist die Entscheidung der anderen Sitzung nicht nur
+übernommen, sondern gefahren. `tools/sicherung.sh` verschlüsselt die App-Daten jetzt, **bevor
+sie die Maschine verlassen**, und ihre drei Bedingungen sind je an einer Stelle erfüllt:
 
-**Entschieden ist sie trotzdem, und nicht von mir.** Thomas hat die Sicherungsform an die
-Sitzung „Was passiert, wenn ein Rechner ausfällt" übergeben, und ihre Entscheidung lautet: die
-App-Daten gehören **verschlüsselt, bevor sie die Maschine verlassen**, mit einem Schlüssel, der
-nicht mitfährt. Die Begründung ist dieselbe Rechnung wie bei den 224 Byte, eine Stufe weiter:
-ein Gegenstand, der die Anlage aufmacht, ohne dass man etwas dazu braucht, ist genau das, was
-die Trennung vermeiden sollte — und dass er groß ist, macht ihn nicht harmloser, nur
-unhandlicher. Größe ist Leistung, und Leistung steht hinten.
+1. **Der Schlüssel ist ein neues Geheimnis und liegt bei den Schlüsseln.** Einer je
+   **Maschine** und je Lauf, 32 Byte aus `openssl rand`, als `app-daten.schluessel` (45 Byte)
+   im Schlüssel-Ordner dieses Rechners. Ein Schlüssel für svc-1 öffnet svc-2 nicht.
+2. **Er fährt nicht mit.** Im Daten-Ordner steht kein Byte davon; die `inhalt.txt` dort nennt
+   die Datei, die fehlt, und den Befehl, der sie braucht. Auf die Maschine kommt der Schlüssel
+   über **ssh-stdin** in eine Datei mit Modus 0600 und wird am Ende `shred`-et — nie als
+   Argument, denn ein Argument steht in `ps` für jeden Benutzer dieser Maschine. Der Klartext
+   wird überhaupt keine Datei: `tar` schreibt in `openssl`, `openssl` schreibt den Geheimtext.
+3. **Der Weg zurück ist gegangen** — das ist der Rest dieses Abschnitts.
 
-Drei Bedingungen gehören zu der Entscheidung, und die dritte ist die, die das Bauen verschiebt:
+Der Lauf gegen alle fünf Maschinen: `sicherung: ok`, Ausstiegscode 0, **473 s** (gegen 313 s
+ohne Verschlüsselung; 600 000 PBKDF2-Runden und AES über 310 MB kosten diese 160 Sekunden).
 
-1. Der Schlüssel dafür ist ein **neues Geheimnis** und gehört in den Schlüssel-Ordner, nicht
-   neben die Daten. Dann liegt er bei den 75 KB und die Rechnung oben bleibt, wie sie ist.
-2. **Ein Schlüssel, der mitfährt, ist keiner.** Ein Werkzeug, das ihn beim Lauf erzeugt und
-   neben die Daten legt, hat nichts gewonnen — das ist die Falle, in die diese Sorte
-   Verschlüsselung regelmäßig läuft.
-3. **Ein verschlüsseltes `app-daten.tar`, das niemand mehr aufmacht, ist schlechter als ein
-   Klartext-Tar.** „Sicherheit = Stabilität" ist kein Freibrief für starke Verschlüsselung ohne
-   Rückweg: der Weg zurück muss **einmal gegangen** sein, mit dem Schlüssel aus dem
-   Passwortmanager und nicht aus dem Lauf, der ihn gerade erzeugt hat. Sonst tauscht man ein
-   Leseproblem gegen ein Totalverlustproblem.
+| | Größe |
+|---|---|
+| Daten-Ordner | 348 MB, davon `app-daten.tar.enc` 201 MB und 112 MB |
+| Schlüssel-Ordner | 106 KB — `etc-ngc.tar` je Rechner plus zwei `app-daten.schluessel` à 45 Byte |
 
-**Darum ist es hier nicht gebaut.** Bedingung 3 verlangt eine Messung, und die Maschine dafür
-ist weg: VM 310 ist auf Thomas' Wort abgeräumt (Abschnitt 6 beschreibt, was sie getragen hat).
-Die halbe Messung wäre billig — ein Tar verschlüsseln, den Schlüssel wegnehmen, das Scheitern
-zeigen, mit dem Schlüssel aus einem anderen Ordner bitgleich zurückholen — aber die ganze
-hängt daran, dass eine App aus einem **verschlüsselt gesicherten** Datenordner wieder läuft,
-und das braucht wieder eine Maschine. Bis dahin gilt, was die Sitzung selbst sagt: **lieber
-Klartext mit einer Notiz, die sagt, was er ist.** So steht es jetzt in jedem `LIESMICH.txt`.
+### Geht es ohne den Schlüssel auf? Vier Versuche auf einer fremden Maschine
 
-Was dieses Blatt damit **nicht** behauptet: dass der Klartext in Ordnung ist. Er ist der
-schlechtere von zwei Zuständen und der ehrlichere von zwei Zeitpunkten.
+**VM 311 `ngc-krypto-probe`, 10.2.3.221**, wieder ein Klon der Vorlage 300, die dieser Anlage
+nie gehört hat:
+
+| Versuch | Antwort |
+|---|---|
+| `tar -tf app-daten.tar.enc` | `This does not look like a tar archive` |
+| entschlüsseln mit leerem Schlüssel | `This does not look like a tar archive` |
+| entschlüsseln mit einem **falschen** 32-Byte-Schlüssel | `This does not look like a tar archive` |
+| entschlüsseln mit `app-daten.schluessel` aus dem Schlüssel-Ordner | **6720 Dateien**, Pfade ab `var/lib/ngc/apps/` |
+
+### Und dann liefen beide Apps
+
+Der ganze Weg, auf 311, in dieser Reihenfolge: `/etc/ngc` aus dem **Schlüssel**-Ordner,
+`state.db` aus dem **Daten**-Ordner, `tools/sicherung-zurueck` für Systembenutzer und leere
+verschlüsselte Datenordner (Ausstiegscode 0), dann die App-Daten mit dem getrennten Schlüssel
+entschlüsselt und hineingelegt — **2 Sekunden** für 199 MB. Die fscrypt-Kennungen des Kerns
+sind wieder bitgleich mit denen von svc-1. Dann der Controller:
+
+```
+org.sorglos.terminal   localhost/ngc-terminal:1.0.0   Up 45 seconds
+org.sorglos.uhr        localhost/ngc/uhr:1.0.0        Up 45 seconds
+```
+
+**Beide.** Und der Controller hat dabei keine einzige Warnung geschrieben.
+
+Damit ist Bedingung 3 erfüllt: eine Anlage läuft aus einer Sicherung wieder an, deren Daten
+ohne den getrennt verwahrten Schlüssel nicht aufgehen. Kein Teil der Sicherung öffnet mehr ohne
+Schlüssel — die Ausnahme aus Abschnitt 4 ist geschlossen.
+
+### Und die Uhr kam diesmal mit (gemessen)
+
+In Abschnitt 6 kam die Uhr **nicht** zurück (`crun: mount devpts`), und die Vermutung dort war:
+ihr Container-Objekt war sieben Minuten vor der Sicherung angelegt worden, der des Terminals
+drei Stunden. Diesmal lief sie. Dieselbe Maschine aus derselben Vorlage, dieselbe
+podman-Fassung, dasselbe Vorgehen — der einzige Unterschied ist, dass diese Sicherung Stunden
+nach der Einrichtung der Uhr entstand.
+
+Das ist eine **zweite Messung zur selben Frage und noch kein Beweis**: belegt ist, dass derselbe
+Weg einmal mit und einmal ohne die Uhr endete, und dass das Alter des Container-Objekts das
+einzige ist, was sich zwischen den beiden Läufen geändert hat. Es stützt die Erklärung aus
+Abschnitt 6 und ersetzt sie nicht: wer sie beweisen will, legt einen Container an und sichert
+eine Minute später.
+
+Was unverändert gilt: der Datenordner einer App ist auch podmans Container-Lager, und ein `tar`
+im Betrieb ist für die Daten eine Sicherung und für das Container-Objekt eine Momentaufnahme.
 
 ---
 
@@ -640,8 +673,10 @@ schlechtere von zwei Zuständen und der ehrlichere von zwei Zeitpunkten.
 - Abschnitt 7 ganz, einschließlich des zweiten Laufs mit der Prüfung (180 s) und der
   Gegenprobe, dass sie bei einem einzigen Byte greift.
 - Abschnitt 9 ganz — die drei Verweigerungen, der Lauf mit getrennten Zielen (313 s, 348 MB
-  gegen 75 KB) und die Suche nach den 18 Werten im Daten-Ordner. Die 224 Byte gegen 285 MB sind
-  die Messung der Sitzung „Was passiert, wenn ein Rechner ausfällt".
+  gegen 75 KB), die Suche nach den 18 Werten im Daten-Ordner, der Lauf mit Verschlüsselung
+  (473 s, 106 KB Schlüssel), die vier Entschlüsselungsversuche auf VM 311 und **beide Apps,
+  die danach dort liefen**. Die 224 Byte gegen 285 MB sind die Messung der Sitzung „Was
+  passiert, wenn ein Rechner ausfällt".
 - Abschnitt 8 ganz — die beiden Fälle der Transportprüfung sind meine Messung; der
   47-KB-Dump und die Wiederkehr von db-1 in vier Sekunden sind die Messung der Sitzung „Was
   passiert, wenn ein Rechner ausfällt" und stehen hier mit ihr als Herkunft. Ebenso in
@@ -658,11 +693,9 @@ schlechtere von zwei Zuständen und der ehrlichere von zwei Zeitpunkten.
   Teil gemessen.
 - Abschnitt 5 die Schritte 2 und 3 — Kopplungscode und Eintrag in die Vertrauensliste. Die
   brauchen einen angemeldeten Admin in der Oberfläche; Schritt 1, 4 und 5 sind gefahren.
-- Abschnitt 9 `app-daten.tar`: dass es Klartext ist und zu groß für einen Passwortmanager,
-  ist gemessen. Dass es verschlüsselt gehört, ist **entschieden** — von der Sitzung „Was
-  passiert, wenn ein Rechner ausfällt", der Thomas die Sicherungsform übergeben hat — und
-  **nicht gebaut**: ihre dritte Bedingung verlangt, dass der Weg zurück mit getrenntem
-  Schlüssel einmal gegangen ist, und die Maschine dafür ist abgeräumt.
+- Abschnitt 9 die Erklärung, **warum** die Uhr beim ersten Lauf fehlte und beim zweiten
+  mitkam: zwei Läufe mit entgegengesetztem Ende sind gemessen, das Alter des Container-Objekts
+  als Ursache ist gestützt und nicht bewiesen.
 - Abschnitt 8 der Unterschied zwischen `safe_to_bootstrap: 1` und `0` — **nicht einmal
   abgewogen, sondern offen**: den zweiten Fall hat niemand erzeugt, und es stehen bewusst keine
   Zeilen dafür hier.
