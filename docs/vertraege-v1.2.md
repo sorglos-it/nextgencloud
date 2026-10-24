@@ -16,7 +16,7 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 73"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 74"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -35,12 +35,12 @@ die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 45 | 80 |
+| gilt | 35 | 46 | 81 |
 | überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
 | offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **56** | **92** |
+| **Einträge** | **36** | **57** | **93** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **94**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -155,6 +155,7 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **94**.
 | 71 | Sechs Wände vom Release bis zur laufenden App | gilt – vier davon in keinem Prüfsatz; Wand 1 offen in `ulh` | Umgebung |
 | 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
 | 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
+| 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
