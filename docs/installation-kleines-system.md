@@ -12,22 +12,26 @@ Debian-Userland (Punkt 56). Die Abschnitte, die seit dem 19.10.2026 dazugekommen
 an der laufenden Anlage nachgesehen (Debian 13.7, `ngc-api`/`ngc-controller` **0.2.2**,
 Oberfläche **0.2.0**, Stand 24.10.2026).
 
-> **Die Maschine, auf der der kleine Fall gemessen wurde, ist aus.** Nachgemessen am
-> 24.10.2026: die Einzel-VM (`ssh ngc`, 10.2.3.208) antwortet auf Port 22 nicht, und auf dem
-> Proxmox-Wirt steht VM 208 auf `stopped`. **Die Messungen in dieser Anleitung bleiben gültig**
-> — sie wurden gemacht, als die Maschine lief, und ein ausgeschalteter Rechner macht eine
-> richtige Messung nicht falsch. Was **nicht** mehr gilt: dass man den kleinen Fall heute
-> nachsehen kann. Wer ihn nachmessen will, braucht zuerst eine Maschine; siehe
-> `docs/alte-vm-verweise.md`. Die laufende Anlage mit sechs Maschinen ist **nicht** der kleine
-> Fall und kann ihn nicht ersetzen (andere Datenbank, anderes Skript, mehrere Namen).
+> **Die Maschine für den kleinen Fall ist seit dem 24.10.2026 eine neue.** Die alte Einzel-VM
+> (`ssh ngc`, 10.2.3.208) wurde an jenem Tag um 12:37 vom Proxmox-Wirt aus angehalten und ist
+> aus. **Die Messungen in dieser Anleitung bleiben gültig** — sie wurden gemacht, als jene
+> Maschine lief, und ein ausgeschalteter Rechner macht eine richtige Messung nicht falsch.
+> Nachgemessen wird jetzt auf **`ngc-ein`** (VMID 307, 10.2.3.216, Name wieder `ngc.test`),
+> angelegt mit `tools/einzelmaschine.sh` aus der Vorlage und dem Release v0.2.2 — also
+> **nachbaubar**, was die alte nie war. Der Weg bis „die Oberfläche antwortet" ist dort am
+> 24.10.2026 noch einmal durchgelaufen und bestätigt: `https://ngc.test/` gibt `http=200` mit
+> 451 Byte, genau wie am 16.10.2026. Alles ab der Ersteinrichtung im Browser ist dort **noch
+> nicht** gegangen; was fehlt, steht in `docs/alte-vm-verweise.md`, Abschnitt 6.
+>
+> Die laufende Anlage mit sechs Maschinen ist **nicht** der kleine Fall und kann ihn nicht
+> ersetzen (andere Datenbank, anderes Skript, mehrere Namen).
 
-**Es gibt zurzeit zwei Anlagen, und diese Anleitung beschreibt die erste.** Von den zwei läuft
-seit dem 24.10.2026 nur noch die zweite.
+**Es gibt zurzeit zwei Anlagen, und diese Anleitung beschreibt die erste.**
 
 | | **eine Maschine** — der Fall dieser Anleitung | **sechs Maschinen** — der andere Fall |
 |---|---|---|
 | Name der Anlage | `ngc.test` (Beispiel, siehe Schritt 0) | `ngc.mein.lan` |
-| Läuft heute? | **nein** — Maschine aus, 24.10.2026 | ja |
+| Maschine heute | `ngc-ein`, 10.2.3.216 (seit 24.10.2026) | api-1 … store |
 | Maschinen | eine, alle vier Rollen | sechs, siehe Schritt 0 |
 | Datenbank | SQLite, eine Datei je Programm | eigene Maschine |
 | Skript | `ngc-all` | `ngc-api`, `ngc-db`, `ngc-controller`, `ngc-web` je Maschine |
@@ -143,12 +147,15 @@ Anlage und der Name aus Schritt 2:
 <IP-Adresse deiner Anlage>   <dein Name>
 ```
 
-Nicht abtippen, sondern einsetzen. So sah die Zeile auf der Einzel-VM aus, als sie lief —
-**diese Adresse antwortet seit dem 24.10.2026 nicht mehr**, sie ist hier nur das Muster:
+Nicht abtippen, sondern einsetzen. So sieht die Zeile für die heutige Maschine des kleinen
+Falls aus (`ngc-ein`, seit 24.10.2026):
 
 ```
-10.2.3.208   ngc.test
+10.2.3.216   ngc.test
 ```
+
+Auf der alten Einzel-VM hieß dieselbe Zeile `10.2.3.208   ngc.test`. **Diese Adresse
+antwortet seit dem 24.10.2026 nicht mehr**; in älteren Messungen steht sie noch.
 
 - Windows: `C:\Windows\System32\drivers\etc\hosts`, Editor als Administrator.
 - Linux/macOS: `/etc/hosts`, als root.
