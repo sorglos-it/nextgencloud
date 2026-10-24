@@ -10,6 +10,7 @@ import { Win, minSize } from "./window.js";
 import { storeApp } from "../apps/store.js";
 import { usersApp } from "../apps/users.js";
 import { UICache, openAppUI } from "./appframe.js";
+import { iconName, fillGlyph } from "./icon.js";
 import { APPS, Changed, RIGHTS } from "./changed.js";
 import {
   ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
@@ -472,14 +473,20 @@ class Desktop {
     return it;
   }
 
-  // The app's own icon is a path inside its ui-tar and may only be shown once
-  // its proof checks out (Task 22). Until then every app gets a badge of the
-  // same kind, carrying the first character of its name - which is text from
-  // outside and goes in as text. A picture that is not proven is a picture
-  // somebody else chose.
+  // The badge beside an app's name. It carries one of the shell's OWN icons
+  // (icon.js), never the "icon" out of the app's manifest: that one names a
+  // file in a foreign ui-tar, and a picture whose proof has not been checked
+  // is a picture somebody else chose. An app the shell has no icon for gets
+  // the placeholder - the name stands right under the badge and is what tells
+  // two apps apart.
+  //
+  // The badge says nothing a screen reader needs; the name beside it says all
+  // of it, and without aria-hidden every locator that asks for a name by its
+  // text would have to know about the badge.
   glyph(a) {
-    const g = el("span", "g", [...a.name][0] ?? "?");
+    const g = el("span", "g", null);
     g.setAttribute("aria-hidden", "true");
+    fillGlyph(g, iconName(a));
     return g;
   }
 
@@ -559,7 +566,7 @@ class Desktop {
     const win = new Win(this, {
       id: "w" + ++this.uid,
       title: a.name,
-      icon: [...a.name][0] ?? "?",
+      icon: iconName(a),
       width: a.width,
       height: a.height,
     });

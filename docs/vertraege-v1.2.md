@@ -4959,8 +4959,75 @@ Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweim
 Anlage sagt einmal.
 
 Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
+---
 
-## Punkt 75: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
+## Punkt 75: Die Maschine, auf der die ersten Messungen entstanden, ist aus — die Messungen gelten, die Anweisungen nicht
+
+> **Stand: gilt.** Art: Umgebung. Nummer 74 war beim Anhängen schon von einem anderen Zweig
+> belegt (PR 124); darum 75, damit nicht zwei Punkte dieselbe Nummer tragen.
+
+**Gemessen am 24.10.2026.** Die Einzel-VM (`ssh ngc`, 10.2.3.208, Name `ngc.test`), auf der die
+erste wirklich laufende Anlage stand, ist **abgeschaltet**:
+
+| Was | Ergebnis |
+|---|---|
+| `ssh ngc` | `connect to host 10.2.3.208 port 22: Connection timed out` |
+| TCP 10.2.3.208:22 | zu |
+| VM 208 auf dem Proxmox-Wirt | `stopped` |
+
+Sie antwortet nicht langsam und sie ist nicht gestört. Sie läuft nicht.
+
+**Was weiter läuft**, Rolle am laufenden Dienst abgefragt statt aus dem Namen geschlossen — denn
+die Namen lügen: 10.2.3.210 `api-1` trägt `ngc-api` **und** `ngc-controller`, 10.2.3.211
+`api-2` nur `ngc-api`, 10.2.3.212 `db-1` nur `ngc-controller` (**keine Datenbank**), 10.2.3.213
+`svc-1` und 10.2.3.214 `svc-2` `ngc-controller` + podman, 10.2.3.215 `store` kein NGC, nur
+nginx. `https://ngc.mein.lan` zeigt auf api-1.
+
+**Warum das ein eigener Punkt ist, und nicht nur eine Notiz.** 64 Zeilen in 9 Dateien zeigen auf
+diese Maschine, 30 davon in diesem Papier. Wer ihnen heute folgt, misst ins Leere — und schreibt
+dann „nicht erreichbar" als Befund über NGC auf, obwohl der Befund über eine ausgeschaltete
+Maschine lautet. Ein falscher Befund ist teurer als eine fehlende Messung.
+
+**Die Trennung, die hier gilt:**
+
+- **Die Messungen dieses Papiers bleiben unangetastet.** Keine der 30 Zeilen ist geändert. Sie
+  wurden gemacht, als die Maschine lief; ein ausgeschalteter Rechner macht eine richtige Messung
+  nicht falsch. Eine Messung umzuschreiben, weil die Maschine weg ist, wäre Geschichtsfälschung.
+  Betroffen sind die Punkte **56 bis 59, 64, 71, 72, 73** und die Nachträge dazu: sie gelten
+  weiter, sind aber **an dieser Maschine nicht mehr nachprüfbar**.
+- **Anweisungen, die dorthin zeigen, sind umgeschrieben** — in
+  `docs/zweiter-benutzer-schritte.md`, `docs/installation-kleines-system.md`, `docs/erstlauf.md`
+  und `README.md`. Die gefährlichste Stelle war eine `hosts`-Zeile zum Abtippen
+  (`10.2.3.208   ngc.test`); sie ist jetzt ein Platzhalter mit der alten Zeile als
+  gekennzeichnetes Muster darunter.
+- **`ngc.test` bleibt in der Anleitung ein Beispielname** und ist jetzt ausdrücklich als solcher
+  benannt: `.test` ist dafür reserviert (RFC 2606), der ganze Prüfsatz benutzt ihn, und ein
+  echter Name wäre ein fremdes Heimnetz. Die rund 250 Vorkommen in `shared/` und `apps/` sind
+  Prüfdaten und **nicht** diese Maschine.
+
+**Befund, der bleibt: vier Dinge lagen nur auf ihrem Datenträger** — die zwei Skripte des
+Prüfladens in `/home/berry/ngcapp/` (nicht im Repo, Punkt 71 / `app-weg.md` Befund 3), der
+Ladeninhalt unter `/srv/ngc-store` samt Katalog in Folge 1, ein von Hand übersetztes `ngc-store`
+in `~/uhr-bau/`, und die Sicherung `/root/zweiter-benutzer-backup-20261024/` zu Punkt 73. Nichts
+davon ist herübergeholt worden; das braucht eine laufende Maschine und eine Entscheidung. **Der
+eigentliche Befund ist nicht der Dateiverlust, sondern die Arbeitsweise: was nur auf einer
+Maschine liegt, ist nicht gesichert.**
+
+**Was damit ungemessen wird.** Der kleine Fall (alles auf einer Maschine) ist ein ausdrücklich
+unterstützter Fall mit eigener Anleitung und eigenem Vertragspunkt (47), und er hat die ersten
+sechs Hürden ans Licht gebracht (Punkt 71). Die verteilte Anlage kann ihn nicht ersetzen: sie
+unterscheidet sich genau dort, wo der kleine Fall seine eigenen Fehler hat — SQLite statt eigener
+Datenbankmaschine, ein Skript statt vier, ein Name statt mehrerer. **Ab heute ist der kleine Fall
+ohne Maschine und damit ungemessen.**
+
+**Zu entscheiden (Thomas).** Vorgelegt in `docs/alte-vm-verweise.md`, Abschnitt 5: (a) soll der
+kleine Fall weiter geprüft werden — Vorschlag **ja**; (b) alte Maschine zurück oder neue dazu —
+Vorschlag **neue dazu**, weil die alte ein über Monate gewachsener Handbau ist und niemand sie
+ein zweites Mal aufbauen kann, eine neue aus Release und Anleitung dagegen den kleinen Fall
+**und** die Anleitung zugleich prüft; (c) was mit der alten — Vorschlag **einmal starten**, die
+vier Dinge bergen, dann weg. **Nicht vorher löschen.**
+
+## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
 
 Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
 hintereinander:
@@ -5010,7 +5077,7 @@ Der Abbruch selbst ist von der Koordinationssitzung gemessen worden; die Zeile i
 `svc-1`, die fehlende Wiederholung nach 12:21 und die durchgelaufene Einrichtung um 12:25 sind
 hier nachgemessen. Herkunft: `docs/uhr-in-den-laden.md`, Abschnitt 12.
 
-## Punkt 76: Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat
+## Punkt 78: Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat
 
 Gemessen am 24.10.2026 an `org.sorglos.uhr` auf `svc-1`. Die App ist dafür nur der Anlass: sie
 schreibt absichtlich **eine** Zeile in jede Richtung, und darum fällt an ihr auf, was bei einer

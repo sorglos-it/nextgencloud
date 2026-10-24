@@ -11,9 +11,12 @@ Es gibt seit dem 24.10.2026 **zwei**, und nur auf einer liegt dieser Stand.
 
 - **Einzel-VM `https://ngc.test`** (10.2.3.208, NGC `0.2.0`): **hier** sind die zwei geänderten
   Dateien am 24.10.2026 eingespielt worden, mit Sicherung unter
-  `/root/zweiter-benutzer-backup-20261024/`. **Die Schritte unten gelten für diese Anlage.**
-  **Sie ist seit etwa 12:40 nicht erreichbar** (kein SSH, kein HTTPS). Erst wenn sie wieder
-  läuft, lassen sich die Schritte gehen.
+  `/root/zweiter-benutzer-backup-20261024/`. **Die Schritte unten galten für diese Anlage.**
+  **Diese Maschine ist aus.** Nachgemessen am 24.10.2026: Port 22 antwortet nicht, und auf dem
+  Proxmox-Wirt steht VM 208 auf `stopped`. Sie ist nicht langsam und nicht gestört, sie läuft
+  nicht. **Wer die Schritte unten heute geht, kommt nirgends an** — und „nicht erreichbar" ist
+  dann kein Befund über NGC, sondern über eine ausgeschaltete Maschine. Was jetzt nötig ist,
+  steht in `docs/alte-vm-verweise.md`; entscheiden muss es Thomas.
 - **Verteilte Anlage `https://ngc.mein.lan`** (api-1 … store, NGC `0.2.1`): läuft **exakt
   `origin/main`** und hat die beiden Formulare **nicht**. Dort sind die Schritte unten
   **nicht** zu gehen, solange dieser Zweig nicht verschmolzen und ausgerollt ist.
@@ -27,7 +30,8 @@ Und gegen den **Namen** messen, nie gegen die IP: Zertifikat und Passkey hängen
 Der Browser hält die alte Fassung der Oberfläche fest. Ohne das hier siehst du die neuen
 Felder nicht, und das sieht aus wie „es ist nicht gebaut".
 
-**Strg + F5** auf `https://ngc.test`.
+**Strg + F5** auf `https://ngc.test` — also auf dem Namen **der Anlage, auf der die zwei
+Dateien liegen**. Solange das die ausgeschaltete Einzel-VM ist, führt dieser Name ins Leere.
 
 ---
 

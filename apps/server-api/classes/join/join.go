@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/core"
@@ -31,6 +33,10 @@ import (
 // lies in the database, so any API of the installation can take over.
 type Join struct {
 	S *state.State
+
+	// Log takes the one line a join writes (Accept). Package server sets it;
+	// a nil one means no line, never a refused join.
+	Log *audit.Log
 }
 
 // New returns the join side for s. It satisfies coreapp.JoinCodes.
@@ -83,6 +89,12 @@ func (j *Join) NewJoinCode(ctx context.Context) (tunnel.JoinCode, int64, error) 
 //
 // Nothing here puts the new server anywhere near the trust list: the request
 // is kept for the admin to compare and sign.
+//
+// Every attempt that gets as far as spending the one-time value is written to
+// the log, as in controllers.Pair, and for the same measurement: twenty
+// refused attempts left the log unchanged on 24.10.2026
+// (docs/messungen-m1-m3.md, M3). audit.Log.Pairing says why the line hangs on
+// the code being spent and not on the request arriving.
 func (j *Join) Accept(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	body, ok := httpapi.Body(w, r)
@@ -112,15 +124,40 @@ func (j *Join) Accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, err := enc.B64.DecodeString(data)
-	if err != nil || req.Verify(secret, pub) != nil {
+	if err != nil {
+		// The code was spent and our own row does not read. That is damage,
+		// not a wrong proof, and the log says so; the answer outside is the
+		// same either way.
+		j.note(ctx, wire.CodeVerify, reason.Defect)
+		httpapi.Fail(w, wire.CodeVerify)
+		return
+	}
+	if req.Verify(secret, pub) != nil {
+		// THE line Frage 23 is about: a real code was burnt by somebody who
+		// did not hold its secret.
+		j.note(ctx, wire.CodeVerify, reason.JoinProof)
 		httpapi.Fail(w, wire.CodeVerify)
 		return
 	}
 	if err := j.keep(ctx, req); err != nil {
+		// The code is gone and nothing was kept: the admin waits for a
+		// request that will never show up in ngc.users/pending-api.
+		j.note(ctx, wire.CodeUnreachable, reason.DB)
 		httpapi.Fail(w, wire.CodeUnreachable)
 		return
 	}
+	j.note(ctx, "", reason.None)
 	httpapi.NoContent(w)
+}
+
+// note writes one line of the log about a join. A log that does not answer
+// never costs the join: the attempt is the event, and whoever looks for a hole
+// does not need the line to be written, only the event to be missing.
+func (j *Join) note(ctx context.Context, code wire.Code, why reason.Reason) {
+	if j.Log == nil {
+		return
+	}
+	_ = j.Log.Pairing(ctx, audit.ActionJoin, code, why)
 }
 
 // keep stores the request of a new API server as dbapi.BlobJoin. The admin
