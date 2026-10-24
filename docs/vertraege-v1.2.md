@@ -35,12 +35,54 @@ die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 46 | 81 |
-| überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
-| offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **57** | **93** |
+| gilt | 35 | 49 | 84 |
+| überholt / erledigt durch einen späteren Punkt | 0 | 7 | 7 |
+| offen, wartet auf Thomas | 1 | 11 | 12 |
+| **Einträge** | **36** | **67** | **103** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **105**.
+
+Diese vier Zeilen sind am 24.10.2026 aus den Tabellen selbst **gezählt** und nicht
+weitergeschrieben. Wer anhängt, zählt hier mit — `tools/check-buch.sh` prüft die Nummern,
+diese Zahlen prüft es nicht.
+
+**Und wer anhängt, liest die nächste freie Nummer in der Tafel der Reihe B nach, nicht am
+Dateiende.** Am 24.10.2026 haben sich daran drei Sitzungen gestossen: eine Nummer war in der
+Tafel schon vergeben, während der Abschnitt dazu noch in einem offenen PR lag. Dieser Punkt hier
+hiess deshalb kurz 76, dann 81 und dann 82, bevor er 83 wurde.
+
+**Und eine Nummer vorzuhalten geht nicht**, so verlockend es ist: wer die naechste Nummer
+ueberspringt, um einer fremden offenen Nummer auszuweichen, reisst ein Loch, und
+`tools/check-buch.sh` weist das zu Recht ab („a log has no holes"). Zwei Zweige, die
+gleichzeitig dieselbe naechste freie Nummer nehmen, sind damit unvermeidlich — **wer als
+Zweiter zusammenfuehrt, nummeriert um.** Vorher laesst sich das nicht aufteilen, und die
+Reihenfolge entscheidet nicht die Sitzung, sondern Thomas.
+
+**Am Abend des 24.10.2026 waren es vier**, und das ist der Beleg dafuer, dass die Pruefung diese
+Klasse von Fehler nicht sehen kann. Nachgemessen an den Zweigen selbst, nicht aus zweiter Hand —
+und waehrend diese Aufstellung entstand, kamen die 83 und die 84 auf `main` von **zwei weiteren**
+Sitzungen, die in keiner Zeile davon stehen:
+
+| | Punkt 83 heisst dort |
+|---|---|
+| `origin/main` | es gibt keinen Punkt 83 |
+| Zweig `ausfall` (PR 140) | „Dreimal am selben Tag haelt die Anlage die Auskunft" — **und 84 dazu** |
+| Zweig `sicherung` (PR 142) | „Der Weg zurueck geht — er bleibt an einem Systembenutzer haengen" |
+| Zweig `terminal-fault-race` (PR 144) | „Ein flatternder Pruffall, der an der Vorrichtung lag" |
+
+`check-buch.sh` liest jede Datei nur **gegen sich selbst**, also waren alle Zweige gruen und das
+Zusammenfuehren ergaebe trotzdem mehrere Punkte 83. Daraus der Zusatz zur Regel, und er ist
+nicht beilaeufig: **wer umnummeriert, holt vorher `origin/main` neu, liest die hoechste Nummer in
+dieser Tafel und nimmt die naechste freie — nicht blind die naechste Zahl.** Mit vier Zweigen
+sind 83 und 84 schon vergeben, und wer blind auf die naechste Zahl ausweicht, hat die Kollision
+nur verschoben. Dieser Punkt hier ist genau so von 83 auf 85, dann 86 und dann auf **87**
+gewandert — jedes Mal, weil `main` die Nummer vor ihm bekam, und jedes Mal von Sitzungen,
+mit denen darueber kein Wort gewechselt wurde. Fuenf Umnummerierungen an einem Abend sind
+kein Missgeschick, sondern der Preis dafuer, dass ein Buch nur hinten waechst - und sie
+kosten jedes Mal auch die Durchsicht aller Verweise, nicht nur die Ueberschrift. Daraus zwei Regeln, die beide
+Arbeit sparen: **in der Tafel nachsehen**, und **Nummern anderer Sitzungen erst zitieren, wenn
+sie auf `main` sind** — `check-buch.sh` fängt einen Verweis auf einen Punkt, den es noch nicht
+gibt, aber erst nach dem Schreiben.
 
 > **Diese Aufstellung ist stehengeblieben, und das steht hier, statt sie zu erraten.** Sie zählt
 > die Reihe B bis Punkt 74. Gemessen am 24.10.2026 mit `tools/check-buch.sh`: die Datei trägt
@@ -176,6 +218,8 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
 | 85 | Ein flatternder Prüffall, der an der Vorrichtung lag – und das Flattern stand in der Zahl | gilt | Messung |
 | 86 | Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat – das nächste OPEN darauf verschwindet lautlos | gilt – **Wettrennen im Code, nicht behoben**; der Testfehler daneben ist behoben | Messung |
+| 87 | Der Weg zurück geht – er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt | gilt – auf einer eigenen Wegwerf-Maschine gefahren, eine App lief wieder | Messung |
+| 88 | Der Galera-Verkehr lief ohne Cipher-Beschränkung – die Vorlage war richtig, die Anlage nicht | gilt – an allen drei Knoten behoben, rollend, Verbund durchgehend vollständig | Sicherheit |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6301,3 +6345,248 @@ Vorrichtung (A, behoben) und zwei Drittel der Läufe an einem Wettrennen im Prod
 (B, **nicht** behoben) — die Prüfung flattert also weiter, und das ist kein Rest von A.
 Zwei flatternde Fälle am selben Tag, zwei verschiedene Antworten auf dieselbe Frage: wer von der
 Vorrichtung des einen auf die des anderen schliesst, hält einen offenen Befund für erledigt.
+
+---
+
+## Punkt 87: Der Weg zurück geht — er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt
+
+Gemessen am 24.10.2026 auf einer eigenen Wegwerf-Maschine: VM 310 `ngc-sicherung-probe`,
+10.2.3.220, Vollklon der Proxmox-Vorlage 300, zweite Platte mit `mkfs.ext4 -O encrypt` auf
+`/var/lib/ngc/apps`, podman 5.4.2 wie auf svc-1. Diese Maschine hat der Anlage nie gehört.
+Sie ergänzt Punkt 81, der sagt, was gesichert wird; dieser sagt, was davon zurückkommt.
+
+**Was gemessen ist.** Aus der Sicherung von svc-1 zurückgelegt: `/etc/ngc` samt Modi, die
+`state.db`, die Datenordner beider Apps. Die Datenbank **öffnete** — der Controller las beide
+App-Zeilen und fasste beide Apps an. Dann stand er an einer Wand:
+
+```
+WARN the runtime directory of an app could not be made, it stays off
+     app=org.sorglos.terminal
+     err="runtime: no system user for this container
+          user: unknown user ngc-terminal-439982dd"
+```
+
+Der **Systembenutzer** einer App und ihr verschlüsselter Datenordner werden von
+`install/activate.go` angelegt und von sonst nichts; `node.Restore` sucht den Benutzer und legt
+keinen an. Ohne diesen Schritt bleibt nach einer Wiederherstellung **jede** App für immer aus,
+und das Einzige im Produkt, das es richtigstellt, ist ein Admin, der die App neu aus dem Laden
+einrichtet — für Zeilen, die in der Sicherung schon dastanden.
+
+**Nicht zu verwechseln mit einem Ausfall.** Die Sitzung „Was passiert, wenn ein Rechner
+ausfällt" hat den anderen Weg gemessen — ihre Messung, in ihrem eigenen Papier: nach einem Neustart
+kommen die App-Container auf svc-1 und svc-2 eine Sekunde nach dem Controller von selbst wieder.
+Der Unterschied ist genau dieser Benutzer — bei einem Ausfall ist er noch da, bei einer
+Wiederherstellung auf eine neue Maschine nicht.
+
+Mit `tools/sicherung-zurueck` (ruft `runtime.EnsureUser` und `runtime.EnsureData`, die Funktionen
+des Produkts selbst) ging es weiter, Ausstiegscode 0. Die fscrypt-Schlüsselkennungen auf 310 sind
+danach **bitgleich** mit denen auf svc-1 — der Schlüssel der App-Daten reist allein in
+`controller.json` mit. Und dann lief eine App wieder:
+
+```
+ngc-terminal-439982dd   localhost/ngc-terminal:1.0.0   Up About a minute
+```
+
+Ohne API, ohne Laden, ohne Admin, allein aus der Sicherung.
+
+**Drei Dinge, die dabei mitgemessen wurden.**
+
+1. **Ein Controller startet nicht ohne API-Verweis.** Mit `apis: []` antwortet er „Die
+   Konfiguration dieses Servers fehlt oder ist unvollständig." Eine Wiederherstellung lässt sich
+   also nicht erst einmal offline prüfen; man muss die API-Adresse totlegen (hier
+   `wss://127.0.0.1:7443`), und das muss man wissen, weil die zurückgespielte `controller.json`
+   den `noiseKey` des alten Rechners trägt — eine zweite Maschine damit an der echten API wäre
+   svc-1 ein zweites Mal.
+2. **`app-daten.tar` ist Klartext.** Punkt 81 und ein früherer Stand dieses Blattes behaupteten
+   das Gegenteil. Beim Sichern läuft der Dienst, also liegt der Schlüssel jeder App im
+   Schlüsselbund des Kerns und root liest die Ordner durch ihn hindurch: 1419 ELF-Köpfe und die
+   dpkg-Listen des Containers, im Klartext gezählt. Sicherheitsfolge: dieser Teil ist der
+   empfindlichste der ganzen Sicherung, weil er der einzige ist, der ohne jeden Schlüssel
+   aufgeht. Stabilitätsfolge: dieselbe Tatsache rettet die App-Daten über einen Verlust des
+   dbKey hinweg.
+3. **Der Datenordner einer App ist auch podmans Container-Lager.** Die Terminal-App kam zurück
+   und lief, die Uhr nicht: `crun: mount devpts to dev/pts: Invalid argument`, obwohl Abbild,
+   Daten und Benutzer da sind und die Container-Konfigurationen beider Apps an dieser Stelle
+   gleich sind. Unterschied: der Terminal-Container lief beim Sichern seit drei Stunden, der
+   Uhr-Container seit sieben Minuten. Der zurückgespielte Zustand trägt auch eine kaputte Zeit
+   (`Exited (0) 292 years ago`). Gegenprobe mit angehaltenem Terminal-Container: die Uhr startet
+   genauso nicht, es ist also kein Gedränge um `devpts`.
+
+**Was nicht gemessen ist.** Die Ursache des Uhr-Fehlers — dass ein `tar` im Betrieb für die
+**Daten** eine Sicherung und für das **Container-Objekt** eine Momentaufnahme ist, die
+schiefgehen kann, ist die naheliegende Erklärung und kein Beweis. Ein `podman rm` mit Neuanlegen
+aus dem vorhandenen Abbild ist nicht gefahren. Die Kopplung einer neuen Maschine ist nicht
+gefahren: sie braucht einen angemeldeten Admin, und mit einer alten `controller.json` wäre sie
+svc-1 ein zweites Mal. Das Zurückspielen der MariaDB ist nicht gefahren.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob `node.Restore` den Systembenutzer und den Datenordner **selbst** anlegen soll, statt dass
+  ein eigenes Werkzeug es tut. Das wäre die bessere Anlage und die größere Änderung: ein
+  Controller, der beim Hochfahren Systembenutzer anlegt, tut mehr als heute.
+- Ob eine Sicherung die Container-Lager der Apps überhaupt mitnehmen soll. Nimmt sie sie nicht
+  mit, ist nach jeder Wiederherstellung eine Neueinrichtung nötig; nimmt sie sie mit, kann ein
+  Container so zurückkommen, wie die Uhr zurückkam.
+- Ob die Wegwerf-Maschine stehen bleibt. Sie trägt eine Klartextkopie der App-Daten von svc-1
+  und dessen `controller.json`; solange sie steht, ist sie so empfindlich wie svc-1 selbst.
+
+**Nachtrag vom selben Tag, und er korrigiert den Vorschlag dieses Punktes.** „Mehrere
+Verwahrstellen für den Schlüssel, eine für die Daten" war zu schwach; die Sitzung „Was
+passiert, wenn ein Rechner ausfällt" hat nachgemessen, woran es wirklich hängt:
+`/etc/ngc/db-keys` sind **224 Byte**, die eine **285 MB** große Datenbank aufschließen. Was sie
+gefährlich macht, ist nicht ihr Ort, sondern dass sie alles aufschließen und in eine
+Textnachricht passen — zwei Ordner auf derselben Platte sind deshalb keine Trennung, sondern
+dieselbe Maschine, dasselbe Konto, dieselben Rechte.
+
+`tools/sicherung.sh` nimmt daraufhin **zwei Ziele** und verweigert ohne das zweite den Dienst;
+ein Lauf, der Daten und Schlüssel an einen Ort schreiben soll, bricht ab (drei Fälle gemessen,
+Code 2, keine Ordner bleiben liegen). Der Lauf mit getrennten Zielen: `ok`, 313 s, **348 MB
+Daten gegen 75 KB Schlüssel** für fünf Rechner — klein genug für einen Passwortmanager, was
+das Argument praktisch macht und nicht nur richtig. Und geprüft, ob die Trennung eine ist: alle
+18 Geheimnisse aus dem Schlüssel-Ordner gegen den Daten-Ordner gesucht, **0 von 18** gefunden.
+Die Wortfunde (`dbKey`, `PRIVATE KEY`) sind Feldnamen im NGC-Programm und Fehlermeldungen in
+`libapt-private.so` des Grundabbilds, keine Schlüssel.
+
+**Und die Ausnahme ist geschlossen, gefahren und nicht beschlossen.** `app-daten.tar` war
+Klartext und der einzige Teil der Sicherung, der ohne jeden Schlüssel aufging. Die Sitzung, der
+Thomas die Sicherungsform übergeben hat, entschied: verschlüsselt, bevor die Daten die Maschine
+verlassen, mit einem Schlüssel, der nicht mitfährt — und mit drei Bedingungen, deren dritte
+verlangt, dass der Weg zurück erst einmal gegangen ist. Thomas hat eine Maschine gegeben, also
+ist er gegangen.
+
+`tools/sicherung.sh` erzeugt jetzt je Rechner und Lauf einen eigenen Schlüssel (32 Byte,
+`openssl rand`), legt ihn **nur** in den Schlüssel-Ordner (45 Byte je Rechner) und
+verschlüsselt den Datenordner mit AES-256-CTR, bevor er die Maschine verlässt. Der Schlüssel
+reist über ssh-stdin in eine Datei mit Modus 0600 und wird `shred`-et — nie als Argument, denn
+ein Argument steht in `ps`. Der Klartext wird nirgends eine Datei: `tar` schreibt in `openssl`.
+Lauf über alle fünf Maschinen: `ok`, **473 s** gegen 313 s ohne Verschlüsselung.
+
+Auf **VM 311**, einem Klon der Vorlage, der der Anlage nie gehört hat: `tar` auf die Datei,
+Entschlüsseln mit leerem und mit falschem Schlüssel — jedes Mal
+`This does not look like a tar archive`. Mit dem Schlüssel aus dem Schlüssel-Ordner: **6720
+Dateien**. Danach der ganze Weg — `/etc/ngc` aus dem Schlüssel-Ordner, `state.db` aus dem
+Daten-Ordner, `sicherung-zurueck`, entschlüsseln (2 s für 199 MB) — und dann:
+
+```
+org.sorglos.terminal   localhost/ngc-terminal:1.0.0   Up 45 seconds
+org.sorglos.uhr        localhost/ngc/uhr:1.0.0        Up 45 seconds
+```
+
+**Beide Apps**, ohne eine einzige Warnung des Controllers. Damit öffnet kein Teil dieser
+Sicherung mehr ohne Schlüssel, und die Anlage läuft trotzdem daraus wieder an.
+
+Was AES-256-CTR **nicht** gibt, und das steht dabei statt vorausgesetzt zu werden: eine
+Beglaubigung. Es ist Vertraulichkeit; was ein verändertes Byte fängt, ist die sha256 im
+Verzeichnis, auf der Maschine genommen und hier gegengerechnet.
+
+**Und die Prüfsummen liegen jetzt bei den Schlüsseln**, nicht neben den Daten — wieder ein
+Gedanke derselben Sitzung: eine Liste neben ihren Dateien fängt einen Unfall, aber wer im
+Daten-Ordner schreiben darf, ändert die Datei und die Zeile darüber. Gemessen mit einem
+angehängten Byte: der Daten-Ordner allein trägt **keine einzige** Prüfsumme mehr, mit
+`summen.txt` aus dem Schlüssel-Ordner fällt es als `FAILED` auf. Damit gilt für beide Hälften
+derselbe Satz: wer nur die Daten hat, kann sie weder lesen noch unbemerkt ändern.
+
+Nebenbefund: die Uhr, die beim ersten Weg zurück **nicht** mitkam, lief diesmal. Einziger
+Unterschied zwischen den Läufen ist das Alter ihres Container-Objekts beim Sichern (sieben
+Minuten gegen Stunden). Das stützt die Erklärung weiter oben in diesem Punkt und beweist sie nicht — und
+der Beweisversuch ist an der eigenen Vorrichtung gescheitert: ein von Hand mit `setpriv`
+angelegter Container bekommt nicht das Netz, das der Controller als root einrichtet
+(`pasta failed ... Permission denied`), also sagt sein Scheitern nichts über den des Produkts.
+Der Beweis braucht einen Container, der über die **Einrichtung** entsteht, und damit eine Anlage,
+in der man eine App einrichten darf.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.
+
+---
+
+## Punkt 88: Der Galera-Verkehr lief ohne Cipher-Beschränkung — die Vorlage war richtig, die Anlage nicht
+
+Gemessen und behoben am 24.10.2026 an den drei Datenbankknoten der verteilten Anlage, auf
+Thomas' Anweisung. Der Befund ist **nicht meiner**: die Sitzung „Release 0.2.1 veröffentlichen"
+hat ihn beim Bau von db-2 und db-3 gefunden und mir gemeldet, weil sie ihn nicht anfassen wollte,
+solange an db-1 gemessen wurde.
+
+**Was gemessen war.** `apps/server-db/templates/galera.cnf` auf `main` ist seit dem 17.10.2026
+richtig: `socket.ssl_cipher=ECDHE-ECDSA-AES256-GCM-SHA384`, die TLS-1.2-Schreibweise, mit
+`TestTheClusterCipherIsATLS12ListAndNotASuite` dahinter. Die **laufende** Anlage war es nicht.
+Auf allen drei Knoten stand in `/etc/mysql/mariadb.conf.d/60-ngc.cnf` der TLS-1.3-Suite-Name
+`TLS_AES_256_GCM_SHA384` — geschrieben von *ulh*, nicht von diesem Repo —, und eine
+`99-erstlauf-galera.cnf` setzte `wsrep_provider_options` ohne Cipher neu. Darum stand MariaDB
+nicht still, sondern lief **ohne jede Cipher-Beschränkung**: `show variables like
+"wsrep_provider_options"` zeigte auf allen drei `socket.ssl_cipher =` leer.
+
+Die 99-Datei enthält nichts weiter als diese eine Zeile (auf db-1 und db-3 nachgesehen), also
+war sie gefahrlos aus dem Weg zu nehmen.
+
+**Was getan wurde, rollend, einer nach dem anderen.** Ausgangslage auf allen drei:
+`wsrep_cluster_size 3`, `Primary`, `Synced` — **und `safe_to_bootstrap: 0`**, weshalb niemals
+zwei gleichzeitig: zwei von drei halten das Quorum, der neu gestartete tritt über IST wieder
+ein. Je Knoten beide Dateien als `.vor-cipher-2111` beiseitegelegt (nichts gelöscht), den Wert
+wortgleich mit der Vorlage gesetzt, die 99-Datei zur Seite, `systemctl restart mariadb`.
+
+| Knoten | Neustart | danach |
+|---|---|---|
+| db-3 (10.2.3.218) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-2 (10.2.3.217) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-1 (10.2.3.212) | Code 0, 4 s | `active`, Verbund 3, `Primary`, `Synced`, Cipher gesetzt |
+
+Der Verbund war nach jedem Schritt vollständig, von einem anderen Knoten aus gegengeprüft.
+`ngc_blob` 15 Zeilen und `ngc_user` 1 Zeile nach dem Neustart von db-1 unverändert.
+
+**Und die Liste beißt — das ist der Teil, der sonst fehlt.** Dass eine Variable einen Wert
+zeigt, ist kein Nachweis. Gegen den Galera-Anschluss 4567 von db-3 nach db-1, mit dem
+Knotenzeugnis, TLS 1.2 angeboten:
+
+| angeboten | Antwort |
+|---|---|
+| nur `AES128-GCM-SHA256` | `alert handshake failure` |
+| nur eine CBC-Suite (`ECDHE-ECDSA-AES256-SHA384`) | `alert handshake failure` |
+| `ECDHE-ECDSA-AES256-GCM-SHA384` | **`New, TLSv1.2, Cipher is ECDHE-ECDSA-AES256-GCM-SHA384`** |
+| alles anbieten | der Server wählt genau diese Suite |
+
+Ohne Knotenzeugnis scheitern **alle** TLS-1.2-Versuche, auch der erlaubte: Galera verlangt ein
+Client-Zeugnis, und dieser Probelauf konnte „Cipher abgelehnt" und „Zeugnis fehlt" nicht
+trennen. Erst mit dem Zeugnis des Knotens ist es eine Messung. Unter TLS 1.3 hat Galera keinen
+Hebel: dort handelt der Anschluss von selbst `TLS_AES_256_GCM_SHA384` aus, gemessen.
+
+**Was nicht gemessen ist:** die Gegenrichtung, dass ohne die Liste eine AES-128- oder CBC-Suite
+durchkommt. Das ist am 17.10.2026 gemessen worden und steht im Kommentar der Vorlage; ich habe
+den schwachen Zustand nicht wiederhergestellt, um es nachzustellen — dafür hätte ein laufender
+Knoten zurückgedreht werden müssen.
+
+**Die Anlage darüber läuft unverändert:** `ngc-api` und die Controller aktiv, die Oberfläche
+antwortet mit `HTTP 200`, und in den vier Minuten nach dem letzten Neustart keine Fehlerzeile und
+keine Tunnelzeile in den Protokollen der drei Controller — die Tunnel sind also nie
+abgerissen.
+
+**Ein Befund der Ausgangslage, und er ist nicht meiner.** Dass alle drei Knoten
+`safe_to_bootstrap: 0` tragen, habe ich beim Messen gesehen; was es bedeutet, hat die Sitzung
+„Was passiert, wenn ein Rechner ausfällt" auf jedem Knoten einzeln nachgelesen und
+eingeordnet — **ihre Messung, ihre Überlegung**: fallen alle drei unsauber **zugleich** weg
+(Stromausfall, Neustart des Wirts), darf kein Knoten den Verbund von selbst hochziehen, weil
+keiner weiß, ob er den neuesten Stand hat. Die Anlage steht dann, bis jemand
+`galera_new_cluster` fährt.
+
+Daraus ihr Satz, den ich übernehme, weil er die Rangfolge betrifft: **der Umbau auf drei Knoten
+hat auch etwas weggenommen.** Am Mittag trug der einzelne Knoten `safe_to_bootstrap: 1` und fing
+sich nach einem harten Schnitt in vier Sekunden allein. Jetzt übersteht die Anlage den Verlust
+eines Knotens, ohne dass ein Benutzer es merkt — und sie steht, wenn alle zugleich weg sind. Der
+häufige Fall ist gelöst, der seltene war es vorher. Das ist kein Vorwurf an den Umbau, sondern
+der Grund, warum mein Lauf rollend ging und niemals zwei Knoten gleichzeitig angefasst hat.
+
+**Nachtrag: die Kopien sind weg, und das Aufräumen hat zwei Lücken gefunden.** Auf Thomas'
+Anweisung je Knoten die `60-ngc.cnf.vor-*` und die beiden `99-erstlauf-galera.cnf`-Kopien
+gelöscht (db-1 sechs Dateien, db-2 und db-3 je vier), danach auf allen drei `mariadb active`,
+`Verbund 3`, `Synced`. **Vorher** gesichert, und dabei kam heraus: `/etc/mysql/mariadb.conf.d`
+stand in **keiner** Sicherung, obwohl `60-ngc.cnf` allein `wsrep_cluster_address`,
+`wsrep_node_name`, `wsrep_node_address`, `wsrep_sst_auth` und die Pfade der
+`file_key_management` trägt — ein Datenbankknoten hätte sich daraus nicht wieder aufbauen
+lassen. Und der Lauf von 18:21 kannte nur fünf Maschinen, weil ich fünf genannt hatte; db-2 und
+db-3 fehlten ganz. Beides in `docs/sicherung-und-weg-zurueck.md`, Abschnitt 11; das Werkzeug
+nimmt die Datei jetzt mit, zu den Schlüsseln, weil `wsrep_sst_auth` eines ist. Und der eigentliche Posten: dass *ulh* diesen Wert überhaupt schreibt und eine 99-Datei
+darüberlegt, gehört dort behoben, sonst bringt die nächste Neuinstallation ihn zurück. Die
+Release-Sitzung hat ihren Teil daran bereits berichtigt.
+
+Herkunft: `docs/sicherung-und-weg-zurueck.md` nennt die Messreihe nicht — dieser Punkt steht für
+sich, weil er nicht zur Sicherung gehört, sondern nur an einem Abend an derselben Anlage anfiel.
+
