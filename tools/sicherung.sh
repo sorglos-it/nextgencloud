@@ -268,6 +268,31 @@ if [ "$Z_ABS" = "$S_ABS" ] || [ "${S_ABS#"$Z_ABS"/}" != "$S_ABS" ] || [ "${Z_ABS
 	echo "sicherung: Passwortmanager, nicht in ein Verzeichnis daneben." >&2
 	exit 2
 fi
+
+# AND THE CASE THE REFUSAL ABOVE DOES NOT CATCH, which only showed when this
+# was used for real: two SIBLING folders on one disk pass every test above and
+# are exactly the shape the whole separation is against - same machine, same
+# account, same rights. It is not refused, because it is also the one shape the
+# key folder is MEANT to have for a moment: a thoroughfare, filled, emptied
+# into the password manager, deleted. So it is said out loud instead, every
+# time, and the sentence names what is still to do rather than what is wrong.
+#
+# "stat -c %d" is the device, which is the question - not the drive letter,
+# which says nothing about a mount. Where stat cannot answer (it is not on
+# every system this may run from), nothing is printed: a warning that cannot
+# be measured is not worth a line.
+if command -v stat >/dev/null 2>&1; then
+	z_dev=$(stat -c %d "$Z_ABS" 2>/dev/null || echo a)
+	s_dev=$(stat -c %d "$S_ABS" 2>/dev/null || echo b)
+	if [ "$z_dev" = "$s_dev" ]; then
+		echo "sicherung: ACHTUNG - Daten und Schluessel liegen auf DEMSELBEN Datentraeger." >&2
+		echo "sicherung:   Solange das so ist, ist es keine Trennung: wer den einen Ordner" >&2
+		echo "sicherung:   lesen kann, liest auch den anderen." >&2
+		echo "sicherung:   Der Schluessel-Ordner ist als Durchfuhr gedacht - nach dem Lauf in" >&2
+		echo "sicherung:   den Passwortmanager damit, dann den Ordner loeschen. Erst danach" >&2
+		echo "sicherung:   ist diese Sicherung eine." >&2
+	fi
+fi
 STEMPEL=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # The one path this writes on the machines themselves, and it is removed again
@@ -423,8 +448,17 @@ for ziel in "$@"; do
 		# false alarm for the other half - measured on the first list this
 		# wrote. The list is for people AND for that command, so it says
 		# which half to check where.
+		#
+		# AND THE HINT MUST NOT MATCH ITSELF. The first version of it read
+		# grep "[*]" summen.txt, and that line contains the very thing it
+		# greps for - so the hint was picked up as a checksum line and every
+		# check came back one short. Measured on the first real backup, at
+		# the moment somebody held the list against the files instead of
+		# reading it. The pattern now asks for 64 hex digits at the start of
+		# a line, which no sentence of this file can be.
 		printf 'Pruefen, je Haelfte in ihrem eigenen Ordner:\n'
-		printf '  grep "[*]" summen.txt | sha256sum -c - 2>/dev/null | grep -v "No such"\n'
+		printf '  sed -n "s/^  \\([0-9a-f]\\{64\\} \\)/\\1/p" summen.txt | sha256sum -c -\n'
+		printf 'Der erste Abschnitt gehoert in den Daten-Ordner, der zweite hierher.\n'
 		printf 'Eine Liste ueber beide Ordner auf einmal meldet die jeweils andere\n'
 		printf 'Haelfte als fehlend - das ist kein Befund.\n\n'
 		(cd "$ordner" && for f in *; do

@@ -712,6 +712,78 @@ Apps auf 311 liefen danach unverändert weiter (`Up 18 minutes`).
 
 ---
 
+## 10. Die erste Sicherung an einem Ort, der bleibt (gemessen)
+
+Thomas hat `d:\ngc_backup` für die Daten genannt. Den zweiten Pfad hat er zweimal versprochen
+und nicht genannt, also habe ich ihn selbst gesetzt — er ist ohnehin nur die Durchfuhr:
+`d:\ngc_schluessel-durchfuhr`, ein Ordner, der nach dem Umzug in den Passwortmanager wieder
+verschwindet.
+
+Je Lauf ein Unterordner mit Zeitstempel, in **beiden** Zielen. Das war keine Vorliebe: das
+Werkzeug verweigert ein Ziel, das schon da ist, und in `d:\ngc_backup` lagen die zwei Dateien
+der Ausfall-Sitzung. So bleiben die unberührt (nachgesehen, Größen unverändert) und zwei Läufe
+können sich nicht ins Gehege kommen.
+
+```
+sicherung: ok                 Ausstiegscode 0, Dauer 307 s
+Daten      353 MB   d:\ngc_backup\2026-10-24T1821Z
+Schluessel   80 KB   d:\ngc_schluessel-durchfuhr\2026-10-24T1821Z
+```
+
+Alle Prüfsummen gegengerechnet, je Hälfte in ihrem eigenen Ordner, mit genau dem Befehl, den
+`summen.txt` selbst nennt:
+
+| | Daten | Schlüssel |
+|---|---|---|
+| api-1 | 1/1 | 1/1 |
+| api-2 | 0/0 (kein Controller, keine Apps) | 1/1 |
+| db-1 | 3/3 | 1/1 |
+| svc-1 | 2/2 | 2/2 |
+| svc-2 | 2/2 | 2/2 |
+
+### Zwei Fehler im eigenen Werkzeug, beide beim ersten echten Lauf gefunden
+
+**Der erste war meine Ansäge an mich selbst.** Beide Ziele liegen auf `D:`, und die Verweigerung
+aus Abschnitt 9 fängt nur denselben und den verschachtelten Ordner — zwei **Geschwister** auf
+einer Platte gehen durch, und genau das ist die Form, gegen die der ganze Abschnitt argumentiert.
+Verweigern ist hier falsch, denn es ist auch die Form, die die Durchfuhr für einen Moment haben
+**soll**. Also sagt das Werkzeug es jetzt jedes Mal laut, mit dem Satz, was noch zu tun ist:
+
+```
+sicherung: ACHTUNG - Daten und Schluessel liegen auf DEMSELBEN Datentraeger.
+sicherung:   ... Der Schluessel-Ordner ist als Durchfuhr gedacht - nach dem Lauf in
+sicherung:   den Passwortmanager damit, dann den Ordner loeschen. Erst danach
+sicherung:   ist diese Sicherung eine.
+```
+
+Gefragt wird das Gerät (`stat -c %d`) und nicht der Laufwerksbuchstabe: ein Buchstabe sagt
+nichts über eine Einhängung. Wo `stat` nicht antwortet, steht nichts — eine Warnung, die nicht
+gemessen werden kann, ist keine Zeile wert.
+
+**Der zweite ist peinlicher und das bessere Beispiel.** Der Hinweis, den ich eine Stunde vorher
+in `summen.txt` geschrieben hatte, lautete `grep "[*]" summen.txt | sha256sum -c -`. Diese Zeile
+enthält das Muster, das sie empfiehlt — der Hinweis prüfte sich selbst mit und kam als kaputte
+Prüfsummenzeile zurück. Jede Gegenrechnung war dadurch **genau eine Zeile zu kurz**:
+
+```
+api-1   Daten: 1 von 2 ok      svc-1   Daten: 2 von 3 ok
+```
+
+Aufgefallen ist es in der Sekunde, in der jemand die Liste **gegen die Dateien gehalten** hat
+statt sie zu lesen — dieselbe Regel, die dieses Blatt der Ausfall-Sitzung verdankt (Abschnitt 8),
+diesmal gegen meinen eigenen Text. Das Muster fragt jetzt nach 64 Hex-Ziffern am Zeilenanfang,
+was kein Satz dieser Datei sein kann; der fehlerhafte Lauf ist gelöscht und neu geschrieben, und
+die Tabelle oben ist der neue.
+
+### Was jetzt noch zu tun ist, und es ist nicht meine Arbeit
+
+Die 80 KB aus `d:\ngc_schluessel-durchfuhr` gehören in den Passwortmanager, und danach
+gehört der Ordner gelöscht. **Solange er dort steht, ist diese Sicherung keine** — wer die
+Platte lesen kann, hat beide Hälften. Das steht in seinem `LIESMICH.txt`, es steht in jeder
+`inhalt.txt`, und das Werkzeug sagt es bei jedem Lauf. Mehr kann ein Skript dazu nicht tun.
+
+---
+
 ## Was gemessen und was abgewogen ist
 
 **Gemessen** (Lauf, Zahl, Ausstiegscode):
@@ -729,6 +801,10 @@ Apps auf 311 liefen danach unverändert weiter (`Up 18 minutes`).
   das Nichtanlaufen der Uhr samt Gegenprobe mit angehaltenem Nachbarn.
 - Abschnitt 7 ganz, einschließlich des zweiten Laufs mit der Prüfung (180 s) und der
   Gegenprobe, dass sie bei einem einzigen Byte greift.
+- Abschnitt 10 ganz — der Lauf an den benannten Ort (307 s, 353 MB gegen 80 KB), alle
+  Prüfsummen je Hälfte gegengerechnet, und die zwei Fehler im eigenen Werkzeug: die fehlende
+  Warnung bei zwei Geschwisterordnern auf einer Platte und der Hinweis in `summen.txt`, der
+  sich selbst mitgeprüft hat.
 - Abschnitt 9 ganz — die drei Verweigerungen, der Lauf mit getrennten Zielen (313 s, 348 MB
   gegen 75 KB), die Suche nach den 18 Werten im Daten-Ordner, der Lauf mit Verschlüsselung
   (473 s, 106 KB Schlüssel), die vier Entschlüsselungsversuche auf VM 311 und **beide Apps,
