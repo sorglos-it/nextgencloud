@@ -804,20 +804,33 @@ Schlüssel auf. Es liegt darum bei den Daten. Nach derselben Rangfolge gehören
 die App-Daten **vor** dem Wegschreiben verschlüsselt — mit einem Schlüssel, der
 in den Schlüssel-Ordner geht und nicht mitfährt.
 
-Das ist **entschieden und ausdrücklich nicht gebaut**, und der Grund ist die
-dritte Bedingung der Entscheidung selbst: ein verschlüsseltes `app-daten.tar`,
-das niemand mehr aufmacht, ist schlechter als ein Klartext-Tar, also muss der
-Weg zurück mit getrenntem Schlüssel **einmal gegangen** sein — sonst tauscht man
-ein Leseproblem gegen ein Totalverlustproblem und hat einen grünen Lauf als
-Beleg. Die Maschine dafür fehlt: die Wegwerf-VM ist abgeräumt. Bis dahin ist der
-Klartext der schlechtere von zwei Zuständen und der ehrlichere von zwei
-Zeitpunkten.
+Die Bedingung dazu war, dass der Weg zurück mit getrenntem Schlüssel **einmal
+gegangen** sein muss, bevor verschlüsselt wird — sonst tauscht man ein
+Leseproblem gegen ein Totalverlustproblem und hat einen grünen Lauf als Beleg.
+Dafür fehlte die Maschine, und was dabei half, kam aus der Vermessung dieses
+Wirts: die **Vorlage VMID 300 (`ngc-vorlage`) stand noch**, 308 und 309 waren
+frei, `ssd_2TB` hatte 1 TB von 1,9 TB frei (`qm list` und `pvesm status` auf
+10.2.3.2, 24.10.2026). Eine Wegwerf-Maschine war also ein Klon und keine
+Neuinstallation.
 
-Was dabei hilft und aus der Vermessung dieses Wirts kommt: die **Vorlage VMID
-300 (`ngc-vorlage`) steht noch**, 308 und 309 sind frei, und der Speicher
-`ssd_2TB` hat 1 TB von 1,9 TB frei (`qm list` und `pvesm status` auf 10.2.3.2,
-24.10.2026). Eine Wegwerf-Maschine ist also ein Klon und keine
-Neuinstallation — `tools/proxmox-sechs.sh` kennt den Weg.
+**Beides ist inzwischen eingelöst — von der Sicherungs-Sitzung gebaut und
+gemessen, nicht von mir.** Auf einem Klon von 300 (VM 311) ist der Weg zurück
+gegangen: `app-daten.tar.enc` lässt sich ohne Schlüssel nicht öffnen, auch nicht
+mit einem leeren und nicht mit einem falschen 32-Byte-Schlüssel („This does not
+look like a tar archive"), mit dem richtigen 6720 Dateien — und danach laufen
+**beide** Apps wieder, Terminal und Uhr. Der Schlüssel ist einer je Maschine und
+Lauf, er kommt über `ssh`-stdin in eine 0600-Datei statt als Argument (ein
+Argument steht in `ps` für jeden Benutzer), und der Klartext wird nirgends eine
+Datei. Kosten: 473 s statt 313 s, Schlüssel-Ordner 106 statt 75 KB.
+
+Eine Einschränkung, die sie selbst nennt und die hier mitsteht, weil sie leicht
+untergeht: **AES-256-CTR gibt Vertraulichkeit, keine Beglaubigung.** Ein
+verändertes Byte fängt die `sha256`-Liste im Verzeichnis — und die fängt einen
+**Unfall**, nicht jemanden, der in den Ordner schreiben darf, denn der kann die
+Liste mitändern. Nach derselben Rechnung wie bei den 224 Byte gehört die
+Prüfsummenliste darum **zu den Schlüsseln**, nicht neben die Daten: ein paar
+Kilobyte, und erst damit ist die Beglaubigung so weit getrennt wie die
+Vertraulichkeit. Das ist ein Vorschlag von mir, keine Messung.
 
 **Und zu meiner eigenen Datei, nach derselben Rangfolge:** sie bleibt liegen.
 Sie trägt einen argon2id-Abdruck, keinen Klartext, auf dem Rechner ihres
