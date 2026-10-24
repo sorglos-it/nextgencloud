@@ -49,7 +49,14 @@ diese Zahlen prüft es nicht.
 **Und wer anhängt, liest die nächste freie Nummer in der Tafel der Reihe B nach, nicht am
 Dateiende.** Am 24.10.2026 haben sich daran drei Sitzungen gestossen: eine Nummer war in der
 Tafel schon vergeben, während der Abschnitt dazu noch in einem offenen PR lag. Dieser Punkt hier
-hiess deshalb kurz 76, dann 81, dann 82 und steht nun als 83. Daraus zwei Regeln, die beide
+hiess deshalb kurz 76, dann 81 und dann 82, bevor er 83 wurde.
+
+**Und eine Nummer vorzuhalten geht nicht**, so verlockend es ist: wer die naechste Nummer
+ueberspringt, um einer fremden offenen Nummer auszuweichen, reisst ein Loch, und
+`tools/check-buch.sh` weist das zu Recht ab („a log has no holes"). Zwei Zweige, die
+gleichzeitig dieselbe naechste freie Nummer nehmen, sind damit unvermeidlich — **wer als
+Zweiter zusammenfuehrt, nummeriert um.** Vorher laesst sich das nicht aufteilen, und die
+Reihenfolge entscheidet nicht die Sitzung, sondern Thomas. Daraus zwei Regeln, die beide
 Arbeit sparen: **in der Tafel nachsehen**, und **Nummern anderer Sitzungen erst zitieren, wenn
 sie auf `main` sind** — `check-buch.sh` fängt einen Verweis auf einen Punkt, den es noch nicht
 gibt, aber erst nach dem Schreiben.
