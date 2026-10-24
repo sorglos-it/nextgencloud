@@ -69,7 +69,7 @@ func (t *Tunnel) agree(peer tunnel.Hello) error {
 		// The address is out of this controller's own configuration and the
 		// version is this build's own: neither came in over the tunnel.
 		t.cfg.logger().Error(msg, "api", t.cfg.API.URL, "contract", tunnel.Contract)
-		return ErrLink
+		return broke(ReasonContract)
 	}
 	t.speaks = speaks
 	return nil
