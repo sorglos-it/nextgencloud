@@ -8,9 +8,10 @@ Gemessen am 24.10.2026. Gemessen heißt: an einem laufenden System. Was nur aus
 dem Quelltext feststeht, steht hier ausdrücklich als solches da. Was nicht
 gemessen werden konnte, steht als Lücke da und nicht als Schätzung.
 
-**Diese Datei ändert `docs/thomas-entscheidet.md` nicht.** Das Blatt liegt in
-PR 114. Was hier entschieden wird, ist dort nachzutragen, sobald PR 114
-zusammengeführt ist.
+**Diese Datei ändert `docs/thomas-entscheidet.md` nicht.** Was hier entschieden
+wurde, ist dort inzwischen nachgetragen: PR 114 ist am 24.10.2026
+zusammengeführt, Frage 20 ist entschieden, und die Begründung zu Frage 21 trägt
+jetzt die Zahl aus M2 statt des Hinweises auf eine fehlende Messung.
 
 ## Wo gemessen wurde
 
@@ -18,7 +19,7 @@ zusammengeführt ist.
 |---|---|
 | M1 | Debian 13, podman 5.4.2, 128 Kerne, 64 GiB. Die Terminal-App im Container, gebaut nach der Anleitung in `apps/server-controller/CLAUDE.md`. |
 | M2 | Zwei Orte. Die Shell ist der Browser: dort gemessen. Dazu die Go-Seite (Controller und API) mit dem echten Code aus `shared/store`. |
-| M3 | Die echte Anlage aus sechs VMs, aufgesetzt am 23.10.2026. Ihr Protokoll und ihre Datenbank. |
+| M3 | Die echte Anlage aus sechs VMs, aufgesetzt am 23.10.2026 — die **verteilte** Anlage, siehe „Die beiden Anlagen" unten. Ihr Protokoll und ihre Datenbank. |
 
 Für M1 und M2 wurden Grenzen in einer Arbeitskopie außerhalb des Repos
 angehoben. Im Repo ist nichts davon geändert.
@@ -324,3 +325,72 @@ nicht der Zähler.
 
 Offene Lücken: eine zweite echte App fehlt (M1). Die Strecke über 64 Sitzungen
 hinaus fehlt (M1). Fehlversuche werden nirgends aufgezeichnet (M3).
+
+---
+
+## Nachtrag · Die beiden Anlagen und ihre Namen
+
+Es gibt **zwei** Anlagen. Wer eine Messung wiederholt, muss sagen, welche er
+meint — die Zahlen oben gelten nicht für beide.
+
+| | Was | Wo gemessen |
+|---|---|---|
+| **Einzel-VM** | Eine Maschine, erreichbar über `ssh ngc`. Messort unter `ngc.test` mit selbst unterschriebenem Zertifikat. | M1 und M2 |
+| **Verteilte Anlage** | Sechs VMs, aufgesetzt am 23.10.2026. Antwortet unter `ngc.mein.lan`. | M3 |
+
+Die Namen der sechs VMs, Stand 24.10.2026:
+
+```
+10.2.3.210  api-1.ngc.mein.lan    api-1
+10.2.3.211  api-2.ngc.mein.lan    api-2
+10.2.3.212  db-1.ngc.mein.lan     db-1
+10.2.3.213  svc-1.ngc.mein.lan    svc-1
+10.2.3.214  svc-2.ngc.mein.lan    svc-2
+10.2.3.215  store.ngc.mein.lan    store
+10.2.3.210  ngc.mein.lan          ← hier antwortet die Anlage (dieselbe wie api-1)
+```
+
+**Der Name ist nicht Geschmackssache.** Zertifikat und Passkey hängen an
+`ngc.mein.lan`. Eine Messung unter einem anderen Namen misst etwas anderes.
+
+**Herkunft, und was daran nicht gemessen ist:** Die Namen kommen von Thomas,
+weitergegeben am 24.10.2026. Ich habe sie **nicht nachgeprüft** — keinen der
+Namen aufgelöst, keine der Maschinen angesprochen. Sie stehen hier, wie sie
+übergeben wurden. Wer darauf messen will, prüft zuerst, dass sie stimmen.
+
+### Was die verteilte Anlage für die drei offenen Lücken ändert
+
+Das ist der Punkt, auf den es ankommt, und die Antwort ist: **bei einer von
+drei.** Mehr Maschinen schließen keine Lücke, die nicht an Maschinen hing.
+
+**Nachholbar — die Strecke über 64 Sitzungen (M1).** Stehengeblieben ist dort
+nicht der Container, sondern die Messvorrichtung: jede Sitzung braucht von außen
+ein eigenes `podman exec`. Mit `svc-1` und `svc-2` als Last-Erzeugern neben der
+gemessenen Maschine ist die Strecke bis an den Deckel von 2048 zu fahren. Das
+ist die einzige der drei Lücken, die die verteilte Anlage wirklich schließt.
+
+**Nicht nachholbar — die zweite echte App (M1).** Die Lücke ist nicht, dass eine
+App zu wenig Platz hat. Die Lücke ist, dass es **keine zweite App gibt**: im
+Katalog der laufenden Anlage steht genau eine, das Terminal, und
+`ngc/portversuch` startet `sleep infinity`. Sechs Rechner erzeugen keine App.
+Diese Lücke schließt, wer eine zweite echte App baut oder portiert.
+
+**Nicht nachholbar — die MAC-Fehlversuche (M3).** NGC zeichnet sie nirgends auf.
+Auf sechs Maschinen zeichnet NGC sie sechsmal nicht auf. Diese Lücke schließt
+eine Zeile Code, die den Fehlversuch protokolliert, und erst danach eine
+Messung. Die Schwelle 3 in Frage 23 bleibt bis dahin unter Vorbehalt.
+
+### Und eine Warnung zu Frage 32
+
+Frage 32 ist entschieden: einmal vor der Veröffentlichung der ganze Erstlauf auf
+einer Maschine mit echtem Namen **und** `letsencrypt`, mit Passkey-Anmeldung im
+Browser.
+
+`ngc.mein.lan` erfüllt davon die **erste Hälfte, nicht die zweite**. `mein.lan`
+ist ein interner Name; `letsencrypt` stellt dafür kein Zertifikat aus, auch
+nicht über DNS-01. Was ein Nutzer mit einem echten, öffentlichen Zertifikat
+erlebt, bleibt auf der verteilten Anlage ungemessen.
+
+**Frage 32 ist darum nicht abzuhaken**, solange kein öffentlicher Name im Spiel
+ist — und sie ist der eine Punkt, der laut Blatt vor der Veröffentlichung
+gemessen sein muss.
