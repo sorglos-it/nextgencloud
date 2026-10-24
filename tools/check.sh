@@ -41,6 +41,16 @@ git() { command git -c safe.directory="$PWD" "$@"; }
 gone=$(git diff --name-only --diff-filter=D HEAD | grep -c . || true)
 [ "$gone" = 0 ] || die "$gone tracked files are missing from the tree - restore them ('git restore --source=HEAD -- <paths>', never 'git restore .') before trusting any number from this run"
 
+# The decision book (docs/vertraege-v1.2.md) is read against itself here, with
+# the structural checks and not with the slow Go work, for the reason the head
+# of this file gives: it costs well under a second, and the thing it catches is
+# invisible to every other check in the repo. Twice two parallel sessions handed
+# out the same point number, and PR 120 then had to correct references that
+# pointed at 72 instead of 73 - all of it found by a human, late. The book is a
+# log that several sessions append to at once, so the collision is a property of
+# how it is written, not an accident that will stop happening.
+bash tools/check-buch.sh
+
 files=$(git ls-files '*.go' ':!:vendor/*')
 nfiles=$(printf '%s\n' "$files" | grep -c . || true)
 # An empty list is not "nothing to format", it is a failed listing. git's own
