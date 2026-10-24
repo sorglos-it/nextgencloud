@@ -9,9 +9,13 @@ gelegt. Keine Zeile beschrieb das. Belegt ist der Weg hier mit einer **zweiten**
 (`apps/uhr/`, `org.sorglos.uhr`), die mit Absicht winzig ist: eine Uhr. Was daran Arbeit war,
 ist der Weg, nicht die App.
 
+**Der Weg ist am 24.10.2026 einmal ganz gegangen worden**, auf der verteilten Anlage: Paket
+gebaut, in den Laden gelegt, unterschrieben, über Netz geholt, eingerichtet, geöffnet — und im
+Fenster stand die Zeit des Servers.
+
 **Gemessen und abgewogen stehen getrennt.** Jeder Abschnitt sagt, was gelaufen ist und was
-nicht. Am Ende stehen die Befunde: Stellen, an denen der Weg einen Handgriff braucht, den kein
-Fremder erraten kann.
+nicht. Am Ende stehen elf Befunde: Stellen, an denen der Weg einen Handgriff braucht, den kein
+Fremder erraten kann — oder an denen NGC etwas sagt, was nicht stimmt.
 
 ---
 
@@ -184,7 +188,9 @@ Eine Aktion, die das Manifest nicht trägt, lehnt die Shell ab, bevor sie jemand
 (`appframe.doCall`, `CODES.FORBIDDEN`). Ein Tippfehler im Namen ist also eine Ablehnung und
 kein Aufruf.
 
-**Nicht gemessen:** dass die Uhr-Oberfläche so im Fenster erscheint — siehe Schritt 7.
+**Gemessen am 24.10.2026**, und zwar **im Rahmen der App selbst** gelesen, nicht auf der Seite
+des Schreibtischs: die Oberfläche der Uhr erscheint so im Fenster, mit `#zeit` und `#hinweis`
+aus ihrer eigenen `index.html`. Die Seite trug zwei Rahmen; der Inhalt steht in dem der App.
 
 ---
 
@@ -521,14 +527,32 @@ Unterschrift, und der Katalog wird von der API-Maschine **über Netz** geholt, m
 Zertifikat (`http=200 verify=0`). Siehe Schritt 5, „Gemessen: eine zweite App in einen
 laufenden Laden".
 
-**Versucht und gescheitert:** die Uhr **einrichten**. Die Oberfläche zeigt sie, der Dialog
-fragt nur nach dem Rechner (sie will keine Rechte), und „Aktivieren" endet mit „Das hat der
-Rechner nicht angenommen" — weil der Tunnel des Controllers in derselben Sekunde abbricht
-(Befund 9). Das ist der Stand, und er ist das Ergebnis dieser Runde: der Weg trägt bis **in**
-den Laden und bis **in** die Oberfläche, und reißt beim Einrichten.
+**Gemessen am 24.10.2026: der ganze Weg trägt.** Die Uhr wurde aus dem Laden eingerichtet und
+geöffnet, auf der verteilten Anlage, gegen API 0.2.2:
 
-**Nicht gemessen:** dass die Uhr sich einrichten und öffnen lässt und dass ihr Fenster die
-Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
+```
+12:27:49  "Installieren" an der Uhr-Karte
+12:27:55  Dialog: nur "Rechner | svc-1 | svc-2 | Aktivieren" - keine Rechte, sie fragt keine an
+12:27:56  Rechner gewählt: svc-1
+12:28:08  "Die App ist eingerichtet."
+12:29:53  Fenster geöffnet
+12:29:55  im Rahmen der App gelesen:  "2026-10-24T12:29:55Z"
+                                      "Die Zeit kommt vom Server."
+```
+
+Und die Gegenproben dazu, weil ein Satz auf dem Schirm noch kein Beleg ist:
+
+- **Sie liegt auf dem Knoten, den ich gewählt habe.** `/var/lib/ngc/apps/org.sorglos.uhr` steht
+  auf **svc-1** und **nicht** auf svc-2. Damit ist zum ersten Mal gemessen, dass eine App dort
+  landet, wo man sie hinschickt — mit einer Maschine war das nicht zu prüfen.
+- **Die Zeit ist echt.** `12:29:55Z` ist die Sekunde, in der das Fenster aufging. Sie wurde
+  nicht aus dem Browser gelesen: sie kam aus dem Behälter.
+- **Sie kam über `stdout`.** Das ist der Stolperstein 4, umgedreht und bewiesen: die Zeile, die
+  der Dienst auf `stdout` schreibt, steht im Fenster. Die andere Zeile, die er gleichzeitig auf
+  `stderr` schreibt, steht dort **nicht** — die sieht nur das Protokoll des Controllers.
+
+**Damit ist die Lücke zu, die diesen Auftrag ausgelöst hat:** NGC hat nicht mehr eine App,
+sondern zwei, und der Weg dahin ist nicht mehr unaufgeschrieben. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
 das gelaufen ist, sind Schritt 2 und Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft —
 und dieses Papier sagt es hier, statt es wie Erledigtes aussehen zu lassen.
 
@@ -621,8 +645,10 @@ Zwei Fälle halten das auch ohne Behälter fest, und einer davon prüft das Gege
 je **auch** auf `stderr` landet, denn dann lassen sich die Richtungen nicht mehr
 unterscheiden.
 
-Was damit **noch nicht** gemessen ist: dass die Zeile auch durch den Kanal bis ins Fenster
-kommt. Das ist dieselbe Lücke wie in Schritt 7.
+**Und durch den Kanal bis ins Fenster ist es jetzt auch gemessen** (Schritt 7): im Rahmen der
+App stand `2026-10-24T12:29:55Z` — die `stdout`-Zeile. Die `stderr`-Zeile stand dort nicht. Die
+zwei Richtungen sind damit nicht nur im Behälter, sondern über den ganzen Weg
+auseinandergehalten.
 
 ---
 
@@ -880,14 +906,39 @@ Fünf Läufe. Der erste Versuch scheitert **immer**; der zweite geht **meistens*
 kein „man muss es zweimal machen", sondern **unzuverlässig** — und das ist schlimmer, weil man
 sich darauf auch nicht einrichten kann.
 
+**Alle fünf Läufe waren gegen die API-Fassung, die bis 12:20 lief** (`config.json` nannte
+0.2.1). Danach wurde 0.2.2 eingespielt, und **der erste Lauf dagegen kam beim ERSTEN Versuch
+durch.** Ein Lauf ist keine Messung — es kann derselbe Zufall sein, der in Lauf E dreimal
+brauchte. Aber es ist der erste Hinweis, dass 0.2.2 hier anders ist, und wer das nachmisst,
+fängt dort an.
+
 Thomas kannte das Bild und hielt es für die zwei APIs der Anlage — das ist es **nicht**: die
 Shell redet nicht mit `api-1` oder `api-2` unmittelbar, sondern über `ngc.mein.lan/api/v1/ws`,
 in jedem Versuch über denselben Weg.
 
-**Nicht gemessen:** woran es liegt. Der Verdacht geht auf die Vertrauensliste — der erste
+**Nicht gemessen: woran es liegt.** Der Verdacht geht auf die Vertrauensliste — der erste
 Versuch holt die Kette erst (`openTrustFromChain`, „login: no trust list") und scheitert dabei,
-der zweite findet sie vor. Das ist eine Vermutung, keine Messung, und Lauf E passt nicht
-vollständig dazu: wäre es nur das Holen der Kette, müsste der zweite Versuch immer gehen.
+der zweite findet sie vor. Das ist eine Vermutung, keine Messung, und **Lauf E passt nicht
+dazu**: wäre es nur das Holen der Kette, müsste der zweite Versuch immer gehen.
+
+**Und das hier ist der ehrliche Teil — was ich NICHT ausschließen konnte.** Es steht hier,
+damit es später niemand als „ging doch" abtut:
+
+- **Das Browserprofil.** Die Läufe A bis D nahmen je ein frisches Profil, Lauf E nicht — aber in
+  Lauf E scheiterte der zweite Versuch im **selben** Profil. Ob ein Profil, das schon einmal
+  drin war, den ersten Versuch bestehen würde, habe ich nicht gemessen.
+- **Die Dauer von Argon2id und mein Zeitlimit.** Der Schlüssel wird im Browser gerechnet. Ich
+  habe 12 bis 25 Sekunden gewartet; ob ein Versuch, der mir als „gescheitert" galt, in Wahrheit
+  noch rechnete, habe ich nicht geprüft — der Satz „Anmeldung fehlgeschlagen." stand allerdings
+  schon auf der Seite, und den schreibt die Maske erst, wenn sie fertig ist.
+- **Der Browser.** Alles mit chromium gemessen, nichts mit Firefox. Der Code kennt für genau
+  diese Gegend Unterschiede zwischen den Maschinen (`passwordLoginFits`, `passkeyFits`), und in
+  Firefox 141 war hier schon einmal etwas anders.
+- **Dass es überhaupt am ersten Versuch hängt** und nicht an der Zeit seit dem Laden der Seite.
+  Jeder erste Versuch kam wenige Sekunden nach dem Laden; ein erster Versuch nach einer Minute
+  Wartezeit ist nicht gemessen.
+
+Ein Fragezeichen also, und es bleibt eines, bis jemand es messend aufmacht.
 
 **Warum es mehr ist als ein Schönheitsfehler:** wer sich zum ersten Mal anmeldet, bekommt den
 Satz für ein falsches Kennwort. Er wird sein Kennwort für falsch halten, es noch einmal tippen —
@@ -937,15 +988,35 @@ den Katalog noch nicht geholt", nicht für einen gefälschten Katalog.
 Wer das liest, hält seinen Laden für kompromittiert. Das ist die teuerste Fehlmeldung von
 allen, die hier stehen: sie beschuldigt.
 
-Behoben ist es auf dem Zweig `ngc-ersteapp` („Stop calling a store a forger when no catalog was
-fetched yet"); in der 0.2.1, die auf der Anlage läuft, ist der Satz noch da.
+**Hier stand zuerst, der Zweig `origin/ngc-ersteapp` behebe das und sei noch nicht eingespielt.
+Das war falsch**, und es ist nachgemessen worden: die Oberfläche **kennt** den Fall und hat
+einen eigenen, besseren Satz dafür, aus PR 86 —
+
+> Der Katalog dieses Stores ist noch nicht geholt. NGC sieht stündlich nach; unter Quellen steht,
+> wann es das letzte Mal geklappt hat.
+
+Und sie ist **ausgeliefert**: in `/var/www/ngc/public/assets/js/apps/store.js` auf api-1 stehen
+**beide** Sätze (nachgezählt: „noch nicht geholt" einmal, „nicht echt." zweimal). Der alte
+Zweig trägt dieselbe Idee mit schwächerem Text und ist überholt, nicht ungemergt.
+
+**Damit ist der Befund schärfer, nicht erledigt:** ich habe „nicht echt" gesehen, **obwohl** die
+Oberfläche den Fall „noch nicht geholt" kennt und zeigen kann. Dieser Satz fällt nur im letzten
+Zweig — die API hat also etwas **anderes** als `E_NOTFOUND` geantwortet. Es gibt einen zweiten
+Weg zu demselben falschen Satz, und den kennt niemand.
+
+**Nicht gemessen:** welcher Code es war. Der Verdacht fällt auf `E_UNREACHABLE` — dann hätte die
+API den Laden in dem Moment nicht erreicht, und der Satz lügt ein zweites Mal, weil er dem
+Betreiber eine Fälschung unterstellt, wo eine Verbindung fehlte. Zu prüfen ist es an der
+Antwort, nicht am Satz auf dem Schirm.
 
 **Umgehen:** im Reiter „Quellen" erst **„Jetzt nachsehen"** drücken, dann in „Apps" gehen.
 
-**Vorschlag:** den Zweig `ngc-ersteapp` ansehen und einspielen. Er ist klein (drei Dateien) und
-behebt genau das.
+**Vorschlag:** den Fall noch einmal herstellen und den **Code** lesen, den die API
+zurückgibt — Netzwerkansicht oder Protokoll der API —, statt den Satz auf dem Schirm. Erst dann
+weiß man, welcher Zweig anzufassen ist. `origin/ngc-ersteapp` ist es nicht; der ist überholt und
+kollidiert mit main.
 
-### Befund 9: Beim Aktivieren bricht der Tunnel des Controllers ab
+### Befund 9: Beim Aktivieren brach der Tunnel ab — auf 0.2.1, nicht mehr auf 0.2.2
 
 Das ist der Befund, an dem der Weg heute **endet**. Gemessen am 24.10.2026, 12:14:38, beim
 Klick auf „Aktivieren" für die Uhr auf `svc-1`:
@@ -971,17 +1042,26 @@ eine laufende Terminal-Sitzung mit**, die nichts damit zu tun hatte.
 Journal zwischen 12:08 und 12:20 kein `Stopping`/`Started`), der Abbruch hängt also am
 Aktivieren und nicht an einem Neustart.
 
-**Was daran nicht gesichert ist:** es ist **eine** Messung, auf der API-Fassung, die bis 12:20
-lief. Danach hat eine andere Sitzung 0.2.2 eingespielt; ob es dort noch auftritt, ist **nicht
-gemessen**. Und warum die API den Vertrag bricht, ist auch nicht gemessen — nur dass der
-Controller es so nennt.
+**Und dann die Gegenprobe, die den Befund halbiert.** Um 12:20 und 12:21 hat eine andere
+Sitzung **API 0.2.2** eingespielt. Derselbe Lauf, derselbe Knoten `svc-1`, dieselbe Aktion, nur
+die neue Fassung — um 12:28:08 sagte die Oberfläche:
 
-**Warum es wichtig ist:** das ist die Station, die vorher niemand erreichen konnte, weil es nur
-eine App gab. Die erste Einrichtung einer zweiten App trifft sie sofort.
+> Die App ist eingerichtet.
 
-**Vorschlag:** eigener Lauf gegen 0.2.2, mit dem Paket der Uhr, das dafür bereitliegt. Wenn es
-noch auftritt: die Stelle, an der der Controller den Vertragsbruch feststellt
-(`link`), sagt, welche Nachricht ihn auslöst — damit hat die Suche einen Anfang.
+Der Abbruch ist also **auf 0.2.1 gemessen und auf 0.2.2 nicht mehr aufgetreten**. Je eine
+Messung auf jeder Seite, nicht mehr: dass 0.2.2 es behebt, ist damit **nicht** belegt — belegt
+ist, dass es dort einmal durchlief, wo es vorher einmal riss. Warum die alte Fassung den Vertrag
+brach, ist nicht gemessen und wird es wohl auch nicht mehr.
+
+**Was bleibt, auch ohne Erklärung:** das war die Station, die vorher niemand erreichen konnte,
+weil es nur eine App gab — und die erste Einrichtung einer zweiten App hat sie sofort getroffen.
+Dass sie heute durchläuft, hängt an einer Fassung, die zwischen den beiden Messungen eingespielt
+wurde. Ein Grund mehr, diesen Schritt bei jeder neuen Fassung wirklich zu fahren, statt ihn für
+erledigt zu halten: er war genau einen Vormittag lang kaputt, und es hat es niemand gemerkt,
+weil niemand eine zweite App hatte.
+
+**Nebenwirkung, die bleibt:** der Abbruch riss eine laufende Terminal-Sitzung mit
+(`code=E_PROTOCOL`). Wer an derselben Anlage misst, hatte um 12:14:38 ein Loch in seinen Zahlen.
 
 ### Befund 10: Die Architektur steht an drei Stellen
 
