@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<!-- The entry page of org.sorglos.uhr, exactly as it lies in the ui/ folder of
+     the app's package. The shell never fetches it into the app's frame: it
+     comes out of the archive the UI proof vouches for, and shell/appframe.js
+     replaces both addresses below by the bytes behind them before a browser
+     sees the page. -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Uhr</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<p id="zeit" class="zeit">—</p>
+<p id="hinweis" class="hinweis">Die Zeit kommt vom Server.</p>
+<button id="lesen" type="button">Noch einmal lesen</button>
+<script src="app.js"></script>
+</body>
+</html>

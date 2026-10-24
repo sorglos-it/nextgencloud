@@ -1,0 +1,4 @@
+# What the build makes, never the tree: the cross compiled service and the
+# image of the app (docs/app-weg.md).
+build/
+templates/services/
