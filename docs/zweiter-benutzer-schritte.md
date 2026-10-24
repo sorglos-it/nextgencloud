@@ -5,9 +5,20 @@ Vertrauensliste wird im Browser mit dem Schlüssel der Person unterschrieben, un
 Schlüssel ist ihr Passwort. Kein Agent tippt es. Alles andere ist gebaut und gemessen
 (`docs/vertraege-v1.2.md`, Punkt 72).
 
-Die Testanlage `https://ngc.test` trägt diesen Stand schon: die beiden geänderten Dateien
-sind dort am 24.10.2026 eingespielt worden, mit Sicherung unter
-`/root/zweiter-benutzer-backup-20261024/`.
+## WELCHE Anlage — bitte zuerst lesen
+
+Es gibt seit dem 24.10.2026 **zwei**, und nur auf einer liegt dieser Stand.
+
+- **Einzel-VM `https://ngc.test`** (10.2.3.208, NGC `0.2.0`): **hier** sind die zwei geänderten
+  Dateien am 24.10.2026 eingespielt worden, mit Sicherung unter
+  `/root/zweiter-benutzer-backup-20261024/`. **Die Schritte unten gelten für diese Anlage.**
+  **Sie ist seit etwa 12:40 nicht erreichbar** (kein SSH, kein HTTPS). Erst wenn sie wieder
+  läuft, lassen sich die Schritte gehen.
+- **Verteilte Anlage `https://ngc.mein.lan`** (api-1 … store, NGC `0.2.1`): läuft **exakt
+  `origin/main`** und hat die beiden Formulare **nicht**. Dort sind die Schritte unten
+  **nicht** zu gehen, solange dieser Zweig nicht verschmolzen und ausgerollt ist.
+
+Und gegen den **Namen** messen, nie gegen die IP: Zertifikat und Passkey hängen am Namen.
 
 ---
 

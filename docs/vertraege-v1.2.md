@@ -4626,3 +4626,58 @@ zweiter Mensch wirklich angelegt wird, sich anmeldet und sein Startmenü sieht. 
 neue Fassung der Vertrauensliste **im Browser mit dem Schlüssel der Person** unterschrieben, und
 dieser Schlüssel ist ihr Passwort. Kein Agent darf es tippen. Die Stationen 3 und 4 oben bleiben
 deshalb **ungemessen**, bis Thomas die Schritte gegangen ist; sie werden danach hier nachgetragen.
+
+### Nachtrag vom 24.10.2026, nachmittags: **welche** Anlage gemessen wurde
+
+Seit heute gibt es **zwei** Anlagen, und eine Zahl ohne ihren Namen ist hinterher wertlos.
+
+| | Einzel-VM | Verteilte Anlage |
+|---|---|---|
+| Name | `ngc.test` (10.2.3.208) | `ngc.mein.lan` → api-1 (10.2.3.210) |
+| Fassung von NGC | `0.2.0` | `0.2.1` |
+| Vertrauensliste | Fassung 6, `RB1CPN7b…` | Fassung 6, `JtyqTFme…` — **dieselbe Nummer, andere Anlage** |
+| `rp` | leer | `ngc.mein.lan`, Origin `https://ngc.mein.lan` |
+| Dieser Zweig eingespielt? | **ja**, die zwei Dateien | **nein** |
+
+**Alles oben in diesem Punkt ist an der Einzel-VM gemessen** — Einspielen, Auslieferung,
+Browserprobe. **Die Stationstabelle gilt trotzdem für beide**, und das ist jetzt stärker belegt
+als heute Vormittag: die verteilte Anlage läuft **exakt `origin/main`**. Gemessen, nicht
+geschlossen: ihre `users.js`, über HTTPS geholt, hat den git-Hash `83344ee` — Byte für Byte die
+Datei aus `origin/main`. Sie hat also ebenfalls **keine Tür** für einen zweiten Benutzer.
+
+**Die Namen lügen teilweise, am laufenden Dienst nachgesehen** (eine Warnung der
+Koordinationssitzung, hier nicht geglaubt, sondern geprüft):
+
+- **api-1** und **api-2** tragen wirklich eine NGC-API: beide antworten auf
+  `GET /api/v1/trust` mit `E_LOGIN` und auf `GET /api/v1/setup` mit `E_NOTFOUND` — also hat
+  jede von beiden schon einen Verwalter. api-1 liefert zusätzlich das Webinterface.
+- **db-1**, **svc-1**, **svc-2** haben von 22, 80, 443, 5432, 7443, 7444, 8443, 9443, 7000, 7001
+  **nur 22** offen. Für zwei Controller ist das richtig — „nobody dials a controller" —, für
+  die Datenbank sagt es nur, dass sie nach außen nichts anbietet.
+- **store** nimmt auf 443 eine Verbindung an, bricht aber im TLS-Handschlag ab
+  (`SEC_E_ILLEGAL_MESSAGE`). **Dort läuft kein brauchbares HTTPS.**
+
+### Zwei API-Server — was das für einen zweiten Benutzer heißt
+
+Die verteilte Anlage hat **zwei** APIs, und ihr Webinterface weiß das:
+`/config.json` nennt `https://api-1.ngc.mein.lan:7443` **und**
+`https://api-2.ngc.mein.lan:7443`. Ein zweiter Benutzer kann also an einem anderen API-Server
+landen als dem, an dem er angelegt wurde.
+
+**Gelesen, nicht gemessen:** das soll der Vertrag schon tragen. `ngc.users/api/trust` nimmt die
+Fassung nicht nur an, sondern verteilt sie — `AddVersion`, `settle`, **`pushTrust`**
+(`apps/server-api/classes/coreapp/users.go:250`, `:257`). Der zweite API-Server bekäme die
+Fassung damit, ohne dass die Oberfläche etwas dazutut.
+
+**Nicht gemessen, und es soll niemand glauben, es sei geprüft:** dass ein an api-1 angelegter
+Mensch sich an api-2 anmelden kann. Dafür müsste dieser Zweig auf der verteilten Anlage liegen,
+und dafür fehlt der Zugang (die sechs VMs stehen in keiner SSH-Konfiguration, und der
+NGC-Schlüssel öffnet sie nicht). **Das ist die nächste Messung, nicht ein Ergebnis dieser.**
+
+### Und ein Befund, der nicht zu dieser Arbeit gehört, aber gemessen ist
+
+**Die Einzel-VM `ngc.test` ist seit etwa 12:40 nicht mehr erreichbar**: 1 von 3 Ping-Antworten,
+kein SSH, kein HTTPS. Um 12:0x lief sie noch — da wurden die zwei Dateien eingespielt und die
+Browserprobe lief grün gegen sie. Was sie umgeworfen hat, ist **nicht gemessen**, und zwei
+statische Dateien einer Oberfläche sind keine plausible Ursache. Solange sie unten ist, kann
+niemand die Schritte aus `docs/zweiter-benutzer-schritte.md` gehen.
