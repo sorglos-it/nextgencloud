@@ -423,7 +423,13 @@ func (s *Session) CloseWith(ctx context.Context, c *link.Channel, cl wire.Close)
 
 // closeChannel writes one CLOSE and notes it. It is the ONE place of this
 // package that notes a CLOSE of ours -- the sentence lint_test.go measures --
-// and Close and CloseWith are the two ways in.
+// and Close, CloseBecause and CloseWith are the three ways in.
+//
+// It said TWO until CloseBecause arrived (23.10.2026) and was not carried
+// here. That is why lint_test.go now measures the SET of the callers and not
+// only that the note sits in one function: the old case was green either way,
+// so the sentence could drift without anything saying so. A fourth way in is
+// a decision, and the case is where it gets made.
 func (s *Session) closeChannel(ctx context.Context, num uint32, cl wire.Close) error {
 	if err := s.writeClose(ctx, cl, num); err != nil {
 		return err
