@@ -971,6 +971,37 @@ ist mit einem `start` rückgängig.
 
 ## Was offen bleibt
 
+**Der Ausfall aller drei Datenbankknoten gleichzeitig ist ungemessen — und was
+die Anlage dafür bereithält, ist gemessen.** Auf allen drei Knoten steht am
+24.10.2026 abends in `/var/lib/mysql/grastate.dat`:
+
+```
+db-1, db-2, db-3:   seqno: -1,  safe_to_bootstrap: 0
+```
+
+(Von mir auf allen drei einzeln gelesen, bei laufendem Verbund `size=3`.)
+
+Was daraus **folgt** — Galeras eigene Regel, also eine Überlegung und keine
+Messung: fallen alle drei **unsauber** zugleich weg (Stromausfall, Neustart des
+Wirts, oder dreimal `qm stop`), darf **kein** Knoten den Verbund von selbst
+hochziehen. Keiner weiß, ob er den neuesten Stand hat, also wartet jeder — und
+die Anlage braucht `galera_new_cluster` von Hand. `seqno: -1` heißt genau das:
+keiner hat beim Anhalten seinen Stand hinterlassen.
+
+Damit hat der Umbau auf drei Knoten **auch etwas weggenommen**, und das ist das
+Gegenstück zum db-1-Fall oben. Am Mittag trug der einzelne Knoten
+`safe_to_bootstrap: 1` und fing sich nach einem harten Schnitt in vier Sekunden
+allein. Jetzt übersteht die Anlage den Verlust **eines** Knotens, ohne dass ein
+Benutzer es merkt — und sie steht, bis jemand kommt, wenn **alle** zugleich
+weg sind. Der eine Fall ist häufig und ist jetzt gelöst; der andere ist selten
+und war vorher gelöst.
+
+Das ist kein Vorwurf an den Umbau — ein seltener Fall mit einem Handgriff ist
+besser als ein häufiger ohne. Aber es ist genau die Sorte Veränderung, die man
+nicht merkt, bis sie eintritt, und es ist der Fall, der heute früh von 02:45 bis
+09:30 gedauert hat. Wer ihn messen will, braucht ein Fenster, in dem die Anlage
+liegen darf, und sollte vorher wissen, wo `galera_new_cluster` steht.
+
 **Der Ausfall von zwei Datenbankknoten gleichzeitig ist ungemessen.** Keine der
 beteiligten Sitzungen hat ihn gefahren, und aus zwei verschiedenen Gründen, die
 beide dastehen sollen. Bei mir ist es Methode: ich hatte die Erwartung dafür
