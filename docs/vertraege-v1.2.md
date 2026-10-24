@@ -5513,6 +5513,22 @@ dass etwas kaputt war, und einmal ist derselbe Commit (`97945b6`) bei der Wieder
 Änderung grün geworden. Eine Prüfung, die gelegentlich ohne echten Fehler rot wird, ist
 schlimmer als keine Prüfung (`tools/recovery-ci.sh`) — also war zu messen, nicht zu drehen.
 
+**Zur Nummer, und warum sie kollidiert.** Gemessen am 24.10.2026 an den offenen Pull Requests:
+`main` endet bei 82, die **83 ist von fünf Zweigen beansprucht** (PR 139, 142, 143, 144 und
+dieser) und die 84 von PR 140. Vier der fünf müssen umschreiben, und erst beim Zusammenführen
+fällt das auf: `tools/check-buch.sh` liest nur die eigene Datei und sieht fremde Zweige nicht.
+
+Ein Ausweichen nach oben geht nicht. Auf einem Zweig, der von `main` geschnitten ist, wäre die 85
+ein Loch über 83 und 84 — und genau das weist der Riegel mechanisch ab (hier ausprobiert: „no
+chapter carries these numbers, although they lie between 19 and 85: 83 84"). Die 83 ist auf diesem
+Zweig also die einzige Nummer, die den Riegel grün lässt. Das ist keine Nachlässigkeit, sondern
+die Regel des Buches: eine Nummer lässt sich nicht vorreservieren, **wer zweitens zusammenführt,
+schreibt um**, und bis dahin hält jeder Zweig seine Reihe lückenlos.
+
+Wer diesen Pull Request zusammenführt, nachdem schon eine 83 in `main` steht, gibt diesem Punkt
+die nächste freie Nummer und zieht die Zeile in der Reihe-B-Tabelle mit. Verweise auf diesen Punkt
+gibt es noch keine, also kostet das Umschreiben zwei Zeilen.
+
 **Was gemessen ist.** Die Laufliste der Prüfung, 200 Einträge gelesen, davon **90
 abgeschlossene Läufe** (ohne abgebrochene). In **12** war die Aufgabe `-race` rot. In **9 von 90
 = 10 %** lag das an zwei Fällen des Pakets `apps/server-controller/classes/link`:
