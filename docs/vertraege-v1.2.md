@@ -156,8 +156,15 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
 | 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
 | 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
-| 75 | Die Maschine der ersten Messungen ist aus – die Messungen gelten, die Anweisungen nicht | gilt – 64 Verweise in 9 Dateien geprüft und getrennt | Umgebung |
-| 82 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
+| 75 | Die Maschine der ersten Messungen ist aus – die Messungen gelten, die Anweisungen nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 76 | diese Nummer ist leer – kein Versehen, sondern eine Spur | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 77 | Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 78 | Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 79 | Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
+| 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5352,9 +5359,154 @@ nicht geübt.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
 
+## Punkt 82: Die stehende Zustimmung ist gebaut und wirkungslos — ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen
+
+**Gemessen am 24.10.2026** an der Sechs-Maschinen-Anlage (`api-1`, `api-2`, `db-1`, `svc-1`,
+`svc-2`, `store`; alle Zeiten UTC, die Maschinen laufen auf UTC). Nicht an der Einzel-VM `ngc`.
+
+Der stündliche Update-Lauf (`Server.rollouts`, „the beat of the update rounds") holt das
+veröffentlichte Release, prüft es gegen den Release-Schlüssel der Anlage, lädt ein Archiv
+herunter — und bleibt seit jeher am **ersten** Knoten stehen. Vier Läufe in Folge dieselbe Zeile:
+
+```
+00:50 / 01:50 / 09:44 / 10:44   ngc-api 0.2.2   db-1   E_INTERNAL
+```
+
+Im Journal von `ngc-api` steht dazu nur `WARN the update round stopped error="updates: the round
+stopped at a node"` — **ohne Knoten und ohne Grund**. Der Grund steht im Protokoll der Anlage,
+nicht im Journal: `Updates.abort` schreibt `target version node cause` über `audit.Log`. Er ist
+also da, nur an der Stelle, an der ihn beim Suchen niemand vermutet.
+
+### Die erste Wand, behoben
+
+`ActStage` hatte im Controller **gar keinen Behandler**. Der Kanal fiel durch `Server.core` bis
+zur `acts`-Suche und endete dort `E_INTERNAL`, ohne dass vom Paket `update` je etwas gefragt
+wurde — der Quelltext sagte das an genau der Zeile selbst. Daneben war `serve.Deps.Updater` auf
+`nil` gesetzt, mit einer Begründung im Code: `update.Deps` nimmt die Vertrauensliste als **Wert**,
+während der Controller seine Liste Fassung für Fassung unter sich austauscht
+(`chain.Keeper.Current`), und ein einmal beim Verdrahten gebauter Manager arbeitete gegen die
+Liste jenes Augenblicks.
+
+Geschlossen wie beim `Installer`: die Liste wird **je Aufruf** nach unten gereicht, und der
+Manager entsteht je Kanal. Gebaut in PR 121.
+
+**Am Gerät nachgewiesen, nicht nur übersetzt.** Mit dem Probebau auf den vier Controllern kommt
+der Lauf zum ersten Mal über die Migrationsstufe hinweg und holt ein **zweites** Archiv:
+
+```
+13:21:04  /ngc-api-amd64.tar          200     <- die Stufe, die vorher E_INTERNAL war
+13:21:06  /ngc-controller-amd64.tar   200     <- hat die Anlage nie zuvor geholt
+db-1:/var/lib/ngc/staged/ngc-controller   26 736 640 Byte   0600 root   13:21
+```
+
+Die Datei auf der Platte ist der Beleg: `update.Manager.Stage` ist gelaufen, hat Unterschrift,
+Größe und Prüfsumme gehalten und unter dem Namen abgelegt, den ein Installierer sucht.
+
+### Die zweite Wand, und sie ist die eigentliche
+
+Eine Sekunde später:
+
+```
+13:21:07  ngc-controller 0.2.2   db-1   E_FORBIDDEN
+```
+
+**Meine erste Erklärung war falsch, und die Messung hat sie widerlegt.** Ich hielt die
+Fassungsgleichheit für die Ursache — db-1 trug selbst 0.2.2. Auf 0.2.1 gesetzt, also echt älter,
+kam **dieselbe** Absage.
+
+Der Grund steht in `core.All`:
+
+```
+ActStage    Admin=true  Root=false  Changes=false   <- darum geht der stage-Schritt jetzt
+ActInstall  Admin=true  Root=true   Changes=true    <- "signed task required"
+```
+
+und `task.Check` (`shared/task/task.go:174`):
+
+```go
+if in.Task == nil {
+	if in.Rule.Root {
+		return nil, ErrNoTask
+	}
+```
+
+Der Rollout ruft aber
+
+```go
+u.Send.Call(ctx, node, core.ActInstall, params, nil, nil, nil, nil)   // keine Aufgabe
+```
+
+Der Kanal stirbt damit **am Zugangstor**, bevor `update.Manager` überhaupt gefragt wird — weshalb
+der Controller zu diesem Vorgang **nichts** protokolliert. Wer dort nach der Ursache sucht, findet
+eine stumme Maschine.
+
+### Der Widerspruch
+
+`core.Unattended` und `store.Approved` gibt es **genau** für den Fall „Kanal ohne Benutzer",
+`install.go` hält dafür einen eigenen Zweig (`d.User == ""`), und die stehende Zustimmung steht in
+der Vertrauensliste der Anlage auch wirklich drin:
+
+```
+auto: [{ngc-api, <Release-Schlüssel>}, {ngc-controller, …}, {ngc-web, …}, {system}]
+```
+
+**Nur erreicht dieser Zweig nie die Ausführung**, weil dieselbe Vertragstabelle `install` als Root
+führt. Die stehende Zustimmung ist gebaut, eingetragen, geprüft — und wirkungslos. Ein
+unbeaufsichtigter Lauf kann damit **kein** NGC-Teil einsetzen, auf keinem Knoten.
+
+Dieselbe Klasse wie die sechs Wände aus **Punkt 71**: jedes Stück für sich ist vertretbar
+begründet, und die Lücke liegt zwischen zwei geprüften Teilstrecken. Der Unterschied ist, dass
+diese hier nicht in einer systemd-Unit oder einem Dateimodus liegt, sondern **im Vertrag selbst**,
+und dass zwei seiner Teile einander widersprechen.
+
+### Was ausgeschlossen ist
+
+Damit niemand dort noch einmal sucht, jedes Stück gemessen:
+
+| Verdacht | Befund |
+|---|---|
+| die Rollen des Knotens | `tunnel.Components` enthält `ngc-controller` **immer**, auch bei Rolle `db`. `runs()` ist es nicht |
+| verschiedene Schlüssel | der `releaseKey` der vier Controller und der Schlüssel der `auto`-Einträge sind derselbe (`pN6Z6a9NR0aG6aEJIJ5EHg`) |
+| die gemeldeten Fassungen | `PutComponents` schreibt **nur** ein geglückter Install (`install.go:735`). Da nie einer glückte, sind sie leer — und `store.Newer` nimmt jede Fassung als neuer als `""`. Beide Seiten lassen das durch |
+| `db-1` als Maschine | db-1 ist nur der **erste berührte** Knoten: der Rollout legt vor allem anderen dem Migrationsknoten (Rolle `db`, kein API-Knoten) die `ngc-api`-Datei bereit. Ob svc-1 und svc-2 es könnten, ist **nicht gemessen** — der Lauf stirbt vorher |
+
+### Die Entscheidung für Thomas
+
+Sie liegt in `shared/` und ist damit eine Vertragsfassung, kein Zweig.
+
+**a) `install` eines NGC-Teils darf ohne Root-Aufgabe laufen, wenn eine stehende Zustimmung dafür
+steht.** Das ist das, wofür `core.Unattended` gebaut wurde; der Zweig in `install.go` bekäme eine
+Ausführung. Der Preis: die Zustimmung in der Vertrauensliste wird zur alleinigen Schranke vor dem
+Austausch eines Programms, das als root läuft. Sie ist unterschrieben und versioniert, also keine
+schwache Schranke — aber sie ist eine *stehende*, und niemand sieht in dem Augenblick hin.
+
+**b) Der Rollout führt eine unterschriebene Aufgabe mit.** Dann bleibt die Schranke je Vorgang.
+Zu sagen ist, **wer sie wann unterschreibt**: in einer stündlichen Runde sitzt kein Mensch. Eine
+vorrätig unterschriebene Aufgabe wäre eine stehende Zustimmung unter anderem Namen, nur ohne deren
+Versionierung — also (a) mit mehr Teilen. Dazu kommt `l.MayRoot(cert.User, in.Node)`: selbst **mit**
+Aufgabe braucht der Unterzeichner Systemrechte auf **jedem** Knoten, den der Lauf anfasst — Wand
+(4) aus Punkt 71, noch einmal und diesmal für alle Knoten gleichzeitig.
+
+**c) Es bleibt, wie es ist, und das Einsetzen ist Handarbeit.** Dann gehört es gesagt: der
+stündliche Lauf lädt jede Stunde dieselben 31 MB und wirft sie weg, die Updates-Seite bietet an,
+was nie eingesetzt wird, und der Satz „die Anlage aktualisiert sich selbst" gilt für den Katalog
+und die Apps, aber nicht für NGC.
+
+> **Mein Vorschlag: (a)**, und zwar nicht aus Bequemlichkeit, sondern weil (b) dieselbe Schranke
+> aufbaut und dabei einen Menschen erfindet, den es in einer stündlichen Runde nicht gibt. Wer
+> (a) nicht will, will in Wahrheit (c) — und dann sollte die Oberfläche aufhören, ein Update
+> anzubieten, das sie nicht einsetzen kann.
+
+**Was dieser Punkt NICHT sagt:** dass ein Lauf nach der Entscheidung durchliefe. Gemessen ist der
+Weg bis zum bereitgelegten File. Was hinter dem Zugangstor steht — `installPart`, der Tausch, der
+Dienstneustart, der Gesundheitstest — ist auf dieser Anlage **nie gelaufen** und bleibt
+unvermessen, bis es das ist.
+
+Verwandt: **Punkt 79** misst denselben stündlichen Takt von der anderen Seite (der Laden ist weg);
+hier geht es nicht um die Erreichbarkeit des Ladens, sondern um den Kanal, der danach kommt.
 ---
 
-## Punkt 82: Der kleine Fall hat wieder eine Maschine — und sie ist aus einem Skript entstanden, nicht von Hand
+## Punkt 83: Der kleine Fall hat wieder eine Maschine — und sie ist aus einem Skript entstanden, nicht von Hand
 
 > **Stand: gilt.** Art: Umgebung und Messung. Schließt an Punkt 75 an.
 
@@ -5487,3 +5639,86 @@ schlimmer als Stille.** Gegenprobe im Protokoll: Wirt 20 Kerne, VM 2 Kerne.
 
 Das ist derselbe Fehler, um den dieser ganze Zweig geht, nur eine Ebene tiefer: **die falsche
 Maschine messen und das Ergebnis für einen Befund halten.**
+
+### Nachtrag: vier der Messskripte sind geborgen — und das Bergen hat einen Scheinbeweis aufgedeckt
+
+**Entschieden (Thomas, 24.10.2026):** vier der 16 eigenen Skripte kommen ins Repo. VM 208 dafür
+ein zweites Mal angeworfen, gelesen, wieder sauber heruntergefahren.
+
+Es sind **16**, nicht 19: die beiden `messen-boot.sh` sind bytegleich, und zwei Dateien
+(`ulhrepo/install.sh`, `ulhrepo/ulh.sh`) gehören dem **ulh**-Repo und nicht NGC.
+
+| jetzt im Repo | war | misst |
+|---|---|---|
+| `tools/siegel-tpm.sh` | `~/smoke/run.sh` | versiegeln, mit Signatur über die **eigene Nonce des TPM** öffnen, und ein Wiedereinspielen muss scheitern |
+| `tools/siegel-stick.sh` | `~/smoke/stick.sh` | derselbe Weg mit dem Schlüssel in einem PKCS#11-Stick: Hash außen, der Stick unterschreibt nur den Abdruck |
+| `tools/env-werkzeug-weg.sh` | `~/task6fix1/n9.sh` | ein Werkzeug aus dem `PATH` genommen muss von `recovery-env.sh` **benannt** werden; liest die `need=`-Liste aus dem Skript selbst |
+| `tools/release-mutanten.sh` | `~/relbuild/mutanten.sh` | sieben Mutanten an `tools/build-release.sh` plus fünf Eingabefälle |
+
+**Verdeckte Abhängigkeiten, die niemand aufgeschrieben hatte.** Beide Siegel-Skripte starten den
+TPM-Simulator **nicht** (die Instanz `main` teilen sie mit `recovery-test.sh`, und eine zweite
+dahinter würde genau die PCRs verschieben, gegen die versiegelt wird), und `siegel-stick.sh`
+braucht den dauerhaften Primary an `0x81000001`, den `siegel-tpm.sh` anlegt. Vorher fiel beides
+als nackter TPM-Fehler auf. Jetzt wird es geprüft und benannt.
+
+**Gemessen** auf einer Wegwerf-VM, mit `tools/einzelmaschine.sh` gebaut:
+
+| Lauf | Ergebnis |
+|---|---|
+| `siegel-tpm.sh` | Ausstiegscode 0, `ALLES GRUEN`, Replay „abgelehnt, wie es sein muss" |
+| `siegel-stick.sh` | Ausstiegscode 0, `STICK-WEG GRUEN`, P-384 aus dem Stick, Replay abgelehnt |
+| `env-werkzeug-weg.sh` | Ausstiegscode 0; mit allem `Umgebung: vollständig`, dann `Es fehlt: grep`, `grep sed`, `grep sed tpm2_readpublic` |
+| `release-mutanten.sh` | Ausstiegscode 0, `mutanten: ok` — K0/L1/L2 grün, M1–M4 rot, fünf Versionen abgewiesen |
+
+**Gegenproben, damit die Riegel nicht nur dastehen:** ohne Simulator endet `siegel-tpm.sh` mit 2
+und nennt den Startbefehl; nach `recovery-swtpm.sh reset main` endet `siegel-stick.sh` mit 2 und
+nennt `siegel-tpm.sh`; und bevor `recovery-tools.sh` gelaufen war, hielt `env-werkzeug-weg.sh`
+sich selbst an: „mit allen Werkzeugen schon rot — hier ist nichts zu messen".
+
+### Der Scheinbeweis, und warum er hierher gehört
+
+Der **erste** Mutantenlauf meldete K0, L1 und L2 rot und M1 bis M4 „rot, wie erwartet". Das sah
+nach vier sterbenden Mutanten aus. Es war keiner.
+
+Auf der Maschine fehlte `qemu-user-static`, und `build-release.sh` weist dann **jeden** Lauf
+schon am ersten Schritt ab — alle mit derselben Meldung. Die lebenden Kontrollen fielen auf,
+weil sie grün sein müssten. Die sterbenden Mutanten fielen **nicht** auf: sie waren rot, nur
+nicht an ihrer Mutation. Keiner von ihnen hat seine eigene Mutation je erreicht.
+
+Besonders tückisch ist M4: seine Mutation („kein Läufer für arm64") erzeugt **genau dieselbe
+Meldung** wie die fehlende Umgebung. An der Ausgabe ist M4 in diesem Fall nicht
+unterscheidbar.
+
+**Der Riegel dagegen:** ist die Kontrolle K0 rot, bricht der Lauf **dort** ab. Jeder Mutant wäre
+aus demselben Grund rot, und das beweist nichts. Nachgemessen: mit fehlendem `qemu-user-static`
+endet der Lauf jetzt nach K0 mit Ausstiegscode 1 und nennt das fehlende Paket. Danach
+installiert und wiederholt, stirbt jeder Mutant an **seiner eigenen** Ursache:
+
+| Mutant | woran er stirbt |
+|---|---|
+| M1, M2 | `ngc-api ANSWERS "0.0.0-dev", which validVersion refuses` — **Wand 2 aus Punkt 71** |
+| M3 | das `ngc-controller`-Archiv trägt etwas, das keine gewöhnliche Datei ist (der Eintrag `./`) |
+| M4 | kein Läufer für arm64 — jetzt aus der Mutation, nicht aus der Umgebung |
+
+Zusätzlich prüft der Lauf jetzt **je Fall die Erwartung** (grün oder rot) statt nur den
+Ausstiegscode zu drucken, und ein angenommener Versionsstring ist ein Befund statt einer Zeile.
+
+**Was daraus allgemein folgt, und es ist derselbe Satz wie im ganzen Punkt:** rot ist kein
+Beweis, solange nicht gemessen ist, **woran** es rot wurde. Ein Prüfsatz braucht neben den
+sterbenden Fällen lebende Kontrollen — und er muss anhalten, wenn die Kontrolle fällt.
+
+### Nicht geborgen, mit Grund
+
+Die zwölf übrigen eigenen Skripte hängen alle am Arbeitsbaum `dist/recovery/`, den es im Repo
+nicht gibt, und jedes gehört zu einer Messrunde, die schon aufgeschrieben ist. In ihren Ordnern
+liegen außerdem ganze Arbeitsbäume mit SoftHSM-Token, TPM-Zustand und **drei PIN-Dateien**. Die
+Stick-Schlüssel darin sind öffentliche Schlüssel; die PINs sind Geheimnisse und gehören in kein
+Repo. Nichts davon ist übernommen.
+
+### Zur Nummer dieses Punktes
+
+Er hieß beim Schreiben 82, dann 85, jetzt 83. Grund: main bekam inzwischen einen eigenen Punkt
+82, und `tools/check-buch.sh` — den es heute Morgen noch nicht gab — weist **Lücken**
+mechanisch ab. 85 hätte die Löcher 83 und 84 gerissen und den Riegel rot gemacht, obwohl main
+grün ist (`buch: ok, 64 points, 19-82`). Darum die lückenlose 83, obwohl ein offener Zweig sie
+ebenfalls beansprucht: eine Doppelung wird beim Zusammenführen umnummeriert, ein Loch nicht.
