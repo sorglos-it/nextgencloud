@@ -214,6 +214,7 @@ gibt, aber erst nach dem Schreiben.
 | 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
 | 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
 | 85 | Der Weg zurück geht – er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt | gilt – auf einer eigenen Wegwerf-Maschine gefahren, eine App lief wieder | Messung |
+| 86 | Der Galera-Verkehr lief ohne Cipher-Beschränkung – die Vorlage war richtig, die Anlage nicht | gilt – an allen drei Knoten behoben, rollend, Verbund durchgehend vollständig | Sicherheit |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6181,3 +6182,92 @@ Der Beweis braucht einen Container, der über die **Einrichtung** entsteht, und 
 in der man eine App einrichten darf.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.
+
+---
+
+## Punkt 86: Der Galera-Verkehr lief ohne Cipher-Beschränkung — die Vorlage war richtig, die Anlage nicht
+
+Gemessen und behoben am 24.10.2026 an den drei Datenbankknoten der verteilten Anlage, auf
+Thomas' Anweisung. Der Befund ist **nicht meiner**: die Sitzung „Release 0.2.1 veröffentlichen"
+hat ihn beim Bau von db-2 und db-3 gefunden und mir gemeldet, weil sie ihn nicht anfassen wollte,
+solange an db-1 gemessen wurde.
+
+**Was gemessen war.** `apps/server-db/templates/galera.cnf` auf `main` ist seit dem 17.10.2026
+richtig: `socket.ssl_cipher=ECDHE-ECDSA-AES256-GCM-SHA384`, die TLS-1.2-Schreibweise, mit
+`TestTheClusterCipherIsATLS12ListAndNotASuite` dahinter. Die **laufende** Anlage war es nicht.
+Auf allen drei Knoten stand in `/etc/mysql/mariadb.conf.d/60-ngc.cnf` der TLS-1.3-Suite-Name
+`TLS_AES_256_GCM_SHA384` — geschrieben von *ulh*, nicht von diesem Repo —, und eine
+`99-erstlauf-galera.cnf` setzte `wsrep_provider_options` ohne Cipher neu. Darum stand MariaDB
+nicht still, sondern lief **ohne jede Cipher-Beschränkung**: `show variables like
+"wsrep_provider_options"` zeigte auf allen drei `socket.ssl_cipher =` leer.
+
+Die 99-Datei enthält nichts weiter als diese eine Zeile (auf db-1 und db-3 nachgesehen), also
+war sie gefahrlos aus dem Weg zu nehmen.
+
+**Was getan wurde, rollend, einer nach dem anderen.** Ausgangslage auf allen drei:
+`wsrep_cluster_size 3`, `Primary`, `Synced` — **und `safe_to_bootstrap: 0`**, weshalb niemals
+zwei gleichzeitig: zwei von drei halten das Quorum, der neu gestartete tritt über IST wieder
+ein. Je Knoten beide Dateien als `.vor-cipher-2111` beiseitegelegt (nichts gelöscht), den Wert
+wortgleich mit der Vorlage gesetzt, die 99-Datei zur Seite, `systemctl restart mariadb`.
+
+| Knoten | Neustart | danach |
+|---|---|---|
+| db-3 (10.2.3.218) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-2 (10.2.3.217) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-1 (10.2.3.212) | Code 0, 4 s | `active`, Verbund 3, `Primary`, `Synced`, Cipher gesetzt |
+
+Der Verbund war nach jedem Schritt vollständig, von einem anderen Knoten aus gegengeprüft.
+`ngc_blob` 15 Zeilen und `ngc_user` 1 Zeile nach dem Neustart von db-1 unverändert.
+
+**Und die Liste beißt — das ist der Teil, der sonst fehlt.** Dass eine Variable einen Wert
+zeigt, ist kein Nachweis. Gegen den Galera-Anschluss 4567 von db-3 nach db-1, mit dem
+Knotenzeugnis, TLS 1.2 angeboten:
+
+| angeboten | Antwort |
+|---|---|
+| nur `AES128-GCM-SHA256` | `alert handshake failure` |
+| nur eine CBC-Suite (`ECDHE-ECDSA-AES256-SHA384`) | `alert handshake failure` |
+| `ECDHE-ECDSA-AES256-GCM-SHA384` | **`New, TLSv1.2, Cipher is ECDHE-ECDSA-AES256-GCM-SHA384`** |
+| alles anbieten | der Server wählt genau diese Suite |
+
+Ohne Knotenzeugnis scheitern **alle** TLS-1.2-Versuche, auch der erlaubte: Galera verlangt ein
+Client-Zeugnis, und dieser Probelauf konnte „Cipher abgelehnt" und „Zeugnis fehlt" nicht
+trennen. Erst mit dem Zeugnis des Knotens ist es eine Messung. Unter TLS 1.3 hat Galera keinen
+Hebel: dort handelt der Anschluss von selbst `TLS_AES_256_GCM_SHA384` aus, gemessen.
+
+**Was nicht gemessen ist:** die Gegenrichtung, dass ohne die Liste eine AES-128- oder CBC-Suite
+durchkommt. Das ist am 17.10.2026 gemessen worden und steht im Kommentar der Vorlage; ich habe
+den schwachen Zustand nicht wiederhergestellt, um es nachzustellen — dafür hätte ein laufender
+Knoten zurückgedreht werden müssen.
+
+**Die Anlage darüber läuft unverändert:** `ngc-api` und die Controller aktiv, die Oberfläche
+antwortet mit `HTTP 200`, und in den vier Minuten nach dem letzten Neustart keine Fehlerzeile und
+keine Tunnelzeile in den Protokollen der drei Controller — die Tunnel sind also nie
+abgerissen.
+
+**Ein Befund der Ausgangslage, und er ist nicht meiner.** Dass alle drei Knoten
+`safe_to_bootstrap: 0` tragen, habe ich beim Messen gesehen; was es bedeutet, hat die Sitzung
+„Was passiert, wenn ein Rechner ausfällt" auf jedem Knoten einzeln nachgelesen und
+eingeordnet — **ihre Messung, ihre Überlegung**: fallen alle drei unsauber **zugleich** weg
+(Stromausfall, Neustart des Wirts), darf kein Knoten den Verbund von selbst hochziehen, weil
+keiner weiß, ob er den neuesten Stand hat. Die Anlage steht dann, bis jemand
+`galera_new_cluster` fährt.
+
+Daraus ihr Satz, den ich übernehme, weil er die Rangfolge betrifft: **der Umbau auf drei Knoten
+hat auch etwas weggenommen.** Am Mittag trug der einzelne Knoten `safe_to_bootstrap: 1` und fing
+sich nach einem harten Schnitt in vier Sekunden allein. Jetzt übersteht die Anlage den Verlust
+eines Knotens, ohne dass ein Benutzer es merkt — und sie steht, wenn alle zugleich weg sind. Der
+häufige Fall ist gelöst, der seltene war es vorher. Das ist kein Vorwurf an den Umbau, sondern
+der Grund, warum mein Lauf rollend ging und niemals zwei Knoten gleichzeitig angefasst hat.
+
+**Was offen bleibt, und es ist eine Entscheidung:** die `.vor-cipher-2111`-Kopien und die
+beiseitegelegten `99-erstlauf-galera.cnf.aus-dem-weg-2111` liegen noch auf den Knoten. Wer sie
+wegräumt, sollte dieselbe Frage für die älteren Stände daneben mitbeantworten (`.vor-zumachen`,
+`.vor-verbund`, `.vor-adresse-2107`) — es sind inzwischen fünf Fassungen derselben Datei je
+Knoten. Und der eigentliche Posten: dass *ulh* diesen Wert überhaupt schreibt und eine 99-Datei
+darüberlegt, gehört dort behoben, sonst bringt die nächste Neuinstallation ihn zurück. Die
+Release-Sitzung hat ihren Teil daran bereits berichtigt.
+
+Herkunft: `docs/sicherung-und-weg-zurueck.md` nennt die Messreihe nicht — dieser Punkt steht für
+sich, weil er nicht zur Sicherung gehört, sondern nur an einem Abend an derselben Anlage anfiel.
+
