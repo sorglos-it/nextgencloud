@@ -104,6 +104,22 @@ fremder Text geht als Text in die Seite, nie als Markup.
   Grundsatz im Entscheidungsbuch. Wo es gespeichert wird und wer es ändern darf,
   ist **hier nicht entschieden** und gehört in einen eigenen Auftrag.
 
+## 7. Hell und dunkel: das System gibt vor, der Benutzer darf überstimmen
+
+- **Entschieden:** Vorgabe ist die **Einstellung des Betriebssystems**. Dazu eine
+  **eigene Wahl** des Benutzers, die die Vorgabe überstimmt.
+- **Warum:** Thomas hat es so entschieden. Wer sein System auf hell stellt, meint
+  es auch für NGC; wer es anders will, stellt es um.
+- **Heute:** Die Oberfläche kennt nur **zwei** Werte (`THEMES = ["dark","light"]`
+  in `shell/theme.js`). „Dem System folgen" ist **keine Wahl**, sondern nur der
+  Fall, in dem noch nichts gewählt wurde oder der Browser nichts merken kann —
+  dann antwortet `@media (prefers-color-scheme: light)` in `shell.css`. Wer einmal
+  hell gewählt hat, bleibt hell, auch wenn sein System auf dunkel umstellt.
+- **Zu bauen:** Eine **dritte** Wahl „dem System folgen", und sie ist die
+  **Vorgabe**. Die beiden anderen bleiben, wie sie sind. Die Oberfläche zieht
+  sich nach, wenn das System umstellt (`matchMedia`-Horcher) — nie
+  „bitte neu laden", siehe den Grundsatz im Entscheidungsbuch.
+
 ---
 
 ## Wie geredet und geschrieben wird
@@ -121,9 +137,6 @@ fremder Text geht als Text in die Seite, nie als Markup.
 
 ## Was hier nicht entschieden ist
 
-- **Hell und dunkel.** Heute ist dunkel die Vorgabe, hell gibt es, und ohne jede
-  Wahl folgt die Oberfläche dem Betriebssystem. Das ist gebaut und nicht
-  besprochen.
 - **Die Zeichen der Apps.** Eigener Auftrag, eigene Sitzung, eigener Satz SVGs.
 - **Wo der Name der Anlage gespeichert wird** (siehe Punkt 6).
 - **Was aus den Schreibtisch-Symbolen auf dem Handy wird** — dass es einen Weg
