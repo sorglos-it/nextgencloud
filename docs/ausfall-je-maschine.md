@@ -786,6 +786,90 @@ nächsten Knoten zu gehen — dasselbe Muster wie bei api-2, wo jede vierte
 Anmeldung 500 bekam), und **ob db-1 als der Knoten, der den Verbund gebootet
 hat, beim Zurückkommen anders behandelt wird** als ein Beitretender.
 
+### db-3 aus — gemessen am 24.10.2026, 18:21–18:31 UTC
+
+Der Ausfall selbst geht glatt. Die Rückkehr nicht.
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | unverändert | **200**, unverändert |
+| (b) Anmeldung, 40 in Folge | unverändert | **40/40 gut** — wie vorher |
+| (b) **die erste Anfrage** | — | **`503` nach 5,03 s.** Zweite und dritte: `200` in 0,03 s |
+| Verbund | fällt auf 2, bleibt Primary | **genau so**: `wsrep_cluster_size=2`, `Primary` |
+| laufende Apps | laufen | laufen, unverändert |
+| sagt die Anlage es ehrlich? | — | **ja, vorbildlich** (siehe unten) |
+| Selbstfang | **ja, schneller als db-1** | **nein. 71 Versuche, keiner gelingt** |
+
+**Die erste Anfrage ist der Befund, den die vierzig verdecken.** Genau dafür war
+sie getrennt gemessen, und das api-2-Muster hat sich bestätigt: der erste
+Aufrufer nach dem Wegfall läuft in einen Zeitablauf von fünf Sekunden und
+bekommt `503`; ab dem zweiten ist der Knoten als tot geführt und alles ist
+wieder bei 0,03 s. Hätte ich nur die vierzig gezählt, stünde hier „kein
+Unterschied" — und das wäre falsch gewesen.
+
+Die Anlage sagt es dabei **vorbildlich**, besser als in jedem der sechs Fälle
+vorher:
+
+```
+api-1  WARN the database did not come free in time, the caller is told to come back
+       reason=db-busy count=1 since=1 retry-after=5
+api-1  WARN callers were turned away because the database was busy or could not be
+       reached busy=1 unreachable=0 new-busy=1 new-unreachable=0
+```
+
+Eigener Grund, eigener Zähler, `retry-after` — und `503` statt der `500`, die
+api-2 geliefert hat. Für den Benutzer heißt das „kommen Sie in fünf Sekunden
+wieder" und nicht „interner Fehler". Das ist die Messlatte, an der der
+api-2-Fall (Punkt 84) zu messen ist: **dieselbe Anlage kann es.**
+
+**Und jetzt der schwere Teil: db-3 kommt nicht zurück.** Nach dem Einschalten
+antwortet die Adresse, aber `mariadb` hängt in `activating` und versucht es
+wieder und wieder — `NRestarts=71`, als ich die Schleife angehalten habe. Jeder
+Versuch startet einen vollen Abgleich und endet so:
+
+```
+[ERROR] WSREP: gcs_group_handle_join_msg(): Will never receive state. Need to abort.
+```
+
+`grastate.dat` auf db-3 danach: `uuid: 00000000-0000-...`, `seqno: -1`,
+`safe_to_bootstrap: 0` — der Knoten hat keinen Stand mehr, von dem aus er
+anknüpfen könnte, und braucht einen vollen Abgleich, der nicht zustande kommt.
+
+**Die Ursache habe ich nicht.** Was ich habe, ist eine widerlegte Vermutung: ich
+hatte die Firewall im Verdacht, weil der Abgleich über Port 4444 läuft. Die
+Regel auf db-1 sagt das Gegenteil, und damit ist der Verdacht erledigt:
+
+```
+ip saddr { 10.2.3.212, 10.2.3.217, 10.2.3.218 } tcp dport { 4444, 4567, 4568 } accept
+```
+
+Mein Portklopfen von db-3 aus (`4444 ZU`) beweist ebenfalls nichts: 4444 lauscht
+nur, **während** ein Abgleich läuft, und db-1 ist dabei nicht der Lauschende.
+Eine Sonde, die den Normalzustand für einen Befund nimmt, misst sich selbst.
+
+Eine **Vermutung, ausdrücklich keine Messung**: eine Nachbarsitzung hat db-3
+heute schon einmal gestoppt und 48 Sekunden später gestartet, und er war nach
+rund fünf Sekunden wieder im Verbund. Mein Fenster war etwa sechs Minuten. Ein
+kurzer Ausfall knüpft vermutlich inkrementell an, ein langer braucht den vollen
+Abgleich — und der ist das, was scheitert. Wer das belegen will, stoppt db-3
+zweimal: einmal eine Minute, einmal zehn.
+
+**Was ich deshalb NICHT gemessen habe, und das ist eine Entscheidung.** Der Fall
+„db-1 fällt bei drei Knoten" ist nicht gefahren. Mit db-3 draußen sind es zwei
+von drei; nehme ich db-1 dazu, bleibt **einer**, das Quorum ist weg, und die
+Anlage liegt — und zwar in einem Zustand, von dem ich gerade gemessen habe, dass
+ein Knoten nicht von selbst zurückfindet. Nach der Rangfolge Sicherheit =
+Stabilität vor Leistung ist das kein Fall, den man „noch schnell" fährt. Er
+bleibt offen, bis db-3 wieder im Verbund ist.
+
+**Zustand der Anlage am Ende dieses Falls**, gemessen: Verbund 2 von 3,
+`Primary`, Oberfläche 200, drei Anmeldungen hintereinander 200 bei 0,03 s. Für
+den Benutzer ist nichts kaputt; kaputt ist die **Reserve**. Die Schleife auf
+db-3 habe ich angehalten (`systemctl stop mariadb`), weil 71 erfolglose
+Versuche keine Selbstheilung sind, sondern Last — der Knoten war zu dem
+Zeitpunkt ohnehin nicht im Verbund, das Anhalten ändert an der Anlage nichts und
+ist mit einem `start` rückgängig.
+
 ## Was offen bleibt
 
 **Eins, und es ist dasselbe in allen sechs Fällen: (c) Apps sehen, (d) eine App
