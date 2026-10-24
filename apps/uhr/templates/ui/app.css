@@ -1,0 +1,20 @@
+/* The look of org.sorglos.uhr. The shell writes these bytes into the app's
+   document; nothing here is fetched. The two colours come from the shell
+   (ngc.theme, ngc.accent), so the window does not fight the desktop it
+   stands on. */
+:root { color-scheme: light dark; }
+body {
+  margin: 0;
+  padding: 1.5rem;
+  font: 1rem/1.4 system-ui, sans-serif;
+  text-align: center;
+}
+.zeit {
+  margin: 0 0 .25rem;
+  font-size: 2rem;
+  font-variant-numeric: tabular-nums;
+  /* The time is the one thing in this window, so it carries the accent. */
+  color: var(--ngc-accent, #2f7de1);
+}
+.hinweis { margin: 0 0 1.25rem; opacity: .7; font-size: .875rem; }
+button { font: inherit; padding: .4rem 1rem; }

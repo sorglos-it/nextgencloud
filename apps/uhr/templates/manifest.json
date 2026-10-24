@@ -1,0 +1,17 @@
+{
+  "id": "org.sorglos.uhr",
+  "name": "Uhr",
+  "version": "1.0.0",
+  "publisher": "Sorglos Thomas Weirich",
+  "description": "Die Uhrzeit des Servers lesen.",
+  "ui": { "entry": "index.html", "width": 420, "height": 260 },
+  "actions": [
+    { "name": "zeit", "title": "Die Uhrzeit des Servers lesen", "service": "uhr" }
+  ],
+  "services": [
+    { "name": "uhr", "command": ["/usr/lib/ngc/ngc-uhr"] }
+  ],
+  "runtime": "podman",
+  "cpu": 1000,
+  "memory": 256
+}
