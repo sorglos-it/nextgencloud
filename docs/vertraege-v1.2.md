@@ -9,14 +9,14 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 ---
 
-## Inhaltsverzeichnis (Stand 18.10.2026)
+## Inhaltsverzeichnis (Stand 24.10.2026)
 
 **Achtung, zwei Nummernreihen in einer Datei.** Die Nummern 19 bis 35 sind
 **doppelt vergeben**:
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 62"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 82"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -24,18 +24,30 @@ sofern nicht „dieser Liste" oder „des Vertrags" dabeisteht – dann Reihe A.
 **Darum die Überschrift zitieren, nicht die Nummer** (so steht es auch in
 `STAND.md`).
 
-Lücken gibt es in keiner der beiden Reihen.
+Lücken gibt es in keiner der beiden Reihen. **Nachgemessen am 24.10.2026** und
+seitdem bei jedem `tools/check.sh` wieder: `tools/check-buch.sh` liest diese
+Datei gegen sich selbst – keine Nummer zweimal, keine Lücke, kein Verweis auf
+einen Punkt, den es nicht gibt. **Wer einen Punkt anhängt, trägt ihn in die
+Tabelle der Reihe B ein** – sonst wird die Prüfung rot, und das ist Absicht:
+die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 ### Stand in Zahlen
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 34 | 69 |
+| gilt | 35 | 46 | 81 |
 | überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
 | offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **45** | **81** |
+| **Einträge** | **36** | **57** | **93** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
+
+> **Diese Aufstellung ist stehengeblieben, und das steht hier, statt sie zu erraten.** Sie zählt
+> die Reihe B bis Punkt 74. Gemessen am 24.10.2026 mit `tools/check-buch.sh`: die Datei trägt
+> **64** Kapitel, Punkt 19 bis 82, ohne Lücke und ohne doppelte Nummer. Die acht Punkte 75 bis 82
+> haben jetzt ihre Zeile in der Tabelle unten — sie fehlte allen sieben vor 82 —, aber die
+> Aufteilung in „gilt / überholt / offen" für fremde Punkte nachzutragen hieße, über deren Stand
+> zu entscheiden. Das gehört dem Koordinator, nicht dieser Prüfrunde.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -139,6 +151,26 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
 | 60 | Der Controller lässt sich nicht koppeln | **ÜBERHOLT durch Punkt 61 – in der Kernaussage falsch** | Messung |
 | 61 | Gekoppelt – Punkt 60 war falsch | gilt – **berichtigt Punkt 60** | Messung |
 | 62 | Die Anlage entsteht allein aus den Skripten | gilt – bestätigt **Punkt 61** an frischer Anlage | Umgebung |
+| 63 | Die Oberfläche ist auf `main` – 136 Dateien statt 2 | gilt – der Fund lag außerhalb des Umzugs | Umgebung |
+| 64 | Der erste Release auf einer echten Debian-VM, Terminal-Abbild gebaut | gilt | Umgebung |
+| 65 | „Noch nicht geholt" wird dem Verwalter als „nicht echt" gezeigt | gilt | Messung |
+| 66 | Eine frische Anlage hat eine Stunde lang keinen Laden | gilt – kein Abruf beim Start, keine Handauslösung | Messung |
+| 67 | Rust für NGC – bitgleich nachgebaut, und genau das spricht dagegen | gilt – Entscheidungspapier, Vorschlag ist eine Abwägung | Entscheidung |
+| 68 | Fremde Programme portieren – das Programm ja, die Oberfläche nie | gilt – **nicht** dieselbe Frage wie Punkt 67 | Entscheidung |
+| 69 | Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt | gilt – behoben, die CI sagt jetzt **warum** | Messung |
+| 70 | Ein Paket über eine Fenstergröße kommt unter Last nicht durch | gilt – Befund auf `main`, `E_PROTOCOL` statt `ok` | Messung |
+| 71 | Sechs Wände vom Release bis zur laufenden App | gilt – vier davon in keinem Prüfsatz; Wand 1 offen in `ulh` | Umgebung |
+| 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
+| 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
+| 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
+| 75 | Die Maschine der ersten Messungen ist aus – die Messungen gelten, die Anweisungen nicht | gilt – Stand und Art aus dem Punkt selbst | Umgebung |
+| 76 | Diese Nummer ist leer – die Spur zweier Nummernkollisionen | gilt – absichtlich leer gelassen statt umnummeriert | Entscheidung |
+| 77 | Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung | gilt – am Protokoll des Controllers auf `svc-1` gemessen | Messung |
+| 78 | Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat | gilt – an `org.sorglos.uhr` auf `svc-1` gemessen | Messung |
+| 79 | Die Anlage fragt stündlich nach ihrem Laden und sagt niemandem, dass keine Antwort kommt | gilt – Laden abgeschaltet und wieder angefahren; die Anlage arbeitete durch | Messung |
+| 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – am Netz gemessen, nicht an NGC | Umgebung |
+| 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – „ngc-db backup" gibt es nicht | gilt – an der verteilten Anlage, Stand `17b9895` | Messung |
+| 82 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, der Satz darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -4958,6 +4990,17 @@ zwei Datenstände, von denen die Oberfläche einen nicht kennt.
 Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
 Anlage sagt einmal.
 
+**Unabhängig bestätigt:** die Erstlauf-Sitzung sieht dasselbe von ihrer Seite und ohne von
+diesem Punkt zu wissen — ihre Station D4 zählt **zwei** vollständig eingerichtete Apps auf
+`svc-1` und eine auf `svc-2`, gemessen an `useradd`, `image loadfromarchive` und
+`container start` im Journal sowie am laufenden `conmon` des jeweiligen App-Benutzers. Zwei
+Messwege, dasselbe Ergebnis.
+
+**Eine Folge, die über die Buchhaltung hinausgeht** und die beim Abschalten einer Maschine
+auffallen wird: wer `svc-2` ausschaltet und feststellt, dass das Terminal weiter antwortet,
+hat **keinen** Ausfallschutz gemessen, sondern diesen Befund. Die Anlage nennt `svc-2`, laufen
+tut es auch auf `svc-1`.
+
 Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
 ---
 
@@ -5040,7 +5083,6 @@ die ihre Bedeutung wechselt, ist schlimmer als eine, die fehlt.
 
 Was daraus zu lernen ist, steht schon im Buch: **ein Buch, das nur hinten waechst,
 braucht einen Riegel gegen doppelte Nummern.** Daran arbeitet ein eigener Strang.
-
 ## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
 
 Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
@@ -5187,7 +5229,24 @@ klickt. Über die Befehlszeile gibt es gar kein Nachsehen: `ngc-store --help` ke
 Unterschreiben und Prüfen, `ngc-api --help` und `ngc-controller --help` keinen Katalogbefehl.
 
 Ein Laden, der eine Woche weg ist, hat damit **168 Mal erfolglos geklopft**, ohne eine Zeile zu
-hinterlassen, die ein Mensch findet, ohne sie zu suchen. Das `_ =` ist kein Versehen: der
+hinterlassen, die ein Mensch findet, ohne sie zu suchen.
+
+**Nachgemessen am 24.10.2026, 13:01-13:05 UTC, mit einer Runde, die wirklich auf den toten Laden
+trifft** (Laden aus, `ngc-api` auf api-2 neu gestartet, Runde erzwungen - `FirstCatalog` erlaubt
+das in einer Minute statt in einer Stunde). Damit ist auch die gute Haelfte belegt, die der erste
+Lauf nicht zeigen konnte: die Runde kostet genau sich selbst. Der Katalog bleibt Byte fuer Byte
+auf Folge 7 (1116 B), die Vertrauensliste auf Folge 6, beide Apps aktiv. Und die Anlage faengt
+sich von selbst: Laden wieder an, naechste Runde, Fehlertext weg und `checked` neu, ohne eine
+Hand. Im Journal von api-2 stehen dazu **null Zeilen**, die Katalog, Store oder Laden erwaehnen -
+das ist jetzt gemessen und nicht mehr nur aus dem Code geschlossen.
+
+Dazu eine Einzelheit, die beim Lesen der Zeile wichtig ist: **`checked` rueckt beim Fehlschlag
+nicht vor.** Die Zeile ging von `{"checked":1792845105}` auf
+`{"checked":1792845105,"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` - der
+Wert bleibt auf dem letzten *erfolgreichen* Blick stehen, der Fehler wird nur angehaengt. Die
+Zeile traegt damit das Alter des letzten guten Blicks, und wer hinsieht, kann erkennen, dass der
+Laden seit einer Woche nicht geantwortet hat. Es fehlt nicht die Auskunft, sondern der Anlass,
+sie zu holen. Das `_ =` ist kein Versehen: der
 Kommentar darüber sagt, dass das Aufschreiben den nächsten Laden nicht verschlucken darf. Die
 Absicht ist richtig, die Folge ist Stille.
 
@@ -5259,7 +5318,53 @@ Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gem
 
 Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".
 
-## Punkt 81: Eine Prüfrunde über die Nähte von zwei Tagen — die Nähte halten, der Satz darüber nicht
+---
+
+## Punkt 81: Gesichert wird genau der Teil, den die Anlage ohnehin wiederbekäme — und „ngc-db backup" gibt es nicht
+
+Gemessen am 24.10.2026 an der verteilten Anlage, Stand `17b9895`.
+
+**Was gemessen ist.** Die Anlage hat genau ein Sicherungskommando: `ngc-controller backup
+<Datei>`. Es schreibt die eigene SQLite-Datei des Controllers — Zeilen der Apps mit ihren
+Manifesten, Lizenzen, Vertrauenslisten-Versionen, gelegte Aktualisierungen. Das läuft, der
+Controller läuft dabei und danach weiter (auf api-1, db-1 und svc-1 je `active` vor und nach dem
+Lauf, Ausstiegscode 0).
+
+Zwei Stellen im Code schicken einen Admin für die Benutzerdaten an ein zweites Programm:
+`state/backup.go:60` und `register/register.go:127` nennen beide `"ngc-db backup"`. **Dieses
+Programm existiert nicht.** `apps/server-db/` hat kein `main.go`, und auf keiner der fünf
+Maschinen liegt ein `ngc-db` (`ls /usr/lib/ngc/`: `ngc-api`, `ngc-controller`, `ngc-store` und
+Vorgängerstände). Für `ngc_user` (1 Zeile), `ngc_blob` (15), `ngc_session` (27) und `ngc_log`
+(470) auf db-1 gibt es damit heute kein Sicherungskommando — nur `mariabackup` 11.8.6 aus der
+Distribution, das zur Probe in 1 s eine 49-MB-Sicherung schrieb, bei weiterlaufender Datenbank.
+
+**Und die Sicherung hängt allein am Schlüssel, nicht an der Maschine.** Die Kopie von svc-1 auf
+einem fremden Rechner geöffnet (Windows, nie gekoppelt): mit dem dbKey aus `controller.json`
+**offen**, zwei App-Zeilen. Ein Bit des Schlüssels gekippt: `sqlite3: file is not a database`.
+Mit dem dbKey von api-1: dasselbe. Jeder Rechner hat seinen eigenen dbKey, vier verschiedene auf
+dieser Anlage. Dasselbe gilt für die App-Datenordner: die fscrypt-Schlüsselkennung, die der Kern
+von svc-1 für `org.sorglos.terminal` und `org.sorglos.uhr` hält, ist bitgleich mit der, die HKDF
+über den dbKey dieses Rechners liefert. Und für die MariaDB ein drittes Mal: die Tabellen sind
+`FORCE`-verschlüsselt, der Schlüssel liegt in `/etc/ngc/db-keys/` und nicht in der Sicherung —
+der Benutzername `weiricth` steht in keiner der neun `.ibd` der Probe-Sicherung.
+
+**Was nicht gemessen ist.** Zurückgespielt wurde nichts, auf keiner Maschine: weder `state.db`
+noch die MariaDB noch ein App-Datenordner, und kein neuer Rechner wurde mit einem alten
+`controller.json` gekoppelt. Dafür fehlt eine Wegwerf-Maschine; an der laufenden Anlage wird es
+nicht geübt.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob die dbKeys bei einer Neuinstallation **vorgegeben** werden dürfen. Ohne das kann „dieselbe
+  Maschine wiederherstellen" nicht funktionieren — der neue Rechner bekommt einen neuen
+  Schlüssel und öffnet die alte Sicherung nicht. Wer sie vorgeben darf, kann sie falsch vorgeben.
+- Ob die beiden Code-Stellen auf `ngc-db backup` zeigen dürfen, solange es das nicht gibt. Eine
+  Fehlermeldung, die einen Admin an ein Programm schickt, das nicht existiert, kostet ihn den
+  Abend, an dem er sie braucht.
+- Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
+## Punkt 82: Eine Prüfrunde über die Nähte von zwei Tagen — die Nähte halten, der Satz darüber nicht
 
 Zwischen dem 19. und 24.10.2026 sind rund dreißig Pull Requests auf `main` gelandet, viele davon
 in Stunden, aus Sitzungen, die nebeneinander liefen. In genau diesem Zeitraum war der CI-Schritt

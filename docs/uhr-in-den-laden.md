@@ -173,9 +173,25 @@ kind     id      Länge   updated
 catalog  global  1116    1792842288   (24.10.2026, etwa 11:58)
 ```
 
-1116 Byte, Folge **7**, **beide** Apps, dieselbe Schlüsselkennung. Die
-stündliche Abholung hat also stattgefunden. Zwischen „App im Laden" (11:33)
-und „Katalog in der Anlage" (etwa 11:58) lagen etwa 25 Minuten.
+1116 Byte, Folge **7**, **beide** Apps, dieselbe Schlüsselkennung. Zwischen
+„App im Laden" (11:33) und „Katalog in der Anlage" (etwa 11:58) lagen etwa
+25 Minuten.
+
+**Dass es die stündliche Runde war, ist nachgemessen und nicht angenommen** —
+hier stand zuerst nur die Behauptung. In den fünf Stunden vor 12:07 wurde auf
+keinem der beiden API-Server `ngc-api` neu gestartet; die ersten Einträge sind
+api-2 um 12:07:36 und api-1 um 12:20:03. Ein Neustart hätte die Runde nämlich
+vorgezogen: `FirstCatalog = time.Minute` in
+`apps/server-api/classes/server/server.go` lässt die **erste** Runde eine
+Minute nach dem Start laufen und erst danach stündlich. Es gab keinen
+Neustart, also war es der Stundenschlag.
+
+Für die Praxis heißt das zweierlei, und das zweite ist der nützlichere Teil:
+**ohne Zutun dauert es bis zu einer Stunde**, bis eine App aus dem Laden in
+der Anlage sichtbar wird — aber **wer nicht warten will, startet `ngc-api` neu
+und hat die Runde nach einer Minute**. (Den Fund mit `FirstCatalog` hat die
+Erstlauf-Sitzung gemacht; er steht hier, weil er die 25 Minuten oben erst
+einordnet.)
 
 **Und gleichzeitig:**
 

@@ -291,9 +291,72 @@ Zeitablauf nirgends hängt, habe ich nur an den Antwortzeiten der Oberfläche
 gesehen (keine Verlängerung, 19–28 ms) — nicht an dem Pfad, der wirklich zum
 Laden greift.
 
-Der schwere Befund, den der Auftrag befürchtet hat, ist damit **nicht**
-eingetreten: die Anlage arbeitet ohne ihren Laden weiter. Der Laden ist kein
-Teil der Anlage, und sie behandelt ihn auch nicht wie einen.
+### Nachtrag: der erste Ladenfall bewies die eigentliche Frage nicht
+
+Nach dem Lauf habe ich an der Datenbank nachgesehen, was der Ausfall gekostet
+hat — und damit meinen eigenen Befund entwertet. Die Zeile des Ladens stand
+nachher auf `{"checked":1792845105}`, also **12:31:45 UTC**, elf Minuten *vor*
+meinem Ausfall (12:42:11–12:43:00), **ohne Fehlerfeld**. In das Fenster von 40
+Sekunden fiel überhaupt keine Katalogrunde. Katalog unverändert Folge 7
+(1116 Byte), Vertrauensliste unverändert Folge 6, beide Apps aktiv.
+
+Die Anlage hat also nichts verloren — aber nur, weil sie in diesem Fenster
+nichts versucht hat. „Der Laden darf ausfallen" war damit noch nicht gemessen,
+sondern nur „40 Sekunden ohne Laden kosten nichts". Das ist ein deutlich
+schwächerer Satz.
+
+### Also noch einmal: eine Runde, die wirklich auf den toten Laden trifft
+
+`FirstCatalog = time.Minute` erlaubt, die Runde zu erzwingen, statt eine Stunde
+zu warten: Laden aus, `ngc-api` neu starten, Runde abwarten. Gemessen am
+24.10.2026, 13:01–13:05 UTC, auf **api-2** — nicht auf api-1, weil api-1 der
+einzige Eingang ist. **Die Runde ist erzwungen, nicht von allein gekommen**; das
+gehört zu jeder Zahl hier dazu.
+
+| | vorher | Runde gegen den toten Laden | nach dem Einschalten |
+|---|---|---|---|
+| Zeile des Ladens | `{"checked":1792845105}` | `{"checked":1792845105,`<br>`"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` | `{"checked":1792847065}` |
+| Katalog | Folge 7, 1116 B | **Folge 7, 1116 B** | Folge 7, 1116 B |
+| Vertrauensliste | Folge 6 | **Folge 6** | Folge 6 |
+| Apps | beide aktiv | **beide aktiv** | beide aktiv |
+| Journal auf api-2 | — | **0 Zeilen** zu Katalog, Store oder Laden | — |
+
+Das Skript hat sich dabei an drei Stellen selbst geprüft und hätte sonst
+abgebrochen: der Laden muss nachweisbar aus sein, `ngc-api` muss eine **neue
+PID** haben (2829 → 3351 → 3464), und die Zeile des Ladens muss sich bewegt
+haben, bevor sie gelesen wird (nach 70 s bzw. 60 s).
+
+Damit ist die Frage beantwortet, und zwar gut für die Anlage:
+
+- **Der schwere Befund ist nicht eingetreten.** Eine Runde, die auf einen toten
+  Laden trifft, kostet genau diese Runde. Der Katalog bleibt Byte für Byte
+  stehen, der Laden verliert sein Vertrauen nicht, keine App verschwindet.
+- **Die Anlage fängt sich von selbst.** Laden wieder an, nächste Runde, und der
+  Fehlertext ist weg und `checked` neu — ohne eine Hand. Dass der Fehlertext
+  stehenbleibt, bis jemand hinsieht, war die Sorge; sie trifft nicht zu.
+- **Im Journal steht weiter nichts**, jetzt nicht mehr nur aus dem Code
+  geschlossen, sondern an einer Runde gemessen, die wirklich gescheitert ist:
+  null Zeilen, die Katalog, Store oder Laden erwähnen.
+
+Und ein Fund, der mir selbst erst in der Tabelle auffiel: **`checked` rückt beim
+Fehlschlag nicht vor.** Der Wert bleibt auf dem letzten *erfolgreichen* Blick
+stehen, der Fehler wird nur angehängt. Das ist nicht nur schlecht — es heißt,
+dass die Zeile das **Alter des letzten guten Blicks** trägt, und wer hinsieht,
+kann daran erkennen, dass der Laden seit einer Woche nicht mehr geantwortet hat.
+Was fehlt, ist nicht die Auskunft, sondern der Anlass, sie zu holen: kein
+Journal, kein Befehl, kein Hinweis in der Oberfläche außerhalb von
+`ngc.store/sources`.
+
+Der Laden ist damit wirklich kein Teil der Anlage, und sie behandelt ihn auch
+nicht wie einen. **Dieser Fall ist abgeschlossen** — bis auf die Spalte „was
+der Benutzer dabei sieht", für die ein Zugang fehlt.
+
+Ein Hinweis einer Nachbarsitzung, der die Wahl von api-2 im Nachhinein stützt
+und hier als **deren** Messung steht: `ngc-api` und `ngc-controller` teilen auf
+einem Knoten dasselbe Laufzeitverzeichnis unter `/run/ngc` mit `Preserve=no`,
+und ein Neustart der API nimmt dort die Laufzeitverzeichnisse der Apps mit. Auf
+api-1, wo beide Dienste laufen, wäre derselbe Neustart darum nicht harmlos
+gewesen; api-2 trägt nur die API.
 
 ## Was offen ist, und warum
 
