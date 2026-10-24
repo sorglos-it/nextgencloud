@@ -4527,6 +4527,14 @@ Schalter einhält.** Hier ist sie gemessen, am laufenden Terminal-Container der 
 (24.10.2026, Kern 6.12.113+deb13-amd64, podman 5.4.2, Container `ngc-terminal-439982dd`,
 `dc15f0724b9f`, zu diesem Zeitpunkt 7 Stunden auf).
 
+**Welche Maschine.** Die **Einzel-VM aus Punkt 64** (`ssh ngc`, 10.2.3.208), auf der die
+eingerichtete Terminal-App steht — **nicht** die verteilte Anlage unter `ngc.mein.lan`, deren Apps
+seit dem 24.10.2026 auf `svc-1` und `svc-2` laufen. Jede Zahl dieses Punktes gilt für diese eine
+Maschine. Das ist nicht Vorsicht um ihrer selbst willen: Befund 1 ist eine Aussage über **eine
+systemd-Einheit und ihre cgroup**, und ob `Delegate=` auf `svc-1` und `svc-2` genauso steht, ist
+hier **nicht gemessen** und darf aus diesen Zahlen nicht geschlossen werden. Zwei Maschinen mit
+demselben Dienst sind genau die Falle, in der eine Zählung über den falschen Baum entsteht.
+
 **Wie gemessen wurde.** podman läuft dort rootlos als der App-Benutzer, also wurde jeder Aufruf
 aus `/tmp` heraus mit `setpriv --reuid=997 --regid=985 --clear-groups` und mit
 `HOME=/var/lib/ngc/apps/org.sorglos.terminal`, `XDG_RUNTIME_DIR=/run/ngc/ngc-terminal-439982dd`,
@@ -4732,6 +4740,11 @@ das ganze Netz der Anlage, einschließlich `ngc-api`.
    Datenordner als Fehler zählt.
 6. Was der Quelltext über `NeedRoot` sagt, um die **11** ergänzen — oder die Fähigkeiten selbst
    nennen, statt podmans Vorgabe zu erben.
+7. **Dieselbe Messung auf `svc-1` und `svc-2`**, den App-Knoten der verteilten Anlage. Befund 1
+   hängt an `Delegate=` einer systemd-Einheit, also an der Einrichtung der jeweiligen Maschine —
+   er könnte dort anliegen oder fehlen, und keine Zahl von hier sagt, welches. Dabei gilt die
+   Warnung aus der Anlage selbst: die Rolle am laufenden Dienst prüfen, nicht am Namen der
+   Maschine.
 
 **Getrennt gehalten:** gemessen sind die Tabelle der Schalter, die vier Befunde, die cgroup-Dateien
 und die drei Proben samt Gegenproben. Abgewogen sind die Folge des geteilten `TasksMax`, die
