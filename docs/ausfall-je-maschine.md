@@ -886,13 +886,72 @@ wegen der Dauer, sondern weil sie den Dienst stoppte und nicht die Maschine.
 **db-3 ist inzwischen wieder im Verbund** (`size=3`, `Primary`, `Synced`), und
 das war nicht mein Werk — ich hatte nur die Schleife angehalten.
 
-Der Fall „db-1 fällt bei drei Knoten" bleibt weiter offen, jetzt aus einem
-anderen Grund: db-1 und db-2 tragen denselben Fehler, der db-3 herausgeworfen
-hat, und db-1 trägt die CA und den Datenbestand. **Entschieden** (die Wahl lag
-bei mir): erst wird `wsrep_node_address` auf beiden festgenagelt, dann wird
-gemessen. Den bekannten Mechanismus am Knoten mit der CA noch einmal
-vorzuführen, kauft keine Erkenntnis, sondern nur Risiko — und eine Messung,
-deren Ergebnis man vorher kennt, ist keine.
+Der Fall „db-1 fällt bei drei Knoten" war danach noch offen, aus einem anderen
+Grund: db-1 und db-2 trugen denselben Fehler, der db-3 herausgeworfen hat, und
+db-1 trägt die CA und den Datenbestand. **Entschieden** (die Wahl lag bei mir):
+erst wird `wsrep_node_address` auf beiden festgenagelt, dann wird gemessen. Den
+bekannten Mechanismus am Knoten mit der CA noch einmal vorzuführen, kauft keine
+Erkenntnis, sondern nur Risiko. Die Release-Sitzung hat es gemacht; alle drei
+Knoten tragen jetzt ihre Adresse statt ihres Namens, und der Verbund ist dabei
+nie unter drei gefallen.
+
+### db-1 aus, mit drei Knoten — gemessen am 24.10.2026, 19:28–19:31 UTC
+
+**Der Fall, für den der Umbau gemacht wurde, und er geht auf.** Hier war meine
+Erwartung einmal richtig.
+
+| Frage | gemessen |
+|---|---|
+| (a) Oberfläche | **200** |
+| (b) **erste** Anmeldung nach dem Wegfall | **200 in 0,027 s** — kein 503, kein Zeitablauf |
+| (b) 40 in Folge | **40/40 gut** |
+| Verbund | fällt auf 2, bleibt `Primary` |
+| laufende Apps | laufen, unverändert |
+| Selbstfang | **ja, in unter 30 s** |
+
+Der Vergleich mit dem Mittag ist der ganze Punkt: **dieselbe Maschine, am Mittag
+ein Vollausfall mit `E_UNREACHABLE`, jetzt nicht einmal eine langsame Anfrage.**
+Drei Knoten und eine Knotenliste, die alle drei nennt, tragen den Ausfall des
+Knotens, der vorher die ganze Anlage war.
+
+Der Wiederanlauf braucht keine Hand:
+
+```
+19:30:30  WSREP: 1.0 (db-1): State transfer from 2.0 (db-3) complete.
+19:30:30  WSREP: Shifting JOINER -> JOINED -> SYNCED
+19:30:30  WSREP: Synchronized with group, ready for connections
+```
+
+Und eine Einzelheit, die den db-1-Befund vom Mittag ausdrücklich **überholt**:
+`grastate.dat` auf db-1 trägt jetzt `safe_to_bootstrap: 0`. Am Mittag war es
+`1`, und genau daran hing, dass er sich allein hochziehen konnte. Mit dreien ist
+er nicht mehr der Ausgezeichnete — er holt sich den Stand von db-3. **Die
+Eigenschaft, die ich am Mittag gemessen habe, hat die Anlage heute Abend nicht
+mehr.**
+
+### Was die beiden DB-Fälle zusammen über die fünf Sekunden sagen
+
+Das ist der Befund, den erst der Vergleich hergibt:
+
+| | erste Anmeldung nach dem Wegfall |
+|---|---|
+| **db-3** fällt | `503` nach **5,03 s** |
+| **db-1** fällt | `200` nach **0,027 s** |
+
+Dieselbe Anlage, dieselbe Art Ausfall, zweimal ein anderes Ergebnis für den
+ersten Benutzer. Die Strafe von fünf Sekunden ist also **nicht die Knotenliste**
+und nicht der Verbund, sondern ein Zeitablauf beim Verbindungsaufbau, der nur
+anfällt, **wenn der wegfallende Knoten gerade der benutzte war** (so von der
+Release-Sitzung im api-Code eingeordnet; von mir gemessen sind die beiden Zahlen
+oben). Für den Benutzer heißt das: es ist ein Münzwurf, ob ihn ein Knotenausfall
+fünf Sekunden kostet oder nichts.
+
+Und dieselbe Ursache hat in dieser Reihe **zwei Gesichter beim Benutzer**:
+`503` mit `retry-after` und einer Journalzeile mit Zähler (DB-Fall,
+vorbildlich) und `500` ohne eine Zeile im Fehlerprotokoll (api-2-Fall, Punkt
+86). Dass beides aus einem Zeitablauf beim Verbindungsaufbau kommt, macht den
+Unterschied in der Meldung nicht kleiner — es erklärt ihn: niemand hat ihn
+entschieden.
 
 **Was ich deshalb NICHT gemessen habe, und das ist eine Entscheidung.** Der Fall
 „db-1 fällt bei drei Knoten" ist nicht gefahren. Mit db-3 draußen sind es zwei
