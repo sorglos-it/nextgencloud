@@ -28,9 +28,12 @@ measured it. Anything not measured is listed as not measured.
 **Where this was measured.** Most rows above were measured on a single Debian 13 machine that
 carried all roles at once (`ngc.test`). **That machine has been switched off since 24.10.2026.**
 The measurements stand — they were taken while it ran, and a machine being off does not make a
-past measurement wrong. What is gone is the ability to look again: re-measuring the one-machine
-case needs a machine for it. The installation that runs today has six machines and is a
-different case. See `docs/alte-vm-verweise.md`.
+past measurement wrong. Since 24.10.2026 the one-machine case runs on a new machine instead,
+built from a script and the v0.2.2 release rather than by hand (`tools/einzelmaschine.sh`), and
+the way up to "the interface answers" was walked again there: `https://ngc.test/` gives
+`http=200` with the same 451 bytes. Everything from the browser setup onwards has not been
+walked on it yet. The installation with six machines is a different case and does not stand in
+for this one. See `docs/alte-vm-verweise.md`.
 
 ## What does not work yet, or is not measured
 
