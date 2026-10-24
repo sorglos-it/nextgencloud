@@ -413,3 +413,34 @@ und gehören in kein Repo.
 
 Die alte Maschine ist wieder aus, der Schnappschuss `vor-bergung-20261024` liegt, nichts ist
 gelöscht.
+
+---
+
+## 8. Die alte Maschine ist gelöscht
+
+**Entschieden (Thomas, 24.10.2026):** VM 208 samt Platte und Schnappschuss kann weg. Gemacht
+und nachgeprüft.
+
+**Vorher gesichert, weil ein Löschen nicht zurückgeht.** Von allem Geborgenen lag nur noch
+zweierlei in einem sitzungsflüchtigen Ordner: der unterschriebene Katalog dieses Ladens (Folge
+1, eine App, 692 Byte) und der **öffentliche** Teil seines Ladenschlüssels (113 Byte). Beide
+liegen jetzt in `docs/belege/einzel-vm-laden/`, mit einem README, das sagt, was sie sind und
+was nicht. Alles andere war schon sicher: die sieben Skripte in `tools/`, die zwei
+Oberflächendateien von vor Punkt 73 als Blobs im Repo (Commit `1c8b695`), das Terminal-Manifest
+bytegleich mit der Repo-Vorlage, die Pakete aus dem Repo neu baubar.
+
+**Gelöscht** mit Namensprüfung vor dem Befehl (VMID 208, Name `NGC`, `stopped`):
+`qm destroy 208 --purge 1 --destroy-unreferenced-disks 1`, Ausstiegscode 0. Weg sind die
+80-GB-Platte, EFI- und TPM-Zustand und beide Schnappschuss-Datenträger.
+
+**Nachgeprüft:** `qm status 208` sagt, die Konfiguration gibt es nicht; `/mnt/ssd_2TB/images/208`
+gibt es nicht; `qm list` zeigt nur noch `307 ngc-ein running`; `ping 10.2.3.208` bleibt stumm.
+
+**Endgültig fort** sind die 19 nicht geborgenen Messskripte, die Arbeitsbäume `dist/recovery/`
+samt SoftHSM-Token, TPM-Zustand und den drei PIN-Dateien, die zehn handgelegten
+Programmfassungen in `/usr/lib/ngc/` und die gebauten Pakete. Das war die Entscheidung, nicht
+ein Versehen.
+
+**Damit ist dieses Papier abgeschlossen.** Die Verweise sind getrennt, die Anweisungen zeigen
+auf eine Maschine, die es gibt, der kleine Fall läuft auf `ngc-ein` — und `ngc-ein` kommt aus
+einem Skript. Einzelheiten in `docs/vertraege-v1.2.md`, Punkt 83.

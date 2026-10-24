@@ -5722,3 +5722,56 @@ Er hieß beim Schreiben 82, dann 85, jetzt 83. Grund: main bekam inzwischen eine
 mechanisch ab. 85 hätte die Löcher 83 und 84 gerissen und den Riegel rot gemacht, obwohl main
 grün ist (`buch: ok, 64 points, 19-82`). Darum die lückenlose 83, obwohl ein offener Zweig sie
 ebenfalls beansprucht: eine Doppelung wird beim Zusammenführen umnummeriert, ein Loch nicht.
+
+### Nachtrag: die alte Maschine ist gelöscht
+
+**Entschieden (Thomas, 24.10.2026):** VM 208 samt Platte und Schnappschuss kann weg.
+
+**Vorher geprüft, weil ein Löschen nicht zurückgeht.** Die Bergung hatte Dateien in einem
+sitzungsflüchtigen Ordner liegen lassen; was davon nirgends sonst existierte, musste erst
+dauerhaft liegen:
+
+| geborgen | Lage vor dem Löschen |
+|---|---|
+| die drei Prüfladen- und vier Messskripte | in `tools/`, auf `origin` |
+| die zwei Oberflächendateien von vor Punkt 73 | liegen als Blobs im Repo, Commit `1c8b695` — **nichts verloren** |
+| das Terminal-Manifest | bytegleich mit `apps/server-controller/templates/terminal/manifest.json` |
+| `terminal-1.0.0.ngc` und die zwei Pakete in `~/uhr-bau/` | gebaut, aus dem Repo neu baubar |
+| **`catalog.json` und `store-key.pem`** | **nur im Kratzordner** — jetzt in `docs/belege/einzel-vm-laden/` |
+
+Die zwei letzten sind der einzige erhaltene Katalog, den eine NGC-API wirklich geholt und
+dessen Unterschrift sie wirklich geprüft hat: Folge 1, eine App, Kennung
+`WM0yymuJtd9UxaUONGIXow`, 692 Byte, dazu der **öffentliche** Teil des Ladenschlüssels,
+113 Byte. Beides öffentlich, kein Geheimnis. Der geheime Teil war schon vor dem Abschalten
+nicht zu finden (`app-weg.md`, Befund 2) — diesem Laden kann also nie wieder jemand eine App
+hinzufügen, und als Vorlage ist er nichts: er zeigt auf eine Adresse, die es nicht mehr gibt.
+
+**Dann gelöscht**, mit Namensprüfung vor dem Befehl (VMID 208, Name `NGC`, `stopped`):
+
+```
+qm destroy 208 --purge 1 --destroy-unreferenced-disks 1   ->  Ausstiegscode 0
+```
+
+Weg sind: die 80-GB-Platte (`ssd_2TB:208/vm-208-disk-0.qcow2`), der EFI- und der TPM-Zustand
+(`local-lvm`), und beide Schnappschuss-Datenträger `snap_vm-208-disk-*_vor-bergung-20261024`.
+
+**Nachgeprüft, nicht angenommen:**
+
+| Probe | Ergebnis |
+|---|---|
+| `qm status 208` | `Configuration file 'nodes/pve/qemu-server/208.conf' does not exist` |
+| `/mnt/ssd_2TB/images/208` | `No such file or directory` |
+| `qm list` | nur noch `307 ngc-ein running` — der kleine Fall ist unberührt |
+| `ping 10.2.3.208` | keine Antwort |
+
+**Was damit endgültig fort ist:** die 19 nicht geborgenen Messskripte aus `/home/berry`
+(2,0 MB in acht Ordnern), die Arbeitsbäume `dist/recovery/` samt SoftHSM-Token, TPM-Zustand
+und den drei PIN-Dateien, die zehn handgelegten Programmfassungen in `/usr/lib/ngc/`
+(`ngc-api.vor-0.2.2`, `ngc-controller.vor-terminalkanal` und so weiter) und die gebauten
+Pakete. Das war die Entscheidung, nicht ein Versehen: jedes dieser Skripte gehört zu einer
+Messung, die schon aufgeschrieben ist, und keines ließ sich ohne jenen Arbeitsbaum aufrufen.
+
+**Der Satz, der bleibt**, und er ist der eigentliche Ertrag dieses Punktes: die erste wirklich
+laufende Anlage war ein Handbau, und als sie wegging, hing an ihr mehr, als irgendwo
+aufgeschrieben stand. Was nur auf einer Maschine liegt, ist nicht gesichert. Der kleine Fall
+läuft jetzt auf `ngc-ein`, und `ngc-ein` kommt aus einem Skript.
