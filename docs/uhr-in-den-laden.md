@@ -527,6 +527,33 @@ Anmeldeläufe mit Argon2id im Browser, was beides sein kann. Für den Vertrag
 macht es keinen Unterschied; für die Frage „wer hat hier gehandelt" macht es
 einen, und die kann nur Thomas beantworten.
 
+### Es waren zwei Einrichtungen, und die erste war niemand von uns beiden
+
+Die Einrichtung um **12:25:37** ist eine andere als die um **12:28:04**, und
+wer die erste ausgelöst hat, ist bis jetzt **nicht gemessen**. Ausgeschlossen
+sind zwei:
+
+- **Ich nicht.** Ich habe keine Anmeldung — kein Passwort, keine Sitzung,
+  keinen Token; den Sitzungsschlüssel kann ich nicht haben (Abschnitt 9). Mein
+  einziger ausführender Aufruf war der `podman exec` um 12:31:52, und der
+  läuft nicht über den Controller und steht darum in dessen Protokoll auch
+  nicht.
+- **Die App-Weg-Sitzung nicht** (Commit `04627d2`). Sie hat „Aktivieren"
+  genau zweimal gedrückt, um `12:14:34` (der Lauf, der am Tunnel riss) und um
+  `12:27:57` (der durchlief); ihr Lauf um `12:22:29` kam nicht so weit, weil
+  der Dialog „Kein Rechner für Dienste da" sagte. Zwischen 12:22:35 und
+  12:26:58 lief bei ihr nichts, und ihre Skripte rufen `zeit` nie von selbst
+  auf. Von den acht Anmeldungen ordnet sie sich sechs zu — die beiden um
+  12:25:18 und 12:25:22 **nicht**.
+
+Bleibt: **eine dritte Sitzung oder ein Mensch am Browser**, mit einer gültigen
+Verwalter-Anmeldung. Das ist offen und wird hier nicht zugeraten.
+
+**Was es für den Weg bedeutet, und das ist der stärkere Satz:** es sind
+**zwei voneinander unabhängige Einrichtungen** gegen API 0.2.2 gelungen, auf
+derselben Maschine, von verschiedenen Auslösern. Ein einzelner glücklicher
+Lauf wäre schwach gewesen; zwei sind es nicht.
+
 ### Was von den 510 Byte bleibt
 
 Mit den Zeiten der App-Weg-Sitzung wird der Befund aus Abschnitt 14 schärfer,
