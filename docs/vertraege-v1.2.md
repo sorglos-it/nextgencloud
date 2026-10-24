@@ -4519,3 +4519,233 @@ auf einer echten VM ist keines von beiden geprüft.
   **Was davon bleibt,** klein, aber echt: `adminApps` und das Menü lassen eine **abgeschaltete**
   App beide aus (`!a.Active`). Deren Rechte lassen sich also nicht vorbereiten, solange sie aus
   ist — das ist so gewollt und hier nur vermerkt, nicht als Befund.
+
+## Punkt 72: Die Härtung des App-Containers liegt an — bis auf die drei Mengen-Grenzen, die der Kern nicht durchsetzt
+
+Punkt 36 hat die Hälfte offen gelassen, die ohne Linux-Server nicht zu haben ist: **ob podman die
+Schalter einhält.** Hier ist sie gemessen, am laufenden Terminal-Container der Debian-VM
+(24.10.2026, Kern 6.12.113+deb13-amd64, podman 5.4.2, Container `ngc-terminal-439982dd`,
+`dc15f0724b9f`, zu diesem Zeitpunkt 7 Stunden auf).
+
+**Welche Maschine.** Die **Einzel-VM aus Punkt 64** (`ssh ngc`, 10.2.3.208), auf der die
+eingerichtete Terminal-App steht — **nicht** die verteilte Anlage unter `ngc.mein.lan`, deren Apps
+seit dem 24.10.2026 auf `svc-1` und `svc-2` laufen. Jede Zahl dieses Punktes gilt für diese eine
+Maschine. Das ist nicht Vorsicht um ihrer selbst willen: Befund 1 ist eine Aussage über **eine
+systemd-Einheit und ihre cgroup**, und ob `Delegate=` auf `svc-1` und `svc-2` genauso steht, ist
+hier **nicht gemessen** und darf aus diesen Zahlen nicht geschlossen werden. Zwei Maschinen mit
+demselben Dienst sind genau die Falle, in der eine Zählung über den falschen Baum entsteht.
+
+**Wie gemessen wurde.** podman läuft dort rootlos als der App-Benutzer, also wurde jeder Aufruf
+aus `/tmp` heraus mit `setpriv --reuid=997 --regid=985 --clear-groups` und mit
+`HOME=/var/lib/ngc/apps/org.sorglos.terminal`, `XDG_RUNTIME_DIR=/run/ngc/ngc-terminal-439982dd`,
+`PATH=/usr/bin:/bin` gestartet — genau die vier, die `Podman.run` mitgibt. Das Werkzeug wurde vor
+der ersten Zählung geprüft (`podman --version` antwortet 5.4.2), und die entscheidende Probe (das
+Netz) trägt eine Gegenprobe, die *gelingt*. Gelesen wurden `podman inspect` **samt
+`.Config.CreateCommand`**, `/proc/946/status`, `/proc/946/uid_map`, `/proc/946/mountinfo`,
+`/proc/946/cgroup` und die cgroup-Dateien selbst.
+
+### Was der Controller mitgibt, und was anliegt
+
+Die Liste steht in `apps/server-controller/classes/runtime/podman.go`, in `createArgs`
+(Zeilen 247–298); die Begründung je Schalter steht dort im Quelltext und ist hier verkürzt.
+
+| Schalter | wozu laut Quelltext | gemessen |
+|---|---|---|
+| `--network none` (ohne `NeedNetwork`) | ohne Gewährung kein Netz; wie ein Netz entsteht sagt der Code bewusst nicht | **liegt an** — im Container nur `lo`, `/proc/net/route` leer |
+| `--read-only` | das Abbild bleibt unschreibbar, geschrieben wird nur unter `/data` | **liegt an** — `/` ist `ro`, Schreiben auf `/` und `/usr` fällt mit *Read-only file system* |
+| `--cap-drop ALL` (ohne `NeedRoot`) | wer ausbricht, soll nichts mitbringen | **nicht gesetzt** — Terminal hat `needs:["root"]`, also greift der `if !c.Root`-Zweig nicht (siehe unten) |
+| `--security-opt no-new-privileges` | zweite Lage gegen Rechtegewinn | **liegt an** — `NoNewPrivs: 1` in `/proc/946/status` |
+| `--volume …:/data:rw,nosuid,nodev` | set-user-id-Bit und Gerätedateien in den eigenen Daten zählen nicht | **liegt an** — `/data rw,nosuid,nodev` in `mountinfo` |
+| `--volume …/ngc-hold:ro,nosuid,nodev` | der Haltevorgang kommt nur aus `config.BinDir` und nur lesbar | **liegt an** — `ro,nosuid,nodev`, Quelle `/usr/lib/ngc/ngc-controller` |
+| `--user 0:0` | 0 im Container ist draußen der App-Benutzer | **liegt an** — `uid_map` ist `0 997 1`, der Prozess ist draußen `997:985` |
+| rootlos als System-Benutzer der App (`credential`) | wer ausbricht, landet auf einem Benutzer ohne eigene Rechte | **liegt an** — `/proc/946/status` `Uid: 997 997 997 997` |
+| `--cpus 1.000` | guter Nachbar sein | **kommt nicht an** (siehe Befund 1) |
+| `--memory 256m` | dito | **kommt nicht an** (siehe Befund 1) |
+| `--pids-limit 512` | die ganze Antwort auf eine Fork-Bombe (`PIDsLimit`) | **kommt nicht an** (siehe Befund 1) |
+
+Dazu die Härtung, die nicht in `createArgs` steht, aber dieselbe Trennung tragen soll:
+`/var/lib/ngc/apps` ist `0711 root`, der Datenordner der App `0700 997:985` und laut `lsattr`
+verschlüsselt (Merker `E`); `/run/ngc` ist `0711 root`, `/run/ngc/ngc-terminal-439982dd` ist
+`0700 997:985`. Alles vier wie in `data.go` und `run.go` beschrieben. Der App-Benutzer hat
+`/usr/sbin/nologin`.
+
+### Befund 1 — die drei Mengen-Grenzen stehen im Aufruf und wirken nicht
+
+`podman inspect` meldet `PidsLimit 512`, `Memory 268435456`, `NanoCpus 1000000000`, und
+`.Config.CreateCommand` zeigt, dass alle drei wirklich mitgegeben wurden. Durchsetzen muss sie die
+cgroup — und der Containerprozess hat keine eigene:
+
+```
+/proc/946/cgroup                 ->  0::/system.slice/ngc-controller.service
+cgroup.procs dieser cgroup       ->  690 (ngc-controller, uid 0), 894 catatonit, 944 conmon, 946 ngc-hold
+pids.max                         ->  9409      (nicht 512)
+memory.max                       ->  max       (nicht 256M)
+cpu.max                          ->  Datei gibt es nicht
+cgroup.controllers               ->  memory pids
+```
+
+Der Containerprozess sitzt also **in der cgroup des Controllers, zusammen mit dem Controller
+selbst.** Keine der drei Grenzen ist im Kern hinterlegt; die 9409 sind `TasksMax` der
+systemd-Einheit und werden mit dem Controller **geteilt**.
+
+Das ist die Art Abweichung, die Punkt 36 gesucht hat: der Schalter wird gesetzt, podman nimmt ihn
+an und schreibt ihn in seine eigenen Angaben — und verwirft ihn still. Die Ursache ist gemessen und
+liegt nicht in podman:
+
+```
+systemctl show ngc-controller.service -p Delegate   ->  Delegate=no
+/sys/fs/cgroup/system.slice/ngc-controller.service  ->  drwxr-xr-x root root
+   Schreibprobe als 997                             ->  Keine Berechtigung
+loginctl show-user 997                              ->  User ID 997 is not logged in or lingering
+podman-Warnung bei jedem Aufruf                     ->  "no systemd user session available …
+                                                        Falling back to --cgroup-manager=cgroupfs"
+podman inspect .HostConfig.CgroupManager            ->  cgroupfs
+podman inspect .State.CgroupPath                    ->  /system.slice/ngc-controller.service
+```
+
+Ohne `Delegate=` an der Einheit bekommt der App-Benutzer keinen eigenen Zweig im cgroup-Baum, darf
+in den vorhandenen nicht schreiben, und rootloses podman legt dann keine an — es sagt das nur als
+Warnung über den Kanal, den der Controller nicht liest (`p.run` gibt `errOut` für `create` als
+`nil` mit).
+
+**Was das praktisch heißt.** Der lange Kommentar an `PIDsLimit` nennt die Zahl „die ganze Antwort
+auf eine Fork-Bombe in einer App". Diese Antwort liegt auf dieser Maschine nicht an. Schlimmer als
+die fehlende Grenze ist das geteilte Fach: die Aufgaben einer App zählen gegen `TasksMax` des
+Controllers, eine App am Anschlag nimmt also dem Controller den Platz, Aufgaben zu starten. Das ist
+**abgewogen, nicht gemessen** — eine Fork-Bombe wäre auf dieser Maschine zerstörerisch, weil die
+anderen Sitzungen am laufenden Dienst arbeiten, und wurde darum nicht gefahren.
+
+### Befund 2 — `--cap-drop ALL` ist auf dieser Maschine überhaupt nicht zu messen
+
+Der Container hat 11 Fähigkeiten: `CapEff: 00000000800405fb` in `/proc/946/status`, dieselben 11 in
+`EffectiveCaps` und `BoundingCaps` — podmans Vorgabesatz, darunter `CAP_DAC_OVERRIDE`,
+`CAP_SETUID` und `CAP_SETFCAP`. Kein Fehler des Codes: Terminal trägt `needs:["root"]`
+(`apps/server-controller/templates/terminal/manifest.json`), `activate.go:467` setzt daraus
+`Root: true`, und `createArgs` lässt den `--cap-drop ALL`-Zweig dann aus. `.Config.CreateCommand`
+bestätigt es: der Schalter steht nicht im Aufruf.
+
+Der Befund ist die Lücke, nicht der Fehler: **Terminal ist die einzige App dieser Anlage, und sie
+ist genau die, an der dieser Schalter nicht anliegt.** Der am häufigsten genannte Härtungsschalter
+ist damit weiter ungemessen — gebaut, im Fall-Satz grün, auf keiner laufenden App der Welt je
+nachgesehen. Dazu passt eine Lesart, die der Quelltext selbst nicht ausspricht: der Kommentar sagt,
+die Fähigkeiten „kommen zurück", nennt aber nicht, welche. Gemessen sind es die 11 von podman —
+eine Vorgabe, die wie die 2048 aus Punkt 36 **nicht im Repo steht** und sich mit einer
+podman-Fassung ändern kann.
+
+### Befund 3 — ein Riegel liegt an, den niemand gesetzt hat
+
+`/proc/946/status` meldet `Seccomp: 2` und `Seccomp_filters: 1`: der Container läuft hinter einem
+seccomp-Filter. Im Repo steht davon nichts — kein `--seccomp-profile`, kein
+`--security-opt seccomp=…`. Es ist podmans eingebautes Profil. Das ist kein Mangel, aber dieselbe
+Art Abhängigkeit wie die 11 Fähigkeiten: eine Wand, die trägt, solange podman sie stellt, und die
+kein Fall dieses Repos halten würde, wenn sie wegfiele.
+
+### Befund 4 — ein App-Benutzer ohne App
+
+`getent passwd` nennt neben `ngc-terminal-439982dd` einen zweiten:
+`ngc-all-73e95399:x:999:987::/var/lib/ngc/apps/no.app.at.all:/usr/sbin/nologin`. Das zugehörige
+Heimverzeichnis gibt es nicht, jeder podman-Aufruf unter ihm scheitert mit
+`cannot resolve /var/lib/ngc/apps/no.app.at.all`. Ein Überrest einer früheren Messung, der kein
+Loch aufmacht (nologin, kein Ordner, keine Gruppe mit Rechten) — aber `DropUser` hat ihn
+offensichtlich nicht geholt, und ein Benutzer, der nach seiner App übrig bleibt, gehört in den
+Fall-Satz des Aufräumens.
+
+### Die drei Proben: trägt die Härtung?
+
+Gewählt wurden die drei Wände, die die Trennung wirklich tragen muss. Vorher angekündigt und
+danach entfernt wurde ein **Attrappen-Ordner** `/var/lib/ngc/apps/zz.probe.other`
+(`0700`, Benutzer `999:987`, eine Geheimdatei `0600`) — die Gestalt einer zweiten App, weil es
+auf dieser Anlage keine zweite gibt. Sonst wurde nichts verändert; der Terminal-Container war
+nach allen Proben unverändert auf.
+
+**Probe 1 — kommt die App an die Daten einer anderen App? Nein, zweifach.**
+Im Container existiert der Pfad nicht einmal: nur `/data` ist eingehängt, `ls /var/lib/ngc/apps`
+antwortet *No such file or directory*. Und in der Stellung, auf die es ankommt — nach einem
+Ausbruch, als `997` auf dem Wirt:
+
+```
+ls /var/lib/ngc/apps                                 ->  Keine Berechtigung   (0711 root)
+cat /var/lib/ngc/apps/zz.probe.other/secret.txt      ->  Keine Berechtigung
+cat /var/lib/ngc/controller/state.db                 ->  Keine Berechtigung
+ls /var/lib/ngc/apps/org.sorglos.terminal            ->  lesbar  (die eigenen)
+```
+
+Die Zeile aus `podman_linux.go` — „wer aus dem Container ausbricht, landet auf einem Benutzer ohne
+eigene Rechte" — trägt. Dass `CAP_DAC_OVERRIDE` im Container liegt, ändert daran nichts: die
+Fähigkeit gilt nur im Benutzer-Namensraum, und der kennt `999` nicht.
+
+**Probe 2 — kann der Container neue Rechte erlangen? Nein, aber eine Lage ist nicht trennbar
+gemessen.**
+
+```
+Schreiben auf /  und /usr          ->  Read-only file system
+mount -t proc  /  mount /dev/sda2  ->  permission denied   (CAP_SYS_ADMIN nicht im Satz)
+mount -o remount,rw /              ->  permission denied
+mount -o remount,suid /data        ->  permission denied
+dd if=/dev/sda2                    ->  No such file or directory  (kein Gerät im Container)
+NoNewPrivs                         ->  1
+```
+
+Kein Weg heraus gefunden — und die vier abgewiesenen `mount`-Aufrufe sind der schärfste Teil davon,
+weil `--read-only` und die `nosuid`-Optionen ohne sie zurückdrehbar wären.
+
+**Die Lage, die nicht trennbar ist, und das gehört dazu:** ob `nosuid` auf `/data` wirkt, ließ sich
+an *diesem* Container nicht einzeln zeigen. Eine set-user-id-Datei nützt nur einem Benutzer, der
+nicht schon 0 ist, und `/data` ist `0700` — der einzige Benutzer im Container, der hineinkommt, ist
+die 0, für die das Bit nichts ändert. Eine erste Zählung hat genau das als Beweis gelesen
+(`euid=0` vor **und** nach dem Aufruf) und war keiner. Als Gegenprobe wurde dieselbe Datei auf
+`/tmp` gelegt und als `1000` gestartet: `euid` blieb `1000`, der Kern lässt das Bit auf einer
+`nosuid`-Einhängung in diesem Container also fallen. Dass `/data` dieselbe Option trägt, ist aus
+`mountinfo` gemessen — die Wirkung auf `/data` selbst ist daraus **geschlossen, nicht gemessen**.
+Nebenbei aufgefallen: die Wurzel-Einhängung selbst trägt `ro,relatime` und **kein** `nosuid`. Sie
+ist unschreibbar, eine set-user-id-Datei könnte also nur aus dem Abbild der App kommen — und wäre
+drinnen die 0, draußen `997`. Kein Loch, aber die einzige Einhängung des Containers ohne diese
+Option.
+
+**Probe 3 — erreicht der Container das Netz der Anlage? Nein, und die Gegenprobe gelingt.**
+Dieselbe Perl-Probe, zweimal gefahren — im Container und als `997` auf dem Wirt:
+
+| Ziel | im Container | als `997` auf dem Wirt |
+|---|---|---|
+| `127.0.0.1:7443` (ngc-api) | Connection refused (eigenes `lo`) | **erreicht** |
+| `10.2.3.208:7443` (die VM selbst) | Network is unreachable | **erreicht** |
+| `10.2.3.208:443` (apache) | Network is unreachable | **erreicht** |
+| `10.2.3.208:22` | Network is unreachable | **erreicht** |
+| `10.2.3.1:22` (Tor der Anlage) | Network is unreachable | **erreicht** |
+| `8.8.8.8:53` | Network is unreachable | **erreicht** |
+
+`--network none` trägt vollständig, und die rechte Spalte ist der Grund, warum man das glauben
+darf: dieselbe Probe, dasselbe Perl, nur eine andere Stellung — und sie erreicht alles. Eine Null
+ohne diese Spalte wäre keine Messung gewesen. Die rechte Spalte sagt aber auch, wie weit der
+Schalter reicht: **er trennt den Container, nicht den App-Benutzer.** Wer wirklich ausbricht, hat
+das ganze Netz der Anlage, einschließlich `ngc-api`.
+
+### Was daraus zu bauen wäre
+
+1. **`Delegate=yes` an `ngc-controller.service`**, damit die drei Grenzen überhaupt eine cgroup
+   haben, in der sie stehen können — oder, wenn das nicht geht, `loginctl enable-linger` für den
+   App-Benutzer und ein `XDG_RUNTIME_DIR`, das zur Sitzung passt. Welcher der beiden Wege richtig
+   ist, ist eine Entscheidung und steht hier nicht.
+2. **Der Controller muss das Verwerfen bemerken.** Heute gibt `p.run` für `create` kein `errOut`
+   mit, und podmans Warnung über die fehlende Sitzung fällt auf den Boden. Ein Schalter, der still
+   verworfen wird, ist schlimmer als einer, der fehlt: der Fall-Satz bleibt grün, und `inspect`
+   bestätigt ihn. Ein Fall nach der Aktivierung, der `/proc/<pid>/cgroup` gegen die drei Grenzen
+   liest, wäre die einzige Messung, die das fängt.
+3. **Eine App ohne `needs:["root"]` auf diese Maschine**, allein damit `--cap-drop ALL` ein
+   einziges Mal an einer laufenden App gemessen ist. Solange Terminal die einzige App ist, ist
+   dieser Schalter ungeprüft.
+4. **`nosuid` auf die Wurzel-Einhängung**, oder eine Zeile im Quelltext, die sagt, warum sie dort
+   nicht nötig ist.
+5. **Den Überrest `ngc-all-73e95399` aufräumen** und einen Fall, der einen App-Benutzer ohne
+   Datenordner als Fehler zählt.
+6. Was der Quelltext über `NeedRoot` sagt, um die **11** ergänzen — oder die Fähigkeiten selbst
+   nennen, statt podmans Vorgabe zu erben.
+7. **Dieselbe Messung auf `svc-1` und `svc-2`**, den App-Knoten der verteilten Anlage. Befund 1
+   hängt an `Delegate=` einer systemd-Einheit, also an der Einrichtung der jeweiligen Maschine —
+   er könnte dort anliegen oder fehlen, und keine Zahl von hier sagt, welches. Dabei gilt die
+   Warnung aus der Anlage selbst: die Rolle am laufenden Dienst prüfen, nicht am Namen der
+   Maschine.
+
+**Getrennt gehalten:** gemessen sind die Tabelle der Schalter, die vier Befunde, die cgroup-Dateien
+und die drei Proben samt Gegenproben. Abgewogen sind die Folge des geteilten `TasksMax`, die
+Wirkung von `nosuid` auf `/data` und jeder der sechs Punkte dieser letzten Liste.
