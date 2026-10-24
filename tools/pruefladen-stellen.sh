@@ -63,7 +63,14 @@ mkdir -p /etc/ngc/tls
 install -m 0644 "$T/store.crt" /etc/ngc/tls/store.crt
 install -m 0600 "$T/store.key" /etc/ngc/tls/store.key
 
-# 4. Its own vhost on 443, beside the one of the shell.
+# 4. TLS in Apache itself. On the machine this script came from, NGC's web
+#    install had already enabled mod_ssl, so the script never did and nobody
+#    noticed. On a fresh Debian it is off, and the vhost below dies with
+#    "Invalid command 'SSLEngine'" - measured on 24.10.2026 on a clean
+#    Debian 13. a2enmod is idempotent.
+a2enmod ssl >/dev/null
+
+# 5. Its own vhost on 443, beside the one of the shell.
 cat > /etc/apache2/sites-available/ngc-test-store.conf <<X
 # A plain file server: a store is files on any web server (draft 4.4).
 <VirtualHost *:443>
