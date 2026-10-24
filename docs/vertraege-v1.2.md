@@ -35,12 +35,31 @@ die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 46 | 81 |
-| überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
-| offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **57** | **93** |
+| gilt | 35 | 49 | 84 |
+| überholt / erledigt durch einen späteren Punkt | 0 | 7 | 7 |
+| offen, wartet auf Thomas | 1 | 11 | 12 |
+| **Einträge** | **36** | **67** | **103** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **105**.
+
+Diese vier Zeilen sind am 24.10.2026 aus den Tabellen selbst **gezählt** und nicht
+weitergeschrieben. Wer anhängt, zählt hier mit — `tools/check-buch.sh` prüft die Nummern,
+diese Zahlen prüft es nicht.
+
+**Und wer anhängt, liest die nächste freie Nummer in der Tafel der Reihe B nach, nicht am
+Dateiende.** Am 24.10.2026 haben sich daran drei Sitzungen gestossen: eine Nummer war in der
+Tafel schon vergeben, während der Abschnitt dazu noch in einem offenen PR lag. Dieser Punkt hier
+hiess deshalb kurz 76, dann 81 und dann 82, bevor er 83 wurde.
+
+**Und eine Nummer vorzuhalten geht nicht**, so verlockend es ist: wer die naechste Nummer
+ueberspringt, um einer fremden offenen Nummer auszuweichen, reisst ein Loch, und
+`tools/check-buch.sh` weist das zu Recht ab („a log has no holes"). Zwei Zweige, die
+gleichzeitig dieselbe naechste freie Nummer nehmen, sind damit unvermeidlich — **wer als
+Zweiter zusammenfuehrt, nummeriert um.** Vorher laesst sich das nicht aufteilen, und die
+Reihenfolge entscheidet nicht die Sitzung, sondern Thomas. Daraus zwei Regeln, die beide
+Arbeit sparen: **in der Tafel nachsehen**, und **Nummern anderer Sitzungen erst zitieren, wenn
+sie auf `main` sind** — `check-buch.sh` fängt einen Verweis auf einen Punkt, den es noch nicht
+gibt, aber erst nach dem Schreiben.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -164,6 +183,7 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
 | 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
 | 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
+| 83 | Der Weg zurück geht – er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt | gilt – auf einer eigenen Wegwerf-Maschine gefahren, eine App lief wieder | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5503,3 +5523,89 @@ unvermessen, bis es das ist.
 
 Verwandt: **Punkt 79** misst denselben stündlichen Takt von der anderen Seite (der Laden ist weg);
 hier geht es nicht um die Erreichbarkeit des Ladens, sondern um den Kanal, der danach kommt.
+
+---
+
+## Punkt 83: Der Weg zurück geht — er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt
+
+Gemessen am 24.10.2026 auf einer eigenen Wegwerf-Maschine: VM 310 `ngc-sicherung-probe`,
+10.2.3.220, Vollklon der Proxmox-Vorlage 300, zweite Platte mit `mkfs.ext4 -O encrypt` auf
+`/var/lib/ngc/apps`, podman 5.4.2 wie auf svc-1. Diese Maschine hat der Anlage nie gehört.
+Sie ergänzt Punkt 81, der sagt, was gesichert wird; dieser sagt, was davon zurückkommt.
+
+**Was gemessen ist.** Aus der Sicherung von svc-1 zurückgelegt: `/etc/ngc` samt Modi, die
+`state.db`, die Datenordner beider Apps. Die Datenbank **öffnete** — der Controller las beide
+App-Zeilen und fasste beide Apps an. Dann stand er an einer Wand:
+
+```
+WARN the runtime directory of an app could not be made, it stays off
+     app=org.sorglos.terminal
+     err="runtime: no system user for this container
+          user: unknown user ngc-terminal-439982dd"
+```
+
+Der **Systembenutzer** einer App und ihr verschlüsselter Datenordner werden von
+`install/activate.go` angelegt und von sonst nichts; `node.Restore` sucht den Benutzer und legt
+keinen an. Ohne diesen Schritt bleibt nach einer Wiederherstellung **jede** App für immer aus,
+und das Einzige im Produkt, das es richtigstellt, ist ein Admin, der die App neu aus dem Laden
+einrichtet — für Zeilen, die in der Sicherung schon dastanden.
+
+**Nicht zu verwechseln mit einem Ausfall.** Die Sitzung „Was passiert, wenn ein Rechner
+ausfällt" hat den anderen Weg gemessen — ihre Messung, in ihrem eigenen Papier: nach einem Neustart
+kommen die App-Container auf svc-1 und svc-2 eine Sekunde nach dem Controller von selbst wieder.
+Der Unterschied ist genau dieser Benutzer — bei einem Ausfall ist er noch da, bei einer
+Wiederherstellung auf eine neue Maschine nicht.
+
+Mit `tools/sicherung-zurueck` (ruft `runtime.EnsureUser` und `runtime.EnsureData`, die Funktionen
+des Produkts selbst) ging es weiter, Ausstiegscode 0. Die fscrypt-Schlüsselkennungen auf 310 sind
+danach **bitgleich** mit denen auf svc-1 — der Schlüssel der App-Daten reist allein in
+`controller.json` mit. Und dann lief eine App wieder:
+
+```
+ngc-terminal-439982dd   localhost/ngc-terminal:1.0.0   Up About a minute
+```
+
+Ohne API, ohne Laden, ohne Admin, allein aus der Sicherung.
+
+**Drei Dinge, die dabei mitgemessen wurden.**
+
+1. **Ein Controller startet nicht ohne API-Verweis.** Mit `apis: []` antwortet er „Die
+   Konfiguration dieses Servers fehlt oder ist unvollständig." Eine Wiederherstellung lässt sich
+   also nicht erst einmal offline prüfen; man muss die API-Adresse totlegen (hier
+   `wss://127.0.0.1:7443`), und das muss man wissen, weil die zurückgespielte `controller.json`
+   den `noiseKey` des alten Rechners trägt — eine zweite Maschine damit an der echten API wäre
+   svc-1 ein zweites Mal.
+2. **`app-daten.tar` ist Klartext.** Punkt 81 und ein früherer Stand dieses Blattes behaupteten
+   das Gegenteil. Beim Sichern läuft der Dienst, also liegt der Schlüssel jeder App im
+   Schlüsselbund des Kerns und root liest die Ordner durch ihn hindurch: 1419 ELF-Köpfe und die
+   dpkg-Listen des Containers, im Klartext gezählt. Sicherheitsfolge: dieser Teil ist der
+   empfindlichste der ganzen Sicherung, weil er der einzige ist, der ohne jeden Schlüssel
+   aufgeht. Stabilitätsfolge: dieselbe Tatsache rettet die App-Daten über einen Verlust des
+   dbKey hinweg.
+3. **Der Datenordner einer App ist auch podmans Container-Lager.** Die Terminal-App kam zurück
+   und lief, die Uhr nicht: `crun: mount devpts to dev/pts: Invalid argument`, obwohl Abbild,
+   Daten und Benutzer da sind und die Container-Konfigurationen beider Apps an dieser Stelle
+   gleich sind. Unterschied: der Terminal-Container lief beim Sichern seit drei Stunden, der
+   Uhr-Container seit sieben Minuten. Der zurückgespielte Zustand trägt auch eine kaputte Zeit
+   (`Exited (0) 292 years ago`). Gegenprobe mit angehaltenem Terminal-Container: die Uhr startet
+   genauso nicht, es ist also kein Gedränge um `devpts`.
+
+**Was nicht gemessen ist.** Die Ursache des Uhr-Fehlers — dass ein `tar` im Betrieb für die
+**Daten** eine Sicherung und für das **Container-Objekt** eine Momentaufnahme ist, die
+schiefgehen kann, ist die naheliegende Erklärung und kein Beweis. Ein `podman rm` mit Neuanlegen
+aus dem vorhandenen Abbild ist nicht gefahren. Die Kopplung einer neuen Maschine ist nicht
+gefahren: sie braucht einen angemeldeten Admin, und mit einer alten `controller.json` wäre sie
+svc-1 ein zweites Mal. Das Zurückspielen der MariaDB ist nicht gefahren.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob `node.Restore` den Systembenutzer und den Datenordner **selbst** anlegen soll, statt dass
+  ein eigenes Werkzeug es tut. Das wäre die bessere Anlage und die größere Änderung: ein
+  Controller, der beim Hochfahren Systembenutzer anlegt, tut mehr als heute.
+- Ob eine Sicherung die Container-Lager der Apps überhaupt mitnehmen soll. Nimmt sie sie nicht
+  mit, ist nach jeder Wiederherstellung eine Neueinrichtung nötig; nimmt sie sie mit, kann ein
+  Container so zurückkommen, wie die Uhr zurückkam.
+- Ob die Wegwerf-Maschine stehen bleibt. Sie trägt eine Klartextkopie der App-Daten von svc-1
+  und dessen `controller.json`; solange sie steht, ist sie so empfindlich wie svc-1 selbst.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitt 6.
