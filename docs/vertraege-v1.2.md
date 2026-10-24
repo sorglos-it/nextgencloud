@@ -156,6 +156,14 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
 | 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
 | 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
+| 75 | Die Maschine der ersten Messungen ist aus – die Messungen gelten, die Anweisungen nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 76 | diese Nummer ist leer – kein Versehen, sondern eine Spur | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 77 | Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 78 | Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 79 | Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5349,3 +5357,149 @@ nicht geübt.
 - Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
+
+## Punkt 82: Die stehende Zustimmung ist gebaut und wirkungslos — ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen
+
+**Gemessen am 24.10.2026** an der Sechs-Maschinen-Anlage (`api-1`, `api-2`, `db-1`, `svc-1`,
+`svc-2`, `store`; alle Zeiten UTC, die Maschinen laufen auf UTC). Nicht an der Einzel-VM `ngc`.
+
+Der stündliche Update-Lauf (`Server.rollouts`, „the beat of the update rounds") holt das
+veröffentlichte Release, prüft es gegen den Release-Schlüssel der Anlage, lädt ein Archiv
+herunter — und bleibt seit jeher am **ersten** Knoten stehen. Vier Läufe in Folge dieselbe Zeile:
+
+```
+00:50 / 01:50 / 09:44 / 10:44   ngc-api 0.2.2   db-1   E_INTERNAL
+```
+
+Im Journal von `ngc-api` steht dazu nur `WARN the update round stopped error="updates: the round
+stopped at a node"` — **ohne Knoten und ohne Grund**. Der Grund steht im Protokoll der Anlage,
+nicht im Journal: `Updates.abort` schreibt `target version node cause` über `audit.Log`. Er ist
+also da, nur an der Stelle, an der ihn beim Suchen niemand vermutet.
+
+### Die erste Wand, behoben
+
+`ActStage` hatte im Controller **gar keinen Behandler**. Der Kanal fiel durch `Server.core` bis
+zur `acts`-Suche und endete dort `E_INTERNAL`, ohne dass vom Paket `update` je etwas gefragt
+wurde — der Quelltext sagte das an genau der Zeile selbst. Daneben war `serve.Deps.Updater` auf
+`nil` gesetzt, mit einer Begründung im Code: `update.Deps` nimmt die Vertrauensliste als **Wert**,
+während der Controller seine Liste Fassung für Fassung unter sich austauscht
+(`chain.Keeper.Current`), und ein einmal beim Verdrahten gebauter Manager arbeitete gegen die
+Liste jenes Augenblicks.
+
+Geschlossen wie beim `Installer`: die Liste wird **je Aufruf** nach unten gereicht, und der
+Manager entsteht je Kanal. Gebaut in PR 121.
+
+**Am Gerät nachgewiesen, nicht nur übersetzt.** Mit dem Probebau auf den vier Controllern kommt
+der Lauf zum ersten Mal über die Migrationsstufe hinweg und holt ein **zweites** Archiv:
+
+```
+13:21:04  /ngc-api-amd64.tar          200     <- die Stufe, die vorher E_INTERNAL war
+13:21:06  /ngc-controller-amd64.tar   200     <- hat die Anlage nie zuvor geholt
+db-1:/var/lib/ngc/staged/ngc-controller   26 736 640 Byte   0600 root   13:21
+```
+
+Die Datei auf der Platte ist der Beleg: `update.Manager.Stage` ist gelaufen, hat Unterschrift,
+Größe und Prüfsumme gehalten und unter dem Namen abgelegt, den ein Installierer sucht.
+
+### Die zweite Wand, und sie ist die eigentliche
+
+Eine Sekunde später:
+
+```
+13:21:07  ngc-controller 0.2.2   db-1   E_FORBIDDEN
+```
+
+**Meine erste Erklärung war falsch, und die Messung hat sie widerlegt.** Ich hielt die
+Fassungsgleichheit für die Ursache — db-1 trug selbst 0.2.2. Auf 0.2.1 gesetzt, also echt älter,
+kam **dieselbe** Absage.
+
+Der Grund steht in `core.All`:
+
+```
+ActStage    Admin=true  Root=false  Changes=false   <- darum geht der stage-Schritt jetzt
+ActInstall  Admin=true  Root=true   Changes=true    <- "signed task required"
+```
+
+und `task.Check` (`shared/task/task.go:174`):
+
+```go
+if in.Task == nil {
+	if in.Rule.Root {
+		return nil, ErrNoTask
+	}
+```
+
+Der Rollout ruft aber
+
+```go
+u.Send.Call(ctx, node, core.ActInstall, params, nil, nil, nil, nil)   // keine Aufgabe
+```
+
+Der Kanal stirbt damit **am Zugangstor**, bevor `update.Manager` überhaupt gefragt wird — weshalb
+der Controller zu diesem Vorgang **nichts** protokolliert. Wer dort nach der Ursache sucht, findet
+eine stumme Maschine.
+
+### Der Widerspruch
+
+`core.Unattended` und `store.Approved` gibt es **genau** für den Fall „Kanal ohne Benutzer",
+`install.go` hält dafür einen eigenen Zweig (`d.User == ""`), und die stehende Zustimmung steht in
+der Vertrauensliste der Anlage auch wirklich drin:
+
+```
+auto: [{ngc-api, <Release-Schlüssel>}, {ngc-controller, …}, {ngc-web, …}, {system}]
+```
+
+**Nur erreicht dieser Zweig nie die Ausführung**, weil dieselbe Vertragstabelle `install` als Root
+führt. Die stehende Zustimmung ist gebaut, eingetragen, geprüft — und wirkungslos. Ein
+unbeaufsichtigter Lauf kann damit **kein** NGC-Teil einsetzen, auf keinem Knoten.
+
+Dieselbe Klasse wie die sechs Wände aus **Punkt 71**: jedes Stück für sich ist vertretbar
+begründet, und die Lücke liegt zwischen zwei geprüften Teilstrecken. Der Unterschied ist, dass
+diese hier nicht in einer systemd-Unit oder einem Dateimodus liegt, sondern **im Vertrag selbst**,
+und dass zwei seiner Teile einander widersprechen.
+
+### Was ausgeschlossen ist
+
+Damit niemand dort noch einmal sucht, jedes Stück gemessen:
+
+| Verdacht | Befund |
+|---|---|
+| die Rollen des Knotens | `tunnel.Components` enthält `ngc-controller` **immer**, auch bei Rolle `db`. `runs()` ist es nicht |
+| verschiedene Schlüssel | der `releaseKey` der vier Controller und der Schlüssel der `auto`-Einträge sind derselbe (`pN6Z6a9NR0aG6aEJIJ5EHg`) |
+| die gemeldeten Fassungen | `PutComponents` schreibt **nur** ein geglückter Install (`install.go:735`). Da nie einer glückte, sind sie leer — und `store.Newer` nimmt jede Fassung als neuer als `""`. Beide Seiten lassen das durch |
+| `db-1` als Maschine | db-1 ist nur der **erste berührte** Knoten: der Rollout legt vor allem anderen dem Migrationsknoten (Rolle `db`, kein API-Knoten) die `ngc-api`-Datei bereit. Ob svc-1 und svc-2 es könnten, ist **nicht gemessen** — der Lauf stirbt vorher |
+
+### Die Entscheidung für Thomas
+
+Sie liegt in `shared/` und ist damit eine Vertragsfassung, kein Zweig.
+
+**a) `install` eines NGC-Teils darf ohne Root-Aufgabe laufen, wenn eine stehende Zustimmung dafür
+steht.** Das ist das, wofür `core.Unattended` gebaut wurde; der Zweig in `install.go` bekäme eine
+Ausführung. Der Preis: die Zustimmung in der Vertrauensliste wird zur alleinigen Schranke vor dem
+Austausch eines Programms, das als root läuft. Sie ist unterschrieben und versioniert, also keine
+schwache Schranke — aber sie ist eine *stehende*, und niemand sieht in dem Augenblick hin.
+
+**b) Der Rollout führt eine unterschriebene Aufgabe mit.** Dann bleibt die Schranke je Vorgang.
+Zu sagen ist, **wer sie wann unterschreibt**: in einer stündlichen Runde sitzt kein Mensch. Eine
+vorrätig unterschriebene Aufgabe wäre eine stehende Zustimmung unter anderem Namen, nur ohne deren
+Versionierung — also (a) mit mehr Teilen. Dazu kommt `l.MayRoot(cert.User, in.Node)`: selbst **mit**
+Aufgabe braucht der Unterzeichner Systemrechte auf **jedem** Knoten, den der Lauf anfasst — Wand
+(4) aus Punkt 71, noch einmal und diesmal für alle Knoten gleichzeitig.
+
+**c) Es bleibt, wie es ist, und das Einsetzen ist Handarbeit.** Dann gehört es gesagt: der
+stündliche Lauf lädt jede Stunde dieselben 31 MB und wirft sie weg, die Updates-Seite bietet an,
+was nie eingesetzt wird, und der Satz „die Anlage aktualisiert sich selbst" gilt für den Katalog
+und die Apps, aber nicht für NGC.
+
+> **Mein Vorschlag: (a)**, und zwar nicht aus Bequemlichkeit, sondern weil (b) dieselbe Schranke
+> aufbaut und dabei einen Menschen erfindet, den es in einer stündlichen Runde nicht gibt. Wer
+> (a) nicht will, will in Wahrheit (c) — und dann sollte die Oberfläche aufhören, ein Update
+> anzubieten, das sie nicht einsetzen kann.
+
+**Was dieser Punkt NICHT sagt:** dass ein Lauf nach der Entscheidung durchliefe. Gemessen ist der
+Weg bis zum bereitgelegten File. Was hinter dem Zugangstor steht — `installPart`, der Tausch, der
+Dienstneustart, der Gesundheitstest — ist auf dieser Anlage **nie gelaufen** und bleibt
+unvermessen, bis es das ist.
+
+Verwandt: **Punkt 79** misst denselben stündlichen Takt von der anderen Seite (der Laden ist weg);
+hier geht es nicht um die Erreichbarkeit des Ladens, sondern um den Kanal, der danach kommt.
