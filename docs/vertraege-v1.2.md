@@ -156,6 +156,8 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
 | 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
 | 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
+| 75 | Die Maschine der ersten Messungen ist aus – die Messungen gelten, die Anweisungen nicht | gilt – 64 Verweise in 9 Dateien geprüft und getrennt | Umgebung |
+| 82 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5349,3 +5351,139 @@ nicht geübt.
 - Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
+
+---
+
+## Punkt 82: Der kleine Fall hat wieder eine Maschine — und sie ist aus einem Skript entstanden, nicht von Hand
+
+> **Stand: gilt.** Art: Umgebung und Messung. Schließt an Punkt 75 an.
+
+**Entschieden am 24.10.2026** (Thomas): der kleine Fall wird weiter geprüft, auf einer
+**neuen** Maschine, und die alte wird **einmal** angeworfen, um zu bergen, was nur auf ihr
+liegt. Beides ist am selben Tag gemacht und gemessen.
+
+### Es war kein Absturz: ein `qmstop` vom Wirt
+
+Punkt 75 und der Nachtrag zu Punkt 74 ließen offen, was die Einzel-VM umgeworfen hat. Das ist
+jetzt gemessen, und zwar nicht in der VM, sondern im **Aufgabenbuch des Proxmox-Wirts**:
+
+```
+UPID:…:qmstop:208:root@pam:   ->  24.10.2026 12:37:27   OK
+```
+
+Die letzte Journalzeile des vorigen Laufs ist **12:36:19**, eine Minute davor. Also: **kein
+Absturz, kein Kernel, kein Fehler von NGC** — die Maschine wurde vom Wirt aus hart
+angehalten. Am selben Tag gab es zwei weitere solche Eingriffe (`qmstop` 01:11:14,
+`qmshutdown` 04:41:40). **Wer das Aus als Befund über NGC aufgeschrieben hätte, hätte etwas
+Falsches aufgeschrieben.** Wer sie angehalten hat und warum, ist nicht gemessen.
+
+**Nebenbefund:** bis zuletzt kam alle **63 Sekunden** ein `TLS handshake error … tls: bad
+certificate` von `10.111.111.111`. Regelmäßig, also etwas, das fragt und nicht aufgibt. Was
+dort fragt, ist nicht gemessen.
+
+### Geborgen: drei Skripte, die es im Repo nicht gab
+
+Vor dem Start ein Schnappschuss (`vor-bergung-20261024`), damit ein Start, der das
+Dateisystem beschädigt, nichts mitnimmt. Danach war Port 22 nach 16 Sekunden offen.
+
+Im Repo liegen jetzt `tools/pruefladen-tls.sh` (Test-CA und Ladenzertifikat),
+`tools/pruefladen-stellen.sh` (Laden hinter Apache über HTTPS) und
+`tools/haertung-nachsehen.sh` (liest die Härtung am **laufenden** Behälter plus cgroup und
+`/proc` — der Unterschied, auf dem die Punkte 51 und 72 beruhen). Pfade und Name sind
+Angaben geworden, die Schritte und Selbstprüfungen unverändert.
+
+**Die geheimen Schlüssel der alten Test-CA sind absichtlich nicht geborgen:** das Skript baut
+die CA selbst neu, nachgewiesen auf der neuen Maschine. Einen geheimen Schlüssel zu kopieren,
+den man nicht braucht, ist ein Risiko ohne Gegenwert. Die gebauten Pakete (103 MB und
+190 MB) sind ebenfalls nicht geborgen — `ngc-store pack` stellt sie aus dem Repo her. Der
+Katalog ist geborgen; `/srv/ngc-store/catalog.json` und `ngcapp/store/catalog.json` sind
+bytegleich (`5464c828…dbf1`), es gab also nur eine Fassung.
+
+**Der Befund ist größer als die vier Dinge aus Punkt 75:** in `/home/berry` liegen **22
+eigene Skripte** (2,0 MB) in acht Ordnern. Drei hatten allgemeinen Wert und sind jetzt im
+Repo; die anderen 19 gehören zu je einer Messung, die schon aufgeschrieben ist, und sind
+nicht geborgen. Sie liegen auf der Platte und im Schnappschuss. **Zu entscheiden (Thomas):**
+ob sie vor dem Löschen der Platte jemand durchsieht. Die Maschine ist danach sauber
+heruntergefahren, **nicht gelöscht**, Schnappschuss bleibt.
+
+### Zwei Befunde aus `app-weg.md` sind jetzt gemessen
+
+Jenes Papier ist eingefroren, darum hier:
+
+1. **Das Release bringt `ngc-store` mit.** Befund 4 ließ offen, ob das Release es nicht
+   mitliefert oder die Maschine von Hand bestückt war. Aus `ngc-api-amd64.tar` von **v0.2.2**
+   fielen genau `ngc-api` und `ngc-store`, und das herausgefallene `ngc-store` meldet
+   `0.2.2`. **Das Release liefert es — die alte Maschine war von Hand bestückt.**
+2. `/usr/lib/ngc/ngc-store` lag auf der alten Maschine mit Datum 19.10. vor; Befund 4 hatte
+   „heute ist es nicht da" gemessen, was damals richtig war. Daneben lagen **zehn** Programme
+   wie `ngc-api.vor-0.2.2` und `ngc-controller.vor-terminalkanal`. Keines kommt aus einem
+   Release.
+
+### Die neue Maschine, und warum eine neue
+
+Die alte war über Monate von Hand gewachsen. **Eine Messung auf einer Maschine, die niemand
+nachbauen kann, sagt wenig darüber, was ein Nutzer erlebt.** Darum ist der Ersatz ein
+**Skript**: `tools/einzelmaschine.sh` klont die Debian-13-Vorlage, aus der auch die sechs
+verteilten Knoten kommen, und gibt dem Klon alle Rollen zugleich.
+
+`ngc-ein`, VMID 307, 10.2.3.216, Name wieder `ngc.test`. Debian 13 (trixie), Kernel
+6.12.113+deb13-cloud-amd64, 2 Kerne, 3922 MiB, 32 GB + 16 GB. `ngc-api` und `ngc-controller`
+**0.2.2**, Oberfläche **0.2.1**, Datenbank SQLite in `/var/lib/ngc/api/ngc.db`.
+
+Der Weg: Pakete, `ulh` (`ngc-kette`), Release v0.2.2 nach `/var/lib/ngc/staged`, Prüfladen
+mit den **geborgenen** Skripten, dann `ngc-all.sh install`, dann `ngc-web.sh install`. Beide
+mit **Ausstiegscode 0**.
+
+**Der Laden muss vor der Installation stehen**, und das ist kein Umweg: ohne eigenen Laden
+bricht `ngc-all.sh` mit eigener Meldung ab, weil der Schlüssel des offiziellen Ladens ein
+Platzhalter ist (Punkte 56, 57). Genau dafür sind die geborgenen Skripte da — und auf der
+frischen Maschine fiel dabei eine Lücke auf, die auf der alten nicht auffallen **konnte**:
+`mod_ssl` war dort längst von NGCs Web eingeschaltet, auf einer frischen Debian nicht, und
+Apache stirbt mit `Invalid command 'SSLEngine'`. Das Skript schaltet es jetzt selbst ein.
+
+### Der kleine Fall, durchgemessen — und 451 Byte zum zweiten Mal
+
+Von außen über den **Namen** gemessen, nicht über die Adresse (`curl --resolve`):
+
+| Was | Ergebnis |
+|---|---|
+| `https://ngc.test/` | **`http=200`, 451 Byte**, `<title>NGC</title>` |
+| `/config.json` | `rp.id` = `ngc.test`, `apis` = `https://ngc.test:7443` |
+| `GET /api/v1/setup` über 443 (Apache) | 200 |
+| `GET /api/v1/setup` auf 7443 (API selbst) | 200 |
+| Zertifikat | `CN=ngc.test`, `SAN: DNS:ngc.test` — **keine IP** |
+| Dienst `ngc-api` | `active`, `NRestarts=0` |
+| `grep -c REPLACE-THIS-LINE /etc/ngc/api.json` | **0** |
+
+**451 Byte ist genau die Zahl aus Punkt 56 vom 16.10.2026**, damals auf der alten Maschine.
+Dieselbe Seite, dieselbe Größe, auf einer Maschine aus Skript und Release. Damit ist die
+Messung des kleinen Falls nicht nur wieder möglich, sie ist **nachbaubar**. Und Schritt 0 der
+Anleitung — im Zertifikat steht ein Name und keine Adresse — ist jetzt an einer **zweiten**
+Anlage gemessen.
+
+### Was auf der neuen Maschine NICHT gemessen ist
+
+- **Die Ersteinrichtung im Browser.** Der Einmal-Code steht auf dem Schirm, und den ersten
+  Verwalter legt ein **Mensch** an. Kein Agent tippt ihn.
+- Darum auch nichts dahinter: Controller koppeln, Systemrechte, eine App einrichten, der
+  ganze Weg der Punkte 71 und 72. **Der Controller ist nicht gekoppelt, also läuft keine
+  App.**
+- Die Oberflächenfassung zu Punkt 73 ist hier nicht eingespielt (die Maschine läuft
+  `origin/main`).
+- Die 16-GB-Platte ist leer; `fscrypt` ist auf ihr nicht gemessen.
+- Der Prüfladen trägt einen Katalog in Folge 1, aber **keine App darin**.
+
+### Ein Fehler beim Bauen, der hierher gehört
+
+Die Bereitschaftsprüfung von `einzelmaschine.sh` meldete zuerst „kernel 7.0.6-2-pve, 20
+cores" und nannte die VM bereit. **Das sind die Zahlen des Proxmox-Wirts.** Ein Befehl auf der
+VM über den Wirt sind zwei ssh-Sprünge, und was auf der Befehlszeile steht, nimmt jede Schale
+auseinander, durch die es geht: Zitieren von Hand verlor eine Ebene (leeres `$PRETTY_NAME`
+neben funktionierendem `$(uname -r)`), und base64 auf der Befehlszeile ließ die Pipe **auf dem
+Wirt** laufen. Jetzt reist der Befehl als base64 über die **Eingabe**, während die ferne
+Befehlszeile ein fester Text bleibt — und die Prüfung lehnt zusätzlich jede Antwort ab, deren
+`hostname` nicht der erwartete ist. **Eine erreichbare Maschine mit dem falschen Namen ist
+schlimmer als Stille.** Gegenprobe im Protokoll: Wirt 20 Kerne, VM 2 Kerne.
+
+Das ist derselbe Fehler, um den dieser ganze Zweig geht, nur eine Ebene tiefer: **die falsche
+Maschine messen und das Ergebnis für einen Befund halten.**
