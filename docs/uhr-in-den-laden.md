@@ -442,19 +442,169 @@ keinen Satz. Genau in dem Fall, für den ein Protokoll da ist, steht nichts
 drin.
 
 **Gemessen:** 510 Byte, dreimal, aus einem Behälter, der nicht mehr da ist;
-heute 33 Byte und eine Uhrzeit auf stdout; keine Möglichkeit, den Text
-nachzulesen.
+im laufenden Behälter 33 Byte und eine Uhrzeit auf stdout; keine Möglichkeit,
+den Text nachzulesen.
 
-**Abgewogen, und ausdrücklich nicht gemessen:** dass die drei Läufe
-**fehlgeschlagen** sind. Dafür spricht, dass 510 zu keiner vorgesehenen
-Meldung passt und dass der Behälter zwei Minuten später starb. Dagegen
-spricht nichts Gemessenes — es ist nur nicht nachweisbar. Welcher Code 510
-Byte schreibt, ist offen; dass der Dienst es nicht kann, ist nachgerechnet.
-Ob die Laufzeit um ihn herum oder der Behälter sie geschrieben hat, ist nicht
-festzustellen, solange der Text nicht aufgehoben wird.
+> **Berichtigung, eine halbe Stunde später gemessen — und sie dreht diesen
+> Abschnitt um.** Hier stand, die drei Läufe seien wahrscheinlich
+> **fehlgeschlagen**, weil 510 zu keiner vorgesehenen Meldung passt und der
+> Behälter danach starb. **Das ist widerlegt.** Es gibt eine **vierte** Zeile,
+> um `12:29:55`, und das ist genau der Lauf, bei dem im Fenster die Uhrzeit
+> stand (Abschnitt 15) — auch er mit `bytes=510`. Ein erfolgreicher Lauf
+> schreibt also dieselben 510 Byte. **510 ist kein Anzeichen für einen
+> Fehlschlag**, und der gestorbene Behälter war nicht die Erklärung. Was
+> wirklich dahintersteckt, steht in Abschnitt 16.
 
 **Die saubere Gegenprobe kostet einen Knopfdruck:** einmal „Noch einmal
 lesen" im Fenster der Uhr. Steht danach im Protokoll von `svc-1`
 `bytes=33`, dann war 510 eine Eigenheit des gestorbenen Behälters und ist
 erledigt. Steht dort wieder `bytes=510`, ist es ein laufender Fehler und
 wiegt schwerer als alles andere an dieser App.
+
+---
+
+## 15. Aufgelöst: das Fenster zeigt die Zeit, und die Einrichtung hatte eine Anmeldung
+
+Die zwei offenen Punkte aus Abschnitt 12 und 13 sind beantwortet. Die
+Abschnitte oben bleiben stehen, wie sie gemessen wurden; hier steht, was sie
+auflöst und **wer** es gemessen hat.
+
+### Das Fenster zeigt die Zeit — gemessen von der App-Weg-Sitzung, im Browser
+
+Nicht von mir gemessen, sondern von der Sitzung, die `docs/app-weg.md`
+schreibt (Commit `201de73`). Sie hat den Weg im Browser zu Ende gegangen und
+**im Rahmen der App** gelesen, nicht auf der Seite des Schreibtischs:
+
+```
+12:27:49  "Installieren" an der Uhr-Karte
+12:27:55  Dialog: nur "Rechner | svc-1 | svc-2 | Aktivieren" — keine Rechte
+12:27:56  Rechner gewählt: svc-1
+12:28:08  "Die App ist eingerichtet."
+12:29:53  Fenster geöffnet
+12:29:55  im Rahmen der App:  "2026-10-24T12:29:55Z"
+                              "Die Zeit kommt vom Server."
+```
+
+Und der Punkt, der diese App überhaupt rechtfertigt: **die Zeile kam über
+`stdout` an, die `stderr`-Zeile stand nicht im Fenster.** Die beiden
+Richtungen sind damit nicht nur im Behälter auseinandergehalten (Abschnitt
+13), sondern über den ganzen Weg.
+
+Das passt auf die Sekunde zu meiner eigenen Messung: `12:28:04 container
+create` auf `svc-1` gegen `12:28:08 "Die App ist eingerichtet."`, und ein
+Zeitstempel im Fenster, dessen Form (`RFC 3339`) die ist, die der Dienst
+schreibt.
+
+**Damit ist die Lücke M1 zu.** NGC hat zwei echte Apps, und der Weg der
+zweiten ist gegangen und aufgeschrieben. Das ist der eine Satz, den ich in
+Abschnitt 11 noch nicht schreiben durfte.
+
+### Die Einrichtung hatte eine Anmeldung — kein Sicherheitsbefund
+
+Die Frage war ernst: eine Einrichtung ist eine Aufgabe mit vollen Rechten, und
+wenn eine App **ohne** Anmeldung eines Menschen eingerichtet werden kann, wäre
+das schwerer als alles andere an diesem Tag. Sie ist beantwortet, und zwar
+nein. Von mir an der Datenbank nachgemessen:
+
+```
+Sitzungen von weiricth:  12:19:23  12:19:42  12:21:37  12:25:18  12:25:22
+                         12:26:58  12:29:16  12:29:36
+ngc_app org.sorglos.uhr  updated   12:28:04
+ngc_user weiricth        failures 0   locked 0   last_login 12:29:36
+```
+
+Die Einrichtung um **12:28:04** liegt zwischen den Anmeldungen um **12:26:58**
+und **12:29:16**. Es gab also eine gültige Verwalter-Sitzung, und `failures 0`
+heißt: keine fehlgeschlagenen Versuche, nichts Erzwungenes. Der Vertrag ist
+eingehalten — der Auftrag war mit dem Sitzungsschlüssel einer echten Anmeldung
+unterschrieben, so wie Abschnitt 9 es verlangt.
+
+**Genau unterschieden, weil das zwei Dinge sind:** gemessen ist, dass eine
+Anmeldung mit dem Passwort des Verwalters vorlag und der Weg darüber ging.
+**Nicht** gemessen ist, ob Thomas das Passwort selbst getippt hat oder ob eine
+Sitzung es aus einer Datei gelesen hat — die App-Weg-Sitzung beschreibt
+Anmeldeläufe mit Argon2id im Browser, was beides sein kann. Für den Vertrag
+macht es keinen Unterschied; für die Frage „wer hat hier gehandelt" macht es
+einen, und die kann nur Thomas beantworten.
+
+### Was von den 510 Byte bleibt
+
+Mit den Zeiten der App-Weg-Sitzung wird der Befund aus Abschnitt 14 schärfer,
+nicht schwächer. Es gab **zwei** Einrichtungen:
+
+```
+12:25:37  useradd, Behälter 3800792d…   <- erster Versuch
+12:25:44 / 12:25:59 / 12:26:00          <- "zeit", je 510 Byte auf stderr
+12:28:03  3800792d… stirbt
+12:28:04  741d600b… neu gebaut          <- zweiter Versuch, der getragen hat
+12:29:55  Zeit im Fenster
+```
+
+Der Knopfdruck-Gegenprobe oben braucht es nicht mehr: der laufende Behälter
+ist gemessen, und zwar auf beiden Strömen. Die 510 Byte aber gehören **nicht**
+zum gescheiterten Versuch — siehe den nächsten Abschnitt. Das war mein
+Trugschluss, und er hat genau so lange gehalten, bis ich alle Zeilen gezählt
+habe statt der drei, die ich erwartet hatte.
+
+---
+
+## 16. Die 510 Byte, richtig gemessen: der Dienst schreibt 33, das Protokoll sagt 510
+
+Das ist der Befund, der von Abschnitt 14 übrig bleibt, nachdem meine erste
+Erklärung widerlegt war. Er ist schärfer als die erste und betrifft **jede**
+App, nicht die Uhr.
+
+**Alle Zeilen, nicht nur die ersten drei:**
+
+```
+12:25:44  action=zeit  bytes=510     erster Versuch
+12:25:59  action=zeit  bytes=510     erster Versuch
+12:26:00  action=zeit  bytes=510     erster Versuch
+12:29:55  action=zeit  bytes=510     <- DER LAUF, DER IM FENSTER DIE ZEIT ZEIGTE
+```
+
+Der vierte Lauf ist der erfolgreiche. Also schreibt ein **gelungener** Aufruf
+dieselben 510 Byte wie die drei davor. Damit ist 510 kein Fehlerzeichen, und
+der gestorbene Behälter erklärt nichts.
+
+**Dagegen, im selben Behälter direkt gemessen** (`podman exec`, beide Ströme
+getrennt):
+
+```
+Rückgabewert 0
+STDOUT 21 Byte:  2026-10-24T12:31:52Z
+STDERR 33 Byte:  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**Der Dienst schreibt 33 Byte. Das Protokoll des Controllers sagt 510.** Die
+Differenz sind **477 Byte, die der Dienst nicht geschrieben hat** und die ihm
+trotzdem zugeschrieben werden.
+
+Drei Dinge, die ich ausgeschlossen habe, damit das nicht als Vermutung
+dasteht:
+
+- **Es ist keine Obergrenze.** `service.MaxStderr` ist `64 << 10`, also
+  64 KiB. 510 ist kein Anschlag.
+- **Es ist kein falscher Zähler.** Der Ring hängt mit `append` an und gibt
+  `len(r.b)` zurück (`apps/server-controller/classes/serve/call.go`, `ring`
+  und `logStderr`). Die Zahl ist eine echte Byte-Zahl, kein Puffermaß.
+- **Es ist nicht die `sudo`-Warnung meines eigenen Aufrufs.** Dieselbe
+  Ausführung ohne `cd /tmp` schreibt `cannot chdir to /root: Permission
+  denied` — **41** Byte, und der Aufruf scheitert dann ganz (Rückgabewert 1,
+  nichts auf stdout). Das ist eine Eigenheit meines Messwegs, nicht der 477.
+
+**Nicht gemessen: was die 477 Byte sind.** Sie sind bei allen vier Aufrufen
+gleich groß, also deterministisch und keine zufällige Störung. Woher sie im
+Aufrufweg des Controllers kommen, ist offen — und genau das lässt sich **nicht
+nachlesen**, weil der Text nur mit `serve.CallInput.LogStderr` ins Protokoll
+kommt und `/etc/ngc/controller.json` dafür keinen Schlüssel hat (`anchor`,
+`apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`, `releaseKey`, `roles` —
+und keinen weiteren).
+
+**Warum das zählt, auch wenn die Uhr tadellos läuft:** eine App, die ihre
+Fehlermeldung auf stderr schreibt, bekommt sie im Protokoll mit 477 Byte
+Fremdtext vermischt, und ein Betreiber, der den Schalter anwirft, liest
+Fremdtext als Aussage der App. Für eine Uhr ist das Kosmetik. Für eine App,
+die erklären soll, warum sie nicht konnte, ist es der Unterschied zwischen
+einem Protokoll und einem Rätsel. Es steht als **Punkt 76** in
+`docs/vertraege-v1.2.md`.

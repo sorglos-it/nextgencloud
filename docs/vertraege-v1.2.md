@@ -5009,3 +5009,62 @@ einrichtete. Die Trennung, die ein Container leistet, endet offenbar am gemeinsa
 Der Abbruch selbst ist von der Koordinationssitzung gemessen worden; die Zeile im Protokoll von
 `svc-1`, die fehlende Wiederholung nach 12:21 und die durchgelaufene Einrichtung um 12:25 sind
 hier nachgemessen. Herkunft: `docs/uhr-in-den-laden.md`, Abschnitt 12.
+
+## Punkt 76: Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat
+
+Gemessen am 24.10.2026 an `org.sorglos.uhr` auf `svc-1`. Die App ist dafür nur der Anlass: sie
+schreibt absichtlich **eine** Zeile in jede Richtung, und darum fällt an ihr auf, was bei einer
+größeren App niemandem auffiele.
+
+**Was der Controller protokolliert**, bei vier Aufrufen der Aktion `zeit`:
+
+```
+12:25:44  a service wrote to stderr  app=org.sorglos.uhr action=zeit bytes=510
+12:25:59  ... bytes=510
+12:26:00  ... bytes=510
+12:29:55  ... bytes=510      <- dieser Lauf zeigte im Fenster die Uhrzeit
+```
+
+**Was der Dienst wirklich schreibt**, im selben Behälter direkt gemessen, beide Ströme getrennt:
+
+```
+Rückgabewert 0
+STDOUT 21 Byte:  2026-10-24T12:31:52Z
+STDERR 33 Byte:  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**33 geschrieben, 510 protokolliert: 477 Byte Fremdtext, der der App zugeschrieben wird.** Bei
+allen vier Aufrufen gleich groß, also deterministisch und keine zufällige Störung.
+
+**Was ausgeschlossen ist, damit das keine Vermutung bleibt:**
+
+- **Keine Obergrenze.** `service.MaxStderr = 64 << 10` (64 KiB). 510 ist kein Anschlag.
+- **Kein falscher Zähler.** `ring.Write` hängt mit `append` an, `ring.bytes` gibt `r.b` zurück,
+  `logStderr` schreibt `len(b)` (`apps/server-controller/classes/serve/call.go`). Die Zahl ist
+  eine echte Byte-Zahl und kein Puffermaß.
+- **Nicht die `sudo`-Warnung des Messwegs.** Derselbe Aufruf ohne `cd /tmp` schreibt
+  `cannot chdir to /root: Permission denied` — 41 Byte — und scheitert dabei ganz. Das erklärt
+  die 477 nicht.
+- **Kein Anzeichen für einen Fehlschlag.** Der erfolgreiche Lauf um 12:29:55 schreibt dieselben
+  510 Byte wie die drei davor. (Hier stand zuerst das Gegenteil: dass 510 auf fehlgeschlagene
+  Läufe deute. Das war falsch und ist durch die vierte Zeile widerlegt.)
+
+**Nicht gemessen: was die 477 Byte sind.** Und das ist der zweite Teil des Befundes, denn es
+lässt sich **nicht nachlesen**: den Text gibt es nur mit `serve.CallInput.LogStderr`, der von
+Haus aus aus ist, und `/etc/ngc/controller.json` hat dafür **keinen Schlüssel** (`anchor`,
+`apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`, `releaseKey`, `roles` — und keinen
+weiteren). Ein Betreiber kann also die Zahl sehen und den Text nicht, ohne neu zu bauen.
+
+**Zu entscheiden ist dreierlei:**
+
+1. Wo die 477 Byte entstehen, und ob sie überhaupt in den Ring der App gehören. Was nicht die
+   App geschrieben hat, sollte ihr das Protokoll nicht zuschreiben.
+2. Ob der Schalter für den Text in die Konfiguration gehört. Solange er nur im Quelltext steht,
+   ist die eine Zeile, für die ein Protokoll da ist, im Ernstfall nicht lesbar.
+3. Ob die Zahl ohne den Text überhaupt etwas wert ist. Sie sollte „die App hat geredet" sagen;
+   gemessen sagt sie „die App und 477 Byte von irgendwem".
+
+Für eine Uhr ist das Kosmetik. Für eine App, die erklären soll, warum sie nicht konnte, ist es
+der Unterschied zwischen einem Protokoll und einem Rätsel.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 16.
