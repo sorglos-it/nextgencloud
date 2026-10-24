@@ -6,6 +6,7 @@
 // finger on a tablet or a phone does the same as a mouse. The smallest size is
 // 240 x 150, as it is there.
 import { el, button, text } from "./dom.js";
+import { fillGlyph } from "./icon.js";
 
 // The smallest a window may get. Below that the title bar's three buttons
 // stop fitting and the window can no longer be closed by clicking.
@@ -66,10 +67,14 @@ export class Win {
     const bar = el("div", "titlebar");
     // The glyph says nothing a screen reader needs; the title right beside it
     // says all of it. Without aria-hidden the window's name would read
-    // "R Rechner" and every locator that asks for a name by its text would
-    // have to know about the glyph.
-    const g = el("span", "g", icon ?? "");
+    // "Rechner Rechner" and every locator that asks for a name by its text
+    // would have to know about the glyph.
+    //
+    // icon is the NAME of one of the shell's own icons (icon.js), not a
+    // picture and not a path: window.js never learns where the file lies.
+    const g = el("span", "g", null);
     g.setAttribute("aria-hidden", "true");
+    if (icon) fillGlyph(g, icon);
     bar.append(g, el("span", "t", title));
     const btns = el("div", "wbtns");
     for (const [cls, label] of [["mini", "Minimieren"], ["maxi", "Maximieren"], ["close", "Schließen"]]) {
@@ -97,8 +102,13 @@ export class Win {
     // The taskbar entry is a button: it is pressed, and a keyboard has to
     // reach it like every other control in the bar.
     this.tab = button("task", null, "Fenster " + title);
-    const tg = el("span", null, icon ?? "");
+    // The class is not decoration: the badge used to be a letter and took its
+    // size from that text. An icon is a mask on an empty element, so without
+    // a size of its own it draws nothing at all - which is exactly what the
+    // taskbar did on 24.10.2026 until this line.
+    const tg = el("span", "tico", null);
     tg.setAttribute("aria-hidden", "true");
+    if (icon) fillGlyph(tg, icon);
     this.tab.append(tg, el("span", "lbl", title));
     this.tab.addEventListener("click", () => {
       if (this.min) this.restore();

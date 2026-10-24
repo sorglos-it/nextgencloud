@@ -87,6 +87,21 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
           background:linear-gradient(135deg,var(--accent),var(--accent-2));text-shadow:none}
 .dicon .n{font-size:12px;word-break:break-word;overflow:hidden;max-height:2.9em}
 
+
+/* ---------- App-Icons ----------
+   Ein Icon ist ein <svg>, das js/shell/icon.js mit dem DOM baut - keine
+   Datei, kein <img>, keine Adresse. Es nimmt die Farbe des Elements, auf dem
+   es sitzt (stroke="currentColor"), also trägt EINE Form das helle und das
+   dunkle Thema. Warum keine .svg-Datei daneben liegt, steht in icon.js. */
+.ico{display:block;width:62%;height:62%}
+/* Im Titelbalken ist das Schild nur 20 px groß; dort ist der Strich bei 62 %
+   zu fein, gemessen am 24.10.2026. Es bekommt mehr Fläche. */
+.titlebar .g .ico{width:74%;height:74%}
+/* In der Taskleiste gibt es kein Schild dahinter: das Icon braucht sein
+   eigenes Maß, sonst ist es 0 Pixel groß und man sieht nichts. */
+.task .tico{display:flex;width:16px;height:16px;flex:0 0 auto}
+.task .tico .ico{width:100%;height:100%}
+
 /* ---------- Taskleiste (oben) ---------- */
 #taskbar{position:fixed;top:0;left:0;right:0;height:var(--bar-h);display:flex;align-items:center;
          gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(18px) saturate(150%);

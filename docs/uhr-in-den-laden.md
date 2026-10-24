@@ -648,5 +648,5 @@ Fehlermeldung auf stderr schreibt, bekommt sie im Protokoll mit 477 Byte
 Fremdtext vermischt, und ein Betreiber, der den Schalter anwirft, liest
 Fremdtext als Aussage der App. Für eine Uhr ist das Kosmetik. Für eine App,
 die erklären soll, warum sie nicht konnte, ist es der Unterschied zwischen
-einem Protokoll und einem Rätsel. Es steht als **Punkt 76** in
+einem Protokoll und einem Rätsel. Es steht als **Punkt 77** in
 `docs/vertraege-v1.2.md`.
