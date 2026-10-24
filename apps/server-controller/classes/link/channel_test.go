@@ -144,12 +144,37 @@ func (a *apiSide) marker(n uint32) {
 	a.wantProtocol(mark + n)
 }
 
+// cameBack waits until the handlers of n channels have run to their end, and
+// that is not the end of Run: Run comes back when the tunnel is over, while
+// the goroutine of a channel still has the statements behind its last write to
+// run (channels.run writes the CLOSE of this side after the handler). A
+// counter a handler writes is therefore read too early right after waitFor,
+// and the case then says the handler never came back although it did.
+//
+// Measured 24.10.2026 with 50 ms laid between the write of a CLOSE and the
+// bookkeeping behind it: TestFramesAfterOwnCloseAreDropped counted one handler
+// of two, which is the failure the Linux -race run showed in 4 of 90 runs. It
+// waits and does not spin on the counter, so a handler that really stays away
+// is still a finding and not a green run.
+func cameBack(t *testing.T, done <-chan struct{}, n int) {
+	t.Helper()
+	for i := range n {
+		select {
+		case <-done:
+		case <-time.After(answer):
+			t.Fatalf("%d of %d handlers came back", i, n)
+		}
+	}
+}
+
 // A number is not free with the CLOSE of this side alone: an OPEN for it opens
 // nothing until the CLOSE of the API has arrived, and afterwards it opens a
 // channel again.
 func TestChannelNumberFreeOnlyAfterBothCloses(t *testing.T) {
 	var opened atomic.Int64
+	done := make(chan struct{}, 2)
 	h := opener(func(_ context.Context, ch *Channel, _ tunnel.Opened) error {
+		defer func() { done <- struct{}{} }()
 		opened.Add(1)
 		return ch.Close(wire.Close{Status: wire.StatusOK})
 	})
@@ -171,7 +196,9 @@ func TestChannelNumberFreeOnlyAfterBothCloses(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
-	// Counted once the tunnel is over, so that no handler is still on its way.
+	// Counted once both handlers have run to their end, not once the tunnel is
+	// over: the two are not the same moment (cameBack).
+	cameBack(t, done, 2)
 	if n := opened.Load(); n != 2 {
 		t.Errorf("the handler was called %d times, want the OPEN for a number that is not free to open nothing and the one after both closes to open a channel", n)
 	}
@@ -303,7 +330,9 @@ func TestGrantAboveMaxWindowClosesTheChannel(t *testing.T) {
 // API among the dropped frames still counts as received and frees the number.
 func TestFramesAfterOwnCloseAreDropped(t *testing.T) {
 	var opened, back atomic.Int64
+	done := make(chan struct{}, 2)
 	h := opener(func(ctx context.Context, ch *Channel, _ tunnel.Opened) error {
+		defer func() { done <- struct{}{} }()
 		opened.Add(1)
 		if err := ch.Close(wire.Close{Status: wire.StatusOK}); err != nil {
 			return err
@@ -331,6 +360,7 @@ func TestFramesAfterOwnCloseAreDropped(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
+	cameBack(t, done, 2)
 	if n, b := opened.Load(), back.Load(); n != 2 || b != 2 {
 		t.Errorf("the handler was called %d times and came back %d times, want two channels on the one number", n, b)
 	}
@@ -414,7 +444,9 @@ func TestAChannelEndsWithExactlyOneClose(t *testing.T) {
 // and the link stays.
 func TestAnOpenThatIsNoneClosesTheChannel(t *testing.T) {
 	var opened atomic.Int64
+	done := make(chan struct{}, 1)
 	h := opener(func(_ context.Context, ch *Channel, _ tunnel.Opened) error {
+		defer func() { done <- struct{}{} }()
 		opened.Add(1)
 		return ch.Close(wire.Close{Status: wire.StatusOK})
 	})
@@ -429,6 +461,7 @@ func TestAnOpenThatIsNoneClosesTheChannel(t *testing.T) {
 	if err := waitFor(t, ended); err != nil {
 		t.Fatalf("Run = %v, want an orderly end after bye", err)
 	}
+	cameBack(t, done, 1)
 	if n := opened.Load(); n != 1 {
 		t.Errorf("the handler was called %d times, want the OPEN that does not parse to reach no handler", n)
 	}
