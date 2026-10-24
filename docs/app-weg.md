@@ -578,13 +578,36 @@ der Oberfläche nicht ansieht:
 **Und der Tunnel blieb stehen.** Im ganzen Fenster von 12:26 bis 12:31 steht auf `svc-1` kein
 `tunnel ended` und kein `tunnel failed` — anders als um 12:14:38 (Befund 9).
 
-**Und eine Ehrlichkeit zum Schluss, die den Beleg eher stärker macht:** die Uhr lief auf
-`svc-1` schon um **12:25:40**, zwei Minuten vor meinem Lauf — Behälter gestartet, Aktion `zeit`
-um 12:25:44, 12:25:59 und 12:26:00 beantwortet. Das war **nicht dieser Lauf**; offenbar hat eine
-andere Sitzung sie aus demselben Katalog eingerichtet, kurz bevor ich es tat. Mein Lauf um
-12:28:03 hat das Abbild erneut aus dem Paket geladen und den Behälter ersetzt. Es sind also
-**zwei voneinander unabhängige Einrichtungen** auf 0.2.2 gelungen, nicht eine — nur ist die
-erste nicht meine, und das gehört dazugesagt.
+**Und eine Ehrlichkeit zum Schluss, die den Beleg stärker macht:** die Uhr lief auf `svc-1`
+schon um **12:25:40**, zwei Minuten vor meinem Lauf — Behälter gestartet, Aktion `zeit` um
+12:25:44, 12:25:59 und 12:26:00 beantwortet. **Das war nicht dieser Lauf**, und das ist nicht
+geschätzt, sondern belegt:
+
+- **Von meinen Läufen hat genau zweimal einer „Aktivieren" gedrückt:** um `12:14:34` (der, der
+  am Tunnel riss) und um `12:27:57` (der, der durchlief). Der Lauf dazwischen, `12:22:29`, kam
+  gar nicht so weit — der Dialog sagte „Kein Rechner für Dienste da", er fand keine Rechnerwahl
+  und stieg aus.
+- **Zwischen 12:22:35 und 12:26:58 habe ich nichts gegen die Oberfläche laufen lassen.** Die
+  Zeitstempel meiner Mitschnitte lassen keine Lücke: 12:14, 12:18, 12:20, 12:22 — dann erst
+  wieder 12:27.
+- **Meine Skripte rufen `zeit` nie von selbst auf.** Nur das Öffnen-Skript öffnet ein Fenster,
+  einmal, um 12:29:53; die App fragt dann einmal beim Laden. Drei Aufrufe in 16 Sekunden sind
+  nicht meine.
+- Aus der Datenbank (von einer anderen Sitzung gelesen) kommen acht Anmeldungen des Verwalters
+  in diesen zehn Minuten. **Sechs davon ordne ich meinen Läufen zu**, die beiden um `12:25:18`
+  und `12:25:22` **nicht** — und genau 15 bzw. 19 Sekunden danach entstand der Systembenutzer
+  der App.
+
+Es hat also **jemand anderes** in diesem Fenster eingerichtet. Wer, ist **nicht gemessen** —
+eine andere Sitzung oder ein Mensch am Browser. Für den Weg heißt es: **zwei voneinander
+unabhängige Einrichtungen** auf 0.2.2 sind gelungen, und die erste ist nicht meine.
+
+**Eine Beobachtung, die dabei offen blieb:** der Controller meldet für jeden `zeit`-Aufruf über
+NGC `bytes=510` auf `stderr`. Der Dienst schreibt dort aber nur eine Zeile von **33 Byte** —
+gemessen von einer anderen Sitzung mit einem `podman exec` von Hand. Woher die übrigen rund 477
+Byte kommen, ist **nicht gemessen**; der Verdacht fällt auf Meldungen der Behälter-Laufzeit, die
+dem Dienst zugeschlagen werden. Es betrifft beide Einrichtungen gleich und sagt darum nichts
+darüber, wer eingerichtet hat.
 
 **Damit ist die Lücke zu, die diesen Auftrag ausgelöst hat:** NGC hat nicht mehr eine App,
 sondern zwei, und der Weg dahin ist nicht mehr unaufgeschrieben. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
