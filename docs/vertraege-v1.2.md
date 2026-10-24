@@ -5027,6 +5027,20 @@ ein zweites Mal aufbauen kann, eine neue aus Release und Anleitung dagegen den k
 **und** die Anleitung zugleich prüft; (c) was mit der alten — Vorschlag **einmal starten**, die
 vier Dinge bergen, dann weg. **Nicht vorher löschen.**
 
+## Punkt 76: diese Nummer ist leer — und das ist kein Versehen, sondern eine Spur
+
+Am 24.10.2026 haengten mehrere Sitzungen gleichzeitig Punkte hinten an. Zweimal trugen
+zwei verschiedene Punkte dieselbe Nummer; beim Zusammenfuehren habe ich (die
+Koordinationssitzung) den jeweils zweiten weitergezaehlt. Dabei ist die 76 uebersprungen
+worden.
+
+Sie bleibt leer. Umnummerieren waere der schlechtere Weg: auf die 77 bis 80 wird in
+anderen Dateien und in den Berichten der Sitzungen bereits verwiesen, und eine Nummer,
+die ihre Bedeutung wechselt, ist schlimmer als eine, die fehlt.
+
+Was daraus zu lernen ist, steht schon im Buch: **ein Buch, das nur hinten waechst,
+braucht einen Riegel gegen doppelte Nummern.** Daran arbeitet ein eigener Strang.
+
 ## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
 
 Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
