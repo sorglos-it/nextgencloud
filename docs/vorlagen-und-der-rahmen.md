@@ -128,3 +128,9 @@ Browser auszublenden.
 Bis dahin ist das Aussehen hier nicht halb gebaut, sondern ganz: wer eine
 Vorlage in den Ordner legt, hat sie — und der Weg, auf dem sie dort hinkommt,
 ist das, was aussteht.
+
+**Angefordert ist es.** Der Satz steht als **P16** in
+`docs/vertraege-v1-3-vorschlag.md` (Nachtrag 24.10.2026), in der Form, die dieses
+Dokument für jeden Punkt verlangt: die Zeile, die nachgemessenen Stellen, der Preis und
+was ohne sie gilt. Gemessen ist dort auch, warum P16 **nicht** an P10 hängt: eine alte
+API weist eine unbekannte Aktion mit `E_NOTFOUND` ab und nicht als kaputten Rahmen.

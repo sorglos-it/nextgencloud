@@ -1072,3 +1072,117 @@ Ansage.
 
 **Ohne die Änderung:** es bleibt bei „jede App ihr eigenes Protokoll". Bei zwei Apps ist das
 nichts; bei zehn ist es zehn Stellen, an denen eine Längenprüfung fehlen kann.
+
+---
+
+## Nachtrag 24.10.2026: P16 kommt aus Punkt 8 der Gestaltung
+
+Aus `docs/gestaltung.md`, Punkt 8 (Vorlagen wie bei Joomla und PrestaShop), gebaut auf
+Zweig `gui-gestaltung`. **Die Entscheidungstabelle oben kennt den Punkt noch nicht.**
+
+### P16 — Eine Vorlage kann niemand hochladen, weil es keine Aktion dafür gibt
+
+**Was gebaut und gemessen ist:** der Vorlagen-Ordner unter dem Webserver
+(`apps/web/public/assets/looks/`), zwei Vorlagen darin, die Auswahl im Startmenü unter
+„Aussehen", und das Ersetzen des App-Aussehens im abgeschotteten Rahmen, ohne dessen
+Riegel zu lösen — `apps/web/tests/shell/looks.spec.js`, 7 von 7 grün. Warum der Riegel
+dabei zubleibt, steht in `docs/vorlagen-und-der-rahmen.md`.
+
+**Was nicht geht, und das ist der Punkt:** Punkt 8 verlangt „Hochladen darf nur ein
+Verwalter" und „ein Recht dafür". Beides lässt sich in `apps/web/` nicht bauen.
+Nachgemessen am HEAD-Stand:
+
+- **Der Webserver kennt keine Benutzer.** `apps/web/public/index.php` nimmt nur GET und
+  ist der einzige Einstiegspunkt; `apps/web/classes/Config.php:37-39` liest aus `web.json`
+  genau drei Dinge — die API-Server, die RP-Angaben und den Anker. Kein Benutzer, keine
+  Rolle, kein Recht. PHP kann einen Verwalter von niemandem unterscheiden.
+- **Die Sitzung läuft an PHP vorbei.** Die Oberfläche kennt den Benutzer, redet aber über
+  den Noise-Tunnel mit der API. Es gibt nichts, was der Webserver nachsehen könnte.
+- **Es gibt keine Aktion.** `shared/core/core.go:130-170`, die Tabelle `actions`: keine
+  Zeile, die eine Vorlage annimmt.
+- **Und es gibt kein Recht dieser Art.** `shared/core/core.go:317-319`:
+
+```go
+func ValidRight(r string) bool {
+	app, action, ok := strings.Cut(r, "/")
+	return ok && wire.ValidAppID(app) && !wire.CoreApp(app) && (action == RightUse || wire.ValidName(action))
+}
+```
+
+`!wire.CoreApp(app)` schließt die Kern-Apps aus. Ein Recht `ngc.users/look-upload` ist in
+diesem Vertrag **nicht schreibbar** — nicht „noch nicht vergeben", sondern von der
+Grammatik abgewiesen.
+
+### Der Änderungssatz, zwei Teile
+
+**Eine Zeile in der Tabelle**, `shared/core/core.go`, zu den `AppUsers`-Zeilen des
+Dienstes `api` (nach `ActLog`, Zeile 148):
+
+```go
+	{AppUsers, ServiceAPI, ActLookUpload, true, false, true, FlowIn, nil, MaxLookIn},
+```
+
+dazu die beiden Namen:
+
+```go
+	// ActLookUpload takes one template for the web interface: a bundle of
+	// stylesheets an admin may put under the web server, so a person can
+	// choose it (docs/gestaltung.md, point 8). Admin, because a template can
+	// move or hide a button - it is not decoration.
+	ActLookUpload = "look-upload"
+
+	// MaxLookIn bounds a template. It holds stylesheets and at most embedded
+	// pictures as data: addresses, nothing a browser runs.
+	MaxLookIn = 4 << 20
+```
+
+**Und das Recht.** Zwei Möglichkeiten, und die Wahl ist nicht meine:
+
+1. **`ValidRight` lässt für `ngc.users` die Aktionen der eigenen Tabelle zu.** Dann heißt
+   das Recht `ngc.users/look-upload` und steht in der Rechteliste wie jedes andere. Das
+   ist der kleine Satz, aber er rührt an die Grammatik der Rechte.
+2. **Kein eigenes Recht, nur `Admin: true` der Zeile.** Dann ist „Verwalter" das Recht,
+   und Punkt 8 ist in dem Sinn erfüllt, dass nur ein Verwalter hochlädt — aber nicht in
+   dem Sinn, dass ein Verwalter das Hochladen einem anderen geben kann, ohne ihm alles zu
+   geben.
+
+**Mein Rat: 2 für V1.3, 1 später.** Nach der Rangfolge (Stabilität, dann Sicherheit, dann
+Leistung): die Grammatik der Rechte anzufassen ist der größere Eingriff, und `Admin: true`
+schließt niemanden ein, der nicht ohnehin schon alles darf. Entschieden ist das nicht.
+
+### Der Preis
+
+- **Das bricht den Vertrag nicht, und das ist gemessen.** Eine Zeile mehr in `actions` ist
+  ein Zusatz, und eine alte API weist die neue Aktion **sauberer** ab als P10 es für
+  `wire.Code` gezeigt hat: `apps/server-api/classes/coreapp/dispatch.go:367-369` —
+
+```go
+	action, ok := core.Lookup(o.App, o.Service, o.Action)
+	if !ok {
+		return wire.CodeNotFound, "", reason.ActionUnknown
+	}
+```
+
+  Kein kaputter Rahmen, sondern ein Schluss mit `E_NOTFOUND` und einem Grund. Die
+  Oberfläche muss das lesen und sagen „diese Anlage kann das noch nicht" — eine Stelle,
+  nicht mehr. Deshalb hängt P16 **nicht** an P10.
+- **Mitziehen muss die API:** eine Stelle, die den Strom annimmt, die Vorlage prüft (Namen
+  nach `store.ValidPath`, nur `.css`, Grenzen) und sie dem Webserver hinlegt. Wie sie
+  dorthin kommt, wenn Web und API auf verschiedenen Rechnern stehen, ist die eigentliche
+  Arbeit und gehört in den Auftrag der API-Sitzung, nicht in diesen Satz.
+- **Mitziehen muss die Oberfläche:** die Abschrift der Tabelle
+  (`apps/web/public/assets/js/contracts/core.js`, ACTIONS) und das Fenster
+  Benutzer-und-Rechte (`apps/web/public/assets/js/apps/users.js`). Beides ist eine Zeile
+  und eine Maske — die fertige Hälfte wartet darauf.
+- **Für einen Nutzer, der schon installiert hat:** nichts. Ohne die Aktion liegen die
+  Vorlagen im Ordner und sind wählbar; es fehlt nur der Weg, eine neue hineinzulegen,
+  ohne an die Dateien des Servers zu gehen.
+
+### Ohne die Änderung
+
+Vorlagen gibt es, aber nur die, die mit einer Release mitkommen. Wer eine eigene will,
+legt sie als root in `public/assets/looks/` ab — und verliert sie bei der nächsten
+Release, weil der Ordner Teil des ausgepackten Releases ist. Punkt 8 ist damit zu zwei
+Dritteln erfüllt und das letzte Drittel ist nicht „noch nicht gebaut", sondern **nicht
+baubar**, solange die Zeile fehlt. Das muss dastehen, damit es nicht als vergessene
+Arbeit gelesen wird.
