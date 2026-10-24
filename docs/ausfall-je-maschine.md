@@ -847,12 +847,52 @@ Mein Portklopfen von db-3 aus (`4444 ZU`) beweist ebenfalls nichts: 4444 lauscht
 nur, **während** ein Abgleich läuft, und db-1 ist dabei nicht der Lauschende.
 Eine Sonde, die den Normalzustand für einen Befund nimmt, misst sich selbst.
 
-Eine **Vermutung, ausdrücklich keine Messung**: eine Nachbarsitzung hat db-3
-heute schon einmal gestoppt und 48 Sekunden später gestartet, und er war nach
-rund fünf Sekunden wieder im Verbund. Mein Fenster war etwa sechs Minuten. Ein
-kurzer Ausfall knüpft vermutlich inkrementell an, ein langer braucht den vollen
-Abgleich — und der ist das, was scheitert. Wer das belegen will, stoppt db-3
-zweimal: einmal eine Minute, einmal zehn.
+### Die Ursache ist gefunden, und meine Vermutung war falsch
+
+Hier stand: „ein kurzer Ausfall knüpft vermutlich inkrementell an, ein langer
+braucht den vollen Abgleich — und der ist das, was scheitert", gestützt darauf,
+dass eine Nachbarsitzung db-3 48 Sekunden lang gestoppt hatte und er nach fünf
+Sekunden wieder im Verbund war, während mein Fenster sechs Minuten lang war.
+**Das war falsch, und der richtige Satz ist schärfer.** Gefunden hat ihn die
+Release-Sitzung; hier steht er als deren Messung.
+
+Es war **nie ein voller Abgleich**. Der Spender sagt wörtlich
+`IST failed … Connection refused` — das ist der *inkrementelle* Weg, und
+„refused" heißt, dass dort niemand lauschte. (Das ist zugleich das zweite
+Argument gegen die Firewall: eine mit `policy drop` lässt ins Leere laufen, sie
+weist nicht ab. Mein erstes war die Regel selbst — damit ist sie doppelt
+ausgeschlossen.)
+
+Die Ursache: **db-3 öffnete seinen Empfänger auf einer link-lokalen
+IPv6-Adresse und nannte dem Spender den Namen.** db-1 löste den Namen auf
+10.2.3.218 auf, und dort lauschte nichts. Bei dreißig Sekunden Ausfall wäre das
+genauso gescheitert — die Dauer war nie der Unterschied.
+
+**Der Unterschied war Dienst-Stopp gegen VM-Stopp.** Beim VM-Stopp liegt ein
+Neustart dazwischen, und `cloud-init` schreibt beim Start `/etc/hosts` neu — und
+hat dabei die Zeile verworfen, die den eigenen Namen auf die echte Adresse legte.
+
+**Und das wirft eine Einschränkung auf diese ganze Reihe zurück.** Alle sechs
+Fälle oben sind mit `qm stop` gemessen, also sechsmal der **VM**-Fall. Wo eine
+Maschine etwas zur Laufzeit gesetzt bekommen hat — in `/etc/hosts` oder sonstwo
+—, habe ich den Dienst-Fall nie gesehen. „Ein Dienst-Stopp und ein VM-Stopp sind
+zwei verschiedene Fälle" ist damit keine Feinheit, sondern eine Lücke, die
+**alle sechs Maschinen** betrifft und in keinem Fall oben gemessen ist.
+
+Damit ist auch mein Satz „die 48-Sekunden-Messung konnte diesen Fehler nicht
+finden" nur zufällig richtig gewesen: sie konnte ihn nicht finden, aber nicht
+wegen der Dauer, sondern weil sie den Dienst stoppte und nicht die Maschine.
+
+**db-3 ist inzwischen wieder im Verbund** (`size=3`, `Primary`, `Synced`), und
+das war nicht mein Werk — ich hatte nur die Schleife angehalten.
+
+Der Fall „db-1 fällt bei drei Knoten" bleibt weiter offen, jetzt aus einem
+anderen Grund: db-1 und db-2 tragen denselben Fehler, der db-3 herausgeworfen
+hat, und db-1 trägt die CA und den Datenbestand. **Entschieden** (die Wahl lag
+bei mir): erst wird `wsrep_node_address` auf beiden festgenagelt, dann wird
+gemessen. Den bekannten Mechanismus am Knoten mit der CA noch einmal
+vorzuführen, kauft keine Erkenntnis, sondern nur Risiko — und eine Messung,
+deren Ergebnis man vorher kennt, ist keine.
 
 **Was ich deshalb NICHT gemessen habe, und das ist eine Entscheidung.** Der Fall
 „db-1 fällt bei drei Knoten" ist nicht gefahren. Mit db-3 draußen sind es zwei
