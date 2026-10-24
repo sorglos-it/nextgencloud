@@ -12,6 +12,20 @@ Debian-Userland (Punkt 56). Die Abschnitte, die seit dem 19.10.2026 dazugekommen
 an der laufenden Anlage nachgesehen (Debian 13.7, `ngc-api`/`ngc-controller` **0.2.2**,
 Oberfläche **0.2.0**, Stand 24.10.2026).
 
+**Es gibt zurzeit zwei Anlagen, und diese Anleitung beschreibt die erste.**
+
+| | **eine Maschine** — der Fall dieser Anleitung | **sechs Maschinen** — der andere Fall |
+|---|---|---|
+| Name der Anlage | `ngc.test` | `ngc.mein.lan` |
+| Maschinen | eine, alle vier Rollen | sechs, siehe Schritt 0 |
+| Datenbank | SQLite, eine Datei je Programm | eigene Maschine |
+| Skript | `ngc-all` | `ngc-api`, `ngc-db`, `ngc-controller`, `ngc-web` je Maschine |
+
+Was beim verteilten Fall anders ist, steht an jeder Stelle, an der es anders ist: in Schritt 0
+(mehr als ein Name im Browser), in Schritt 2 (vier Skripte statt einem) und unter
+„Nicht gemessen". **Der durchgehende Weg unten ist der kleine Fall.** Eine eigene Anleitung
+für sechs Maschinen gibt es nicht, und diese hier ist keine.
+
 > **Was sich seit dem 19.10.2026 geändert hat, und warum diese Anleitung länger geworden ist.**
 > Zwischen dem 19. und 21.10.2026 ist der Weg vom Release bis zur laufenden App zum ersten Mal
 > von **einer** Person von Anfang bis Ende gegangen worden. Er ist **kein einziges Mal**
@@ -110,23 +124,92 @@ Anlage und der Name aus Schritt 2:
 
 - Windows: `C:\Windows\System32\drivers\etc\hosts`, Editor als Administrator.
 - Linux/macOS: `/etc/hosts`, als root.
-- Hast du einen echten DNS-Server, gehört der Name dorthin; dann entfällt dieser Schritt.
+- Hast du einen echten DNS-Server, gehört der Name dorthin; dann entfällt dieser Schritt —
+  **aber lies erst die Falle weiter unten.**
 
 **Warum es ohne nicht geht, und zwar an zwei verschiedenen Stellen:**
 
-1. **Der Browser warnt.** Das Zertifikat lautet auf den Namen. Rufst du `https://10.2.3.208/`
-   auf, passt der Name im Zertifikat nicht zur Adresse in der Leiste, und der Browser zeigt
-   seine Warnseite. Gemessen wurde mit einem **selbst unterschriebenen** Zertifikat und einem
-   Browser, der es für den Lauf annimmt (`ignoreHTTPSErrors`); ein echter Browser nimmt es
-   nicht ohne Weiteres an (Punkt 59).
-2. **Passschlüssel gehen über eine IP-Adresse gar nicht.** Ein Passschlüssel hängt an der
-   `rp.id`, und das ist hier `ngc.test` — ein **Name**. Eine IP-Adresse kann keine `rp.id`
-   sein. Über `https://10.2.3.208/` lässt sich also kein Passschlüssel anlegen und keiner
-   benutzen, egal wie man die Zertifikatswarnung wegklickt. Die Oberfläche empfiehlt Passkeys
-   selbst (Schritt 6) — über die IP ist diese Empfehlung nicht befolgbar.
+1. **Der Browser warnt, und er hat recht.** Das Zertifikat lautet auf den **Namen** und auf
+   nichts sonst. Nachgesehen am 24.10.2026 an der verteilten Anlage:
 
-**Gegenprobe, bevor du weitergehst:** `ping ngc.test` von deinem Rechner muss die Adresse der
-Anlage nennen. Erst danach lohnt Schritt 5.
+   ```
+   subject=CN=ngc.mein.lan
+   X509v3 Subject Alternative Name:
+       DNS:ngc.mein.lan
+   ```
+
+   **Keine einzige IP-Adresse steht darin.** Rufst du die Anlage über ihre Adresse auf, kann
+   das Zertifikat nicht passen — nicht weil etwas falsch eingestellt ist, sondern weil dort
+   nichts steht, was zu einer Adresse passen könnte. Gemessen wurde bisher mit einem **selbst
+   unterschriebenen** Zertifikat und einem Browser, der es für den Lauf annimmt
+   (`ignoreHTTPSErrors`); ein echter Browser nimmt es nicht ohne Weiteres an (Punkt 59).
+2. **Passschlüssel gehen über eine IP-Adresse gar nicht.** Ein Passschlüssel hängt an der
+   `rp.id`, und die ist ein **Name** — `ngc.test` bei der einen Maschine, `ngc.mein.lan` bei
+   der verteilten Anlage. Eine IP-Adresse kann keine `rp.id` sein, und `origins` nennt genau
+   die eine Adresse mit dem Namen. Über die IP lässt sich also kein Passschlüssel anlegen und
+   keiner benutzen, egal wie man die Zertifikatswarnung wegklickt. Die Oberfläche empfiehlt
+   Passkeys selbst (Schritt 6) — über die IP ist diese Empfehlung nicht befolgbar.
+
+#### Beim verteilten Fall sind es mehr Namen, nicht einer
+
+Diese sieben Zeilen hat Thomas am 24.10.2026 für die Anlage aus sechs Maschinen genannt:
+
+```
+10.2.3.210 api-1.ngc.mein.lan api-1
+10.2.3.211 api-2.ngc.mein.lan api-2
+10.2.3.212 db-1.ngc.mein.lan db-1
+10.2.3.213 svc-1.ngc.mein.lan svc-1
+10.2.3.214 svc-2.ngc.mein.lan svc-2
+10.2.3.215 store.ngc.mein.lan store
+10.2.3.210 ngc.mein.lan
+```
+
+**Der Name der Anlage ist `ngc.mein.lan`, und er zeigt auf dieselbe Adresse wie `api-1`.**
+
+**Und du brauchst nicht nur ihn.** Nachgesehen an der laufenden verteilten Anlage, mit dem
+Namen erzwungen (`curl --resolve ngc.mein.lan:443:10.2.3.210`):
+
+```json
+{"version":"0.2.1","anchor":{…},"rp":{"id":"ngc.mein.lan","origins":["https://ngc.mein.lan"]},
+ "apis":["https://api-1.ngc.mein.lan:7443","https://api-2.ngc.mein.lan:7443"]}
+```
+
+`apis` nennt **Namen**, und der Browser verbindet sich zu ihnen **selbst** — nicht über die
+Oberfläche. Jeder davon trägt sein **eigenes** Zertifikat: auf `10.2.3.211:7443` steht
+`CN=api-2.ngc.mein.lan`, `SAN: DNS:api-2.ngc.mein.lan`. Fehlt `api-2.ngc.mein.lan` in deiner
+`hosts`-Datei, kommt die Oberfläche hoch und die zweite API ist für deinen Browser nicht da.
+**Also alle sieben Zeilen eintragen, nicht die letzte allein.**
+
+**Die Namen sind keine Rollenverteilung.** Es gab einen Stand, auf dem `db-1` einen Controller
+trug und `store` gar kein NGC. Welche Maschine was tut, steht in ihrer `controller.json` und in
+der Vertrauensliste — nicht in ihrem Namen. Gemessen am 24.10.2026: alle sechs antworten auf
+`ping` und auf Port 22; eine API auf Port 7443 haben **nur** `10.2.3.210` und `10.2.3.211`. Die
+anderen vier haben dort nichts, und das ist richtig so — ein Controller horcht nicht, er wählt
+durch den Tunnel hinaus.
+
+#### Die Falle, wenn dein Netz jeden Namen beantwortet
+
+**Gemessen hier am 24.10.2026, und sie ist bösartig:** in diesem Netz lösen **alle sieben
+Namen** auf `10.2.3.102` auf — eine Maschine, auf der **kein NGC** läuft (`https://…/` gibt
+`302`, `/config.json` gibt `401`). Der DNS-Server beantwortet also jeden Namen unter
+`ngc.mein.lan`, auch die, die er nicht kennt.
+
+Das heißt: **ohne die Zeilen in deiner `hosts`-Datei landest du auf einer fremden Maschine**,
+und zwar ohne Fehlermeldung, die das sagt. Was du siehst, ist eine Anmeldung, die nicht NGCs
+Anmeldung ist, oder eine Zertifikatswarnung, die wie ein Fehler der Anlage aussieht. Darum
+reicht „wir haben DNS" hier **nicht** — ein DNS, der nie „kenne ich nicht" sagt, ist schlimmer
+als keiner.
+
+**Gegenprobe, bevor du weitergehst** — nicht `ping`, denn `ping` beantwortet auch die falsche
+Maschine. Frage die Anlage, wie sie selbst heißt:
+
+```bash
+curl -sk https://<name>/config.json
+```
+
+Darin muss `rp.id` **genau der Name** stehen, den du aufgerufen hast. Steht dort ein anderer,
+oder kommt `401`, `302` oder HTML statt JSON, redest du mit der falschen Maschine. Erst wenn
+das stimmt, lohnt Schritt 5.
 
 ### Schritt 1 — Release bauen und unterschreiben
 
@@ -169,6 +252,14 @@ Jede andere Form weist das Skript ab.
 ### Schritt 2 — `ngc-all install`
 
 Richtet API, Schlüssel, Zertifikat und Dienst ein und startet die API.
+
+> **Beim verteilten Fall ist das nicht ein Skript, sondern vier.** `ngc-all` ist genau für
+> „alles auf einer Maschine" da und nimmt deshalb SQLite. Sechs Maschinen brauchen `ngc-api`,
+> `ngc-db`, `ngc-controller` und `ngc-web` einzeln, jedes auf seiner Maschine und mit eigener
+> `answer.yaml`; `ngc-api.sh` weist jeden Treiber außer MariaDB ab und sagt in seiner eigenen
+> Meldung, dass eine Maschine auf SQLite die Sache von `ngc-all` ist. **Die Reihenfolge dieser
+> vier untereinander steht in keiner Anleitung** und ist hier nicht gemessen — siehe
+> „Nicht gemessen".
 
 - **Geht:** Dienst `ngc-api` **`active`** mit **`NRestarts=0`**, Port 7443 belegt,
   Zertifikat da. Auf dem Schirm: **Einmal-Code**, **Kennung der Anlage** und
@@ -672,6 +763,19 @@ Das steht hier, damit niemand es für geprüft hält.
   (`config.DriverSQLite`), eine Datei je Programm — `/var/lib/ngc/api/ngc.db` und
   `/var/lib/ngc/controller/state.db`. MariaDB mit Galera ist ein anderer Fall und steht hier
   nicht (Punkt 47).
+- **Der verteilte Fall ist hier nicht nachgefahren, nur nachgesehen.** Von der Anlage aus sechs
+  Maschinen ist gemessen, was ein Browser von außen sehen kann: die sieben Namen und wohin sie
+  wirklich auflösen, `config.json` mit `rp.id` und den beiden `apis`, die Zertifikate auf
+  `:443` und auf `api-2:7443`, und welche der sechs auf Port 22 und 7443 antworten (alles
+  24.10.2026). **Auf keiner der sechs war ich angemeldet**, und kein Schritt dieser Anleitung
+  ist dort durchgegangen. Die Zuordnung Adresse → Name stammt von Thomas; dass sie stimmt, ist
+  für `api-1`, `api-2` und `ngc.mein.lan` aus den Zertifikaten und aus `config.json` bestätigt,
+  für `db-1`, `svc-1`, `svc-2` und `store` **nicht** — dort antwortet von außen nichts, was
+  seinen Namen nennt.
+- **Welches Skript beim verteilten Fall was macht.** Der kleine Fall nimmt `ngc-all`; sechs
+  Maschinen brauchen `ngc-api`, `ngc-db`, `ngc-controller` und `ngc-web` einzeln, jedes mit
+  eigener `answer.yaml`. Die Reihenfolge dieser vier untereinander, und wo dabei gekoppelt und
+  aufgenommen wird, steht in **keiner** Anleitung und ist hier nicht gemessen.
 - **Dass die fünf Skripte je auf ulh-`main` kommen.** Nachgezählt am 24.10.2026: `origin/main`
   hat weiter **null** `ngc-*`-Skripte. Ein Push nach ulh-`main` erreicht per Auto-Update
   sofort alle Nutzer, deshalb entscheidet das Thomas (Punkt 47).
@@ -689,6 +793,11 @@ Nicht weggelassen, sondern hingeschrieben.
 - **„Einen Hostnamen" war zu wenig.** Der Satz stand in Abschnitt 2 als eine Zeile unter
   Werkzeugen. Dass der Name auf **dem Rechner des Lesers** eingetragen sein muss und dass es
   über eine IP-Adresse keine Passschlüssel gibt, stand nirgends. Jetzt ist es Schritt 0.
+- **Die Anleitung sagte nicht, welche Anlage sie beschreibt.** Sie sagte „ein Rechner" und
+  danach „`<host>`" — und es gibt inzwischen **zwei** Anlagen mit zwei verschiedenen Namen
+  (`ngc.test` und `ngc.mein.lan`). Wer die verteilte vor sich hatte und diese Anleitung las,
+  trug den falschen Namen ein und bekam keinen Satz, der das sagt. Jetzt steht oben eine
+  Tabelle, und der verteilte Fall ist an jeder abweichenden Stelle benannt.
 - **Die Reihenfolge der alten Schritte 4 bis 7 hielt nicht, was sie andeutete.** „Nicht neu
   laden" stand dort — aber das Aufnehmen des Controllers fehlte ganz, und genau das ist der
   Schritt, der **nach** dem Koppeln noch im selben angemeldeten Fenster geschehen muss.
@@ -723,3 +832,12 @@ Außer den zwei Punkten aus Abschnitt 1:
   einer Maschine mit echtem Namen und `letsencrypt` — das ist der Fall, den ein Nutzer
   erlebt (Punkt 58), und es ist auch der einzige, in dem Passschlüssel überhaupt prüfbar sind.
 - **Welche Nummer die Nummer eines Release ist.** Drei Programme, drei Nummern, ein Feld.
+- **Eine Anleitung für die Anlage aus sechs Maschinen.** Es gibt sie nicht. Diese hier nennt
+  den verteilten Fall an den Stellen, an denen er anders ist, und ist ausdrücklich keine
+  Anleitung dafür. Wer sie schreibt, muss die Reihenfolge der vier Skripte messen — sie steht
+  nirgends.
+- **Der DNS, der jeden Namen beantwortet.** In diesem Netz lösen alle sieben Namen unter
+  `ngc.mein.lan` auf `10.2.3.102` auf, wo kein NGC läuft (Schritt 0). Solange das so ist,
+  braucht **jeder** Leser die Zeilen in seiner `hosts`-Datei, auch der mit DNS — und jeder
+  Fehler sieht zuerst wie ein Fehler von NGC aus. Das ist keine NGC-Sache, aber es trifft
+  jeden, der NGC hier aufsetzt.
