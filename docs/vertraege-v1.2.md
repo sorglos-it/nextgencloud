@@ -172,7 +172,8 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
 | 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
 | 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
-| 83 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
+| 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
+| 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5512,7 +5513,278 @@ unvermessen, bis es das ist.
 
 Verwandt: **Punkt 79** misst denselben stündlichen Takt von der anderen Seite (der Laden ist weg);
 hier geht es nicht um die Erreichbarkeit des Ladens, sondern um den Kanal, der danach kommt.
-## Punkt 83: Eine Prüfrunde über die Nähte von zwei Tagen — die Nähte halten, der Satz darüber nicht
+---
+
+## Punkt 83: Der kleine Fall hat wieder eine Maschine — und sie ist aus einem Skript entstanden, nicht von Hand
+
+> **Stand: gilt.** Art: Umgebung und Messung. Schließt an Punkt 75 an.
+
+**Entschieden am 24.10.2026** (Thomas): der kleine Fall wird weiter geprüft, auf einer
+**neuen** Maschine, und die alte wird **einmal** angeworfen, um zu bergen, was nur auf ihr
+liegt. Beides ist am selben Tag gemacht und gemessen.
+
+### Es war kein Absturz: ein `qmstop` vom Wirt
+
+Punkt 75 und der Nachtrag zu Punkt 74 ließen offen, was die Einzel-VM umgeworfen hat. Das ist
+jetzt gemessen, und zwar nicht in der VM, sondern im **Aufgabenbuch des Proxmox-Wirts**:
+
+```
+UPID:…:qmstop:208:root@pam:   ->  24.10.2026 12:37:27   OK
+```
+
+Die letzte Journalzeile des vorigen Laufs ist **12:36:19**, eine Minute davor. Also: **kein
+Absturz, kein Kernel, kein Fehler von NGC** — die Maschine wurde vom Wirt aus hart
+angehalten. Am selben Tag gab es zwei weitere solche Eingriffe (`qmstop` 01:11:14,
+`qmshutdown` 04:41:40). **Wer das Aus als Befund über NGC aufgeschrieben hätte, hätte etwas
+Falsches aufgeschrieben.** Wer sie angehalten hat und warum, ist nicht gemessen.
+
+**Nebenbefund:** bis zuletzt kam alle **63 Sekunden** ein `TLS handshake error … tls: bad
+certificate` von `10.111.111.111`. Regelmäßig, also etwas, das fragt und nicht aufgibt. Was
+dort fragt, ist nicht gemessen.
+
+### Geborgen: drei Skripte, die es im Repo nicht gab
+
+Vor dem Start ein Schnappschuss (`vor-bergung-20261024`), damit ein Start, der das
+Dateisystem beschädigt, nichts mitnimmt. Danach war Port 22 nach 16 Sekunden offen.
+
+Im Repo liegen jetzt `tools/pruefladen-tls.sh` (Test-CA und Ladenzertifikat),
+`tools/pruefladen-stellen.sh` (Laden hinter Apache über HTTPS) und
+`tools/haertung-nachsehen.sh` (liest die Härtung am **laufenden** Behälter plus cgroup und
+`/proc` — der Unterschied, auf dem die Punkte 51 und 72 beruhen). Pfade und Name sind
+Angaben geworden, die Schritte und Selbstprüfungen unverändert.
+
+**Die geheimen Schlüssel der alten Test-CA sind absichtlich nicht geborgen:** das Skript baut
+die CA selbst neu, nachgewiesen auf der neuen Maschine. Einen geheimen Schlüssel zu kopieren,
+den man nicht braucht, ist ein Risiko ohne Gegenwert. Die gebauten Pakete (103 MB und
+190 MB) sind ebenfalls nicht geborgen — `ngc-store pack` stellt sie aus dem Repo her. Der
+Katalog ist geborgen; `/srv/ngc-store/catalog.json` und `ngcapp/store/catalog.json` sind
+bytegleich (`5464c828…dbf1`), es gab also nur eine Fassung.
+
+**Der Befund ist größer als die vier Dinge aus Punkt 75:** in `/home/berry` liegen **22
+eigene Skripte** (2,0 MB) in acht Ordnern. Drei hatten allgemeinen Wert und sind jetzt im
+Repo; die anderen 19 gehören zu je einer Messung, die schon aufgeschrieben ist, und sind
+nicht geborgen. Sie liegen auf der Platte und im Schnappschuss. **Zu entscheiden (Thomas):**
+ob sie vor dem Löschen der Platte jemand durchsieht. Die Maschine ist danach sauber
+heruntergefahren, **nicht gelöscht**, Schnappschuss bleibt.
+
+### Zwei Befunde aus `app-weg.md` sind jetzt gemessen
+
+Jenes Papier ist eingefroren, darum hier:
+
+1. **Das Release bringt `ngc-store` mit.** Befund 4 ließ offen, ob das Release es nicht
+   mitliefert oder die Maschine von Hand bestückt war. Aus `ngc-api-amd64.tar` von **v0.2.2**
+   fielen genau `ngc-api` und `ngc-store`, und das herausgefallene `ngc-store` meldet
+   `0.2.2`. **Das Release liefert es — die alte Maschine war von Hand bestückt.**
+2. `/usr/lib/ngc/ngc-store` lag auf der alten Maschine mit Datum 19.10. vor; Befund 4 hatte
+   „heute ist es nicht da" gemessen, was damals richtig war. Daneben lagen **zehn** Programme
+   wie `ngc-api.vor-0.2.2` und `ngc-controller.vor-terminalkanal`. Keines kommt aus einem
+   Release.
+
+### Die neue Maschine, und warum eine neue
+
+Die alte war über Monate von Hand gewachsen. **Eine Messung auf einer Maschine, die niemand
+nachbauen kann, sagt wenig darüber, was ein Nutzer erlebt.** Darum ist der Ersatz ein
+**Skript**: `tools/einzelmaschine.sh` klont die Debian-13-Vorlage, aus der auch die sechs
+verteilten Knoten kommen, und gibt dem Klon alle Rollen zugleich.
+
+`ngc-ein`, VMID 307, 10.2.3.216, Name wieder `ngc.test`. Debian 13 (trixie), Kernel
+6.12.113+deb13-cloud-amd64, 2 Kerne, 3922 MiB, 32 GB + 16 GB. `ngc-api` und `ngc-controller`
+**0.2.2**, Oberfläche **0.2.1**, Datenbank SQLite in `/var/lib/ngc/api/ngc.db`.
+
+Der Weg: Pakete, `ulh` (`ngc-kette`), Release v0.2.2 nach `/var/lib/ngc/staged`, Prüfladen
+mit den **geborgenen** Skripten, dann `ngc-all.sh install`, dann `ngc-web.sh install`. Beide
+mit **Ausstiegscode 0**.
+
+**Der Laden muss vor der Installation stehen**, und das ist kein Umweg: ohne eigenen Laden
+bricht `ngc-all.sh` mit eigener Meldung ab, weil der Schlüssel des offiziellen Ladens ein
+Platzhalter ist (Punkte 56, 57). Genau dafür sind die geborgenen Skripte da — und auf der
+frischen Maschine fiel dabei eine Lücke auf, die auf der alten nicht auffallen **konnte**:
+`mod_ssl` war dort längst von NGCs Web eingeschaltet, auf einer frischen Debian nicht, und
+Apache stirbt mit `Invalid command 'SSLEngine'`. Das Skript schaltet es jetzt selbst ein.
+
+### Der kleine Fall, durchgemessen — und 451 Byte zum zweiten Mal
+
+Von außen über den **Namen** gemessen, nicht über die Adresse (`curl --resolve`):
+
+| Was | Ergebnis |
+|---|---|
+| `https://ngc.test/` | **`http=200`, 451 Byte**, `<title>NGC</title>` |
+| `/config.json` | `rp.id` = `ngc.test`, `apis` = `https://ngc.test:7443` |
+| `GET /api/v1/setup` über 443 (Apache) | 200 |
+| `GET /api/v1/setup` auf 7443 (API selbst) | 200 |
+| Zertifikat | `CN=ngc.test`, `SAN: DNS:ngc.test` — **keine IP** |
+| Dienst `ngc-api` | `active`, `NRestarts=0` |
+| `grep -c REPLACE-THIS-LINE /etc/ngc/api.json` | **0** |
+
+**451 Byte ist genau die Zahl aus Punkt 56 vom 16.10.2026**, damals auf der alten Maschine.
+Dieselbe Seite, dieselbe Größe, auf einer Maschine aus Skript und Release. Damit ist die
+Messung des kleinen Falls nicht nur wieder möglich, sie ist **nachbaubar**. Und Schritt 0 der
+Anleitung — im Zertifikat steht ein Name und keine Adresse — ist jetzt an einer **zweiten**
+Anlage gemessen.
+
+### Was auf der neuen Maschine NICHT gemessen ist
+
+- **Die Ersteinrichtung im Browser.** Der Einmal-Code steht auf dem Schirm, und den ersten
+  Verwalter legt ein **Mensch** an. Kein Agent tippt ihn.
+- Darum auch nichts dahinter: Controller koppeln, Systemrechte, eine App einrichten, der
+  ganze Weg der Punkte 71 und 72. **Der Controller ist nicht gekoppelt, also läuft keine
+  App.**
+- Die Oberflächenfassung zu Punkt 73 ist hier nicht eingespielt (die Maschine läuft
+  `origin/main`).
+- Die 16-GB-Platte ist leer; `fscrypt` ist auf ihr nicht gemessen.
+- Der Prüfladen trägt einen Katalog in Folge 1, aber **keine App darin**.
+
+### Ein Fehler beim Bauen, der hierher gehört
+
+Die Bereitschaftsprüfung von `einzelmaschine.sh` meldete zuerst „kernel 7.0.6-2-pve, 20
+cores" und nannte die VM bereit. **Das sind die Zahlen des Proxmox-Wirts.** Ein Befehl auf der
+VM über den Wirt sind zwei ssh-Sprünge, und was auf der Befehlszeile steht, nimmt jede Schale
+auseinander, durch die es geht: Zitieren von Hand verlor eine Ebene (leeres `$PRETTY_NAME`
+neben funktionierendem `$(uname -r)`), und base64 auf der Befehlszeile ließ die Pipe **auf dem
+Wirt** laufen. Jetzt reist der Befehl als base64 über die **Eingabe**, während die ferne
+Befehlszeile ein fester Text bleibt — und die Prüfung lehnt zusätzlich jede Antwort ab, deren
+`hostname` nicht der erwartete ist. **Eine erreichbare Maschine mit dem falschen Namen ist
+schlimmer als Stille.** Gegenprobe im Protokoll: Wirt 20 Kerne, VM 2 Kerne.
+
+Das ist derselbe Fehler, um den dieser ganze Zweig geht, nur eine Ebene tiefer: **die falsche
+Maschine messen und das Ergebnis für einen Befund halten.**
+
+### Nachtrag: vier der Messskripte sind geborgen — und das Bergen hat einen Scheinbeweis aufgedeckt
+
+**Entschieden (Thomas, 24.10.2026):** vier der 16 eigenen Skripte kommen ins Repo. VM 208 dafür
+ein zweites Mal angeworfen, gelesen, wieder sauber heruntergefahren.
+
+Es sind **16**, nicht 19: die beiden `messen-boot.sh` sind bytegleich, und zwei Dateien
+(`ulhrepo/install.sh`, `ulhrepo/ulh.sh`) gehören dem **ulh**-Repo und nicht NGC.
+
+| jetzt im Repo | war | misst |
+|---|---|---|
+| `tools/siegel-tpm.sh` | `~/smoke/run.sh` | versiegeln, mit Signatur über die **eigene Nonce des TPM** öffnen, und ein Wiedereinspielen muss scheitern |
+| `tools/siegel-stick.sh` | `~/smoke/stick.sh` | derselbe Weg mit dem Schlüssel in einem PKCS#11-Stick: Hash außen, der Stick unterschreibt nur den Abdruck |
+| `tools/env-werkzeug-weg.sh` | `~/task6fix1/n9.sh` | ein Werkzeug aus dem `PATH` genommen muss von `recovery-env.sh` **benannt** werden; liest die `need=`-Liste aus dem Skript selbst |
+| `tools/release-mutanten.sh` | `~/relbuild/mutanten.sh` | sieben Mutanten an `tools/build-release.sh` plus fünf Eingabefälle |
+
+**Verdeckte Abhängigkeiten, die niemand aufgeschrieben hatte.** Beide Siegel-Skripte starten den
+TPM-Simulator **nicht** (die Instanz `main` teilen sie mit `recovery-test.sh`, und eine zweite
+dahinter würde genau die PCRs verschieben, gegen die versiegelt wird), und `siegel-stick.sh`
+braucht den dauerhaften Primary an `0x81000001`, den `siegel-tpm.sh` anlegt. Vorher fiel beides
+als nackter TPM-Fehler auf. Jetzt wird es geprüft und benannt.
+
+**Gemessen** auf einer Wegwerf-VM, mit `tools/einzelmaschine.sh` gebaut:
+
+| Lauf | Ergebnis |
+|---|---|
+| `siegel-tpm.sh` | Ausstiegscode 0, `ALLES GRUEN`, Replay „abgelehnt, wie es sein muss" |
+| `siegel-stick.sh` | Ausstiegscode 0, `STICK-WEG GRUEN`, P-384 aus dem Stick, Replay abgelehnt |
+| `env-werkzeug-weg.sh` | Ausstiegscode 0; mit allem `Umgebung: vollständig`, dann `Es fehlt: grep`, `grep sed`, `grep sed tpm2_readpublic` |
+| `release-mutanten.sh` | Ausstiegscode 0, `mutanten: ok` — K0/L1/L2 grün, M1–M4 rot, fünf Versionen abgewiesen |
+
+**Gegenproben, damit die Riegel nicht nur dastehen:** ohne Simulator endet `siegel-tpm.sh` mit 2
+und nennt den Startbefehl; nach `recovery-swtpm.sh reset main` endet `siegel-stick.sh` mit 2 und
+nennt `siegel-tpm.sh`; und bevor `recovery-tools.sh` gelaufen war, hielt `env-werkzeug-weg.sh`
+sich selbst an: „mit allen Werkzeugen schon rot — hier ist nichts zu messen".
+
+### Der Scheinbeweis, und warum er hierher gehört
+
+Der **erste** Mutantenlauf meldete K0, L1 und L2 rot und M1 bis M4 „rot, wie erwartet". Das sah
+nach vier sterbenden Mutanten aus. Es war keiner.
+
+Auf der Maschine fehlte `qemu-user-static`, und `build-release.sh` weist dann **jeden** Lauf
+schon am ersten Schritt ab — alle mit derselben Meldung. Die lebenden Kontrollen fielen auf,
+weil sie grün sein müssten. Die sterbenden Mutanten fielen **nicht** auf: sie waren rot, nur
+nicht an ihrer Mutation. Keiner von ihnen hat seine eigene Mutation je erreicht.
+
+Besonders tückisch ist M4: seine Mutation („kein Läufer für arm64") erzeugt **genau dieselbe
+Meldung** wie die fehlende Umgebung. An der Ausgabe ist M4 in diesem Fall nicht
+unterscheidbar.
+
+**Der Riegel dagegen:** ist die Kontrolle K0 rot, bricht der Lauf **dort** ab. Jeder Mutant wäre
+aus demselben Grund rot, und das beweist nichts. Nachgemessen: mit fehlendem `qemu-user-static`
+endet der Lauf jetzt nach K0 mit Ausstiegscode 1 und nennt das fehlende Paket. Danach
+installiert und wiederholt, stirbt jeder Mutant an **seiner eigenen** Ursache:
+
+| Mutant | woran er stirbt |
+|---|---|
+| M1, M2 | `ngc-api ANSWERS "0.0.0-dev", which validVersion refuses` — **Wand 2 aus Punkt 71** |
+| M3 | das `ngc-controller`-Archiv trägt etwas, das keine gewöhnliche Datei ist (der Eintrag `./`) |
+| M4 | kein Läufer für arm64 — jetzt aus der Mutation, nicht aus der Umgebung |
+
+Zusätzlich prüft der Lauf jetzt **je Fall die Erwartung** (grün oder rot) statt nur den
+Ausstiegscode zu drucken, und ein angenommener Versionsstring ist ein Befund statt einer Zeile.
+
+**Was daraus allgemein folgt, und es ist derselbe Satz wie im ganzen Punkt:** rot ist kein
+Beweis, solange nicht gemessen ist, **woran** es rot wurde. Ein Prüfsatz braucht neben den
+sterbenden Fällen lebende Kontrollen — und er muss anhalten, wenn die Kontrolle fällt.
+
+### Nicht geborgen, mit Grund
+
+Die zwölf übrigen eigenen Skripte hängen alle am Arbeitsbaum `dist/recovery/`, den es im Repo
+nicht gibt, und jedes gehört zu einer Messrunde, die schon aufgeschrieben ist. In ihren Ordnern
+liegen außerdem ganze Arbeitsbäume mit SoftHSM-Token, TPM-Zustand und **drei PIN-Dateien**. Die
+Stick-Schlüssel darin sind öffentliche Schlüssel; die PINs sind Geheimnisse und gehören in kein
+Repo. Nichts davon ist übernommen.
+
+### Zur Nummer dieses Punktes
+
+Er hieß beim Schreiben 82, dann 85, jetzt 83. Grund: main bekam inzwischen einen eigenen Punkt
+82, und `tools/check-buch.sh` — den es heute Morgen noch nicht gab — weist **Lücken**
+mechanisch ab. 85 hätte die Löcher 83 und 84 gerissen und den Riegel rot gemacht, obwohl main
+grün ist (`buch: ok, 64 points, 19-82`). Darum die lückenlose 83, obwohl ein offener Zweig sie
+ebenfalls beansprucht: eine Doppelung wird beim Zusammenführen umnummeriert, ein Loch nicht.
+
+### Nachtrag: die alte Maschine ist gelöscht
+
+**Entschieden (Thomas, 24.10.2026):** VM 208 samt Platte und Schnappschuss kann weg.
+
+**Vorher geprüft, weil ein Löschen nicht zurückgeht.** Die Bergung hatte Dateien in einem
+sitzungsflüchtigen Ordner liegen lassen; was davon nirgends sonst existierte, musste erst
+dauerhaft liegen:
+
+| geborgen | Lage vor dem Löschen |
+|---|---|
+| die drei Prüfladen- und vier Messskripte | in `tools/`, auf `origin` |
+| die zwei Oberflächendateien von vor Punkt 73 | liegen als Blobs im Repo, Commit `1c8b695` — **nichts verloren** |
+| das Terminal-Manifest | bytegleich mit `apps/server-controller/templates/terminal/manifest.json` |
+| `terminal-1.0.0.ngc` und die zwei Pakete in `~/uhr-bau/` | gebaut, aus dem Repo neu baubar |
+| **`catalog.json` und `store-key.pem`** | **nur im Kratzordner** — jetzt in `docs/belege/einzel-vm-laden/` |
+
+Die zwei letzten sind der einzige erhaltene Katalog, den eine NGC-API wirklich geholt und
+dessen Unterschrift sie wirklich geprüft hat: Folge 1, eine App, Kennung
+`WM0yymuJtd9UxaUONGIXow`, 692 Byte, dazu der **öffentliche** Teil des Ladenschlüssels,
+113 Byte. Beides öffentlich, kein Geheimnis. Der geheime Teil war schon vor dem Abschalten
+nicht zu finden (`app-weg.md`, Befund 2) — diesem Laden kann also nie wieder jemand eine App
+hinzufügen, und als Vorlage ist er nichts: er zeigt auf eine Adresse, die es nicht mehr gibt.
+
+**Dann gelöscht**, mit Namensprüfung vor dem Befehl (VMID 208, Name `NGC`, `stopped`):
+
+```
+qm destroy 208 --purge 1 --destroy-unreferenced-disks 1   ->  Ausstiegscode 0
+```
+
+Weg sind: die 80-GB-Platte (`ssd_2TB:208/vm-208-disk-0.qcow2`), der EFI- und der TPM-Zustand
+(`local-lvm`), und beide Schnappschuss-Datenträger `snap_vm-208-disk-*_vor-bergung-20261024`.
+
+**Nachgeprüft, nicht angenommen:**
+
+| Probe | Ergebnis |
+|---|---|
+| `qm status 208` | `Configuration file 'nodes/pve/qemu-server/208.conf' does not exist` |
+| `/mnt/ssd_2TB/images/208` | `No such file or directory` |
+| `qm list` | nur noch `307 ngc-ein running` — der kleine Fall ist unberührt |
+| `ping 10.2.3.208` | keine Antwort |
+
+**Was damit endgültig fort ist:** die 19 nicht geborgenen Messskripte aus `/home/berry`
+(2,0 MB in acht Ordnern), die Arbeitsbäume `dist/recovery/` samt SoftHSM-Token, TPM-Zustand
+und den drei PIN-Dateien, die zehn handgelegten Programmfassungen in `/usr/lib/ngc/`
+(`ngc-api.vor-0.2.2`, `ngc-controller.vor-terminalkanal` und so weiter) und die gebauten
+Pakete. Das war die Entscheidung, nicht ein Versehen: jedes dieser Skripte gehört zu einer
+Messung, die schon aufgeschrieben ist, und keines ließ sich ohne jenen Arbeitsbaum aufrufen.
+
+**Der Satz, der bleibt**, und er ist der eigentliche Ertrag dieses Punktes: die erste wirklich
+laufende Anlage war ein Handbau, und als sie wegging, hing an ihr mehr, als irgendwo
+aufgeschrieben stand. Was nur auf einer Maschine liegt, ist nicht gesichert. Der kleine Fall
+läuft jetzt auf `ngc-ein`, und `ngc-ein` kommt aus einem Skript.
+## Punkt 84: Eine Prüfrunde über die Nähte von zwei Tagen — die Nähte halten, der Satz darüber nicht
 
 Zwischen dem 19. und 24.10.2026 sind rund dreißig Pull Requests auf `main` gelandet, viele davon
 in Stunden, aus Sitzungen, die nebeneinander liefen. In genau diesem Zeitraum war der CI-Schritt

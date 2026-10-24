@@ -14,9 +14,15 @@ Es gibt seit dem 24.10.2026 **zwei**, und nur auf einer liegt dieser Stand.
   `/root/zweiter-benutzer-backup-20261024/`. **Die Schritte unten galten für diese Anlage.**
   **Diese Maschine ist aus.** Nachgemessen am 24.10.2026: Port 22 antwortet nicht, und auf dem
   Proxmox-Wirt steht VM 208 auf `stopped`. Sie ist nicht langsam und nicht gestört, sie läuft
-  nicht. **Wer die Schritte unten heute geht, kommt nirgends an** — und „nicht erreichbar" ist
-  dann kein Befund über NGC, sondern über eine ausgeschaltete Maschine. Was jetzt nötig ist,
-  steht in `docs/alte-vm-verweise.md`; entscheiden muss es Thomas.
+  nicht. Gemessen am Aufgabenbuch des Wirts: um **12:37:27** hat ein `qmstop` sie hart
+  angehalten — **kein Absturz**. **Wer die Schritte unten heute geht, kommt nirgends an**, und
+  „nicht erreichbar" wäre dann kein Befund über NGC.
+- **Neue Einzel-Maschine `ngc-ein`** (10.2.3.216, Name wieder `ngc.test`, NGC `0.2.2`, seit
+  24.10.2026): läuft, aber sie läuft **`origin/main`** und hat die beiden Formulare **nicht**.
+  Die zwei geänderten Dateien sind dort **nicht** eingespielt. Die Schritte unten sind auch
+  hier **nicht** zu gehen, solange dieser Zweig nicht verschmolzen und ausgerollt ist. Die
+  Sicherung von vor der Änderung liegt auf der alten Platte und im Schnappschuss
+  `vor-bergung-20261024` (siehe `docs/alte-vm-verweise.md`, Abschnitt 6).
 - **Verteilte Anlage `https://ngc.mein.lan`** (api-1 … store, NGC `0.2.1`): läuft **exakt
   `origin/main`** und hat die beiden Formulare **nicht**. Dort sind die Schritte unten
   **nicht** zu gehen, solange dieser Zweig nicht verschmolzen und ausgerollt ist.
@@ -31,7 +37,9 @@ Der Browser hält die alte Fassung der Oberfläche fest. Ohne das hier siehst du
 Felder nicht, und das sieht aus wie „es ist nicht gebaut".
 
 **Strg + F5** auf `https://ngc.test` — also auf dem Namen **der Anlage, auf der die zwei
-Dateien liegen**. Solange das die ausgeschaltete Einzel-VM ist, führt dieser Name ins Leere.
+Dateien liegen**. Achtung: `ngc.test` heißen inzwischen **zwei** Maschinen. Auf der alten
+(10.2.3.208, aus) lagen die Dateien; auf der neuen (10.2.3.216) liegen sie **nicht**. Welche
+der Name bei dir erreicht, steht in deiner `hosts`-Datei, nicht in dieser Anleitung.
 
 ---
 
