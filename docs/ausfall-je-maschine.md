@@ -743,6 +743,16 @@ Hinweis auf die Schlüssel, den ich für den Dump zurückgewiesen hatte, in voll
 Länge. Mein Einwand war für das logische Werkzeug richtig und für das
 physische falsch.
 
+Und eine Warnung zu den Sicherungssätzen oben, damit niemand sie
+missversteht: **zur Stunde existiert von dieser Anlage keine Sicherung** — die
+Wegwerf-Maschine, auf der der Rückweg geprobt wurde, ist abgeräumt, und die
+Kopien auf dem PC sind mitgelöscht worden (von der Sicherungs-Sitzung berichtet,
+24.10.2026, **nicht von mir gemessen**, und ein Zustand dieser Stunde, kein
+Dauerzustand). Das Werkzeug ist da und zweimal gefahren; wo die Sicherungen
+liegen sollen, muss Thomas nennen. Die Sicherung, die ich vor dem db-1-Fall
+gezogen habe, war mein Rückweg für diese eine Messung und liegt in meinem
+Sitzungsordner — sie ist keine Sicherung der Anlage und soll keine sein.
+
 Zwei Zahlen aus den Nachbarsitzungen, die beim Wiederanlauf zählen und hier
 stehen, damit sie nicht in Nachrichten verschwinden — **von dort gemessen,
 nicht von mir**: kein App-Container hat eine eigene cgroup, es greift
