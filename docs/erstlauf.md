@@ -103,9 +103,13 @@ Gemessen am 23.10.2026, mit den Orten:
 - **Keine Virtualisierung in der Instanz:** `/dev/kvm` fehlt, und `/proc/cpuinfo` nennt
   **0**-mal `vmx` und **0**-mal `svm`. Ohne KVM bliebe nur TCG-Emulation — für eine
   Debian-Installation samt podman unbrauchbar.
-- **Die eine eingerichtete Maschine darf nicht kaputtgehen.** Auf `ssh ngc` (10.2.3.208) steht die
+- **Die eine eingerichtete Maschine darf nicht kaputtgehen.** Auf `ssh ngc` (10.2.3.208) stand die
   Anlage, in der andere Sitzungen arbeiten; ihr Zustand ist mehrfach von Hand verändert. Sie wurde
   **nicht angefasst**.
+  **Nachtrag 24.10.2026:** diese Maschine ist inzwischen **aus** (Port 22 stumm, VM 208 auf dem
+  Proxmox-Wirt `stopped`). Der Grund, am 23.10.2026 eine Wegwerf-Instanz zu nehmen, war
+  richtig und bleibt stehen; er trägt heute nur nicht mehr — es gibt keine eingerichtete
+  Einzel-Maschine, die man schonen müsste. Siehe `docs/alte-vm-verweise.md`.
 
 Die Wegwerf-Instanz heißt `ngc-erstlauf` und liegt in `D:\claude\ngc-erstlauf-vm`; das
 Testrelease in `D:\claude\ngc-erstlauf-release`. Beides ist meins und darf weg.
