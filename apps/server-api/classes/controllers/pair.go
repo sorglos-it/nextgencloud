@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"net/http"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -55,6 +57,14 @@ func (srv *Server) NewPairCode(ctx context.Context) (tunnel.PairCode, int64, err
 // of a secret but not the secret can therefore burn a pairing, which is the
 // safe half of that trade -- an admin makes a new code -- while the other order
 // would let anyone who ever saw a code guess at the MAC for a day.
+//
+// Every attempt that gets as far as spending the one-time value is written to
+// the log, and that is new: measured on 24.10.2026 at the installation of six
+// VMs, twenty refused pairings left the log at exactly 338 lines, before and
+// after (docs/messungen-m1-m3.md, M3). The "no failed attempts" in that
+// measurement was therefore nothing seen, not nothing happening. See
+// audit.Log.Pairing for why the line hangs on the code being spent and not on
+// the request arriving.
 func (srv *Server) Pair(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	body, ok := httpapi.Body(w, r)
@@ -84,16 +94,45 @@ func (srv *Server) Pair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, err := enc.B64.DecodeString(data)
-	if err != nil || req.Verify(secret, pub) != nil {
+	if err != nil {
+		// The code was spent and the row behind it does not read: that is
+		// damage of ours, not a wrong proof, and the two must not share one
+		// line. The answer outside stays the same either way.
+		srv.note(ctx, wire.CodeVerify, reason.Defect)
+		httpapi.Fail(w, wire.CodeVerify)
+		return
+	}
+	if req.Verify(secret, pub) != nil {
+		// THE line Frage 23 is about: a real code was burnt by somebody who
+		// did not hold its secret.
+		srv.note(ctx, wire.CodeVerify, reason.PairProof)
 		httpapi.Fail(w, wire.CodeVerify)
 		return
 	}
 	if err := srv.S.DB.PendingPut(ctx, dbapi.Pending{Name: req.Name, Key: req.Noise,
 		Since: srv.S.Now()}); err != nil {
+		// The code is gone and nothing was kept, so the admin has to make a
+		// new one. A line that said nothing here would send him looking for a
+		// pairing that never arrived.
+		srv.note(ctx, wire.CodeUnreachable, reason.DB)
 		httpapi.Fail(w, wire.CodeUnreachable)
 		return
 	}
+	srv.note(ctx, "", reason.None)
 	httpapi.NoContent(w)
+}
+
+// note writes one line of the log about a pairing. A log that does not answer
+// never costs the pairing: the attempt is the event, and whoever looks for a
+// hole does not need the line to be written, only the event to be missing.
+// Log is nil in no program -- package server sets it -- and a nil one is
+// stepped over all the same, so a test that builds a Server by hand does not
+// crash on a path it is not measuring.
+func (srv *Server) note(ctx context.Context, code wire.Code, why reason.Reason) {
+	if srv.Log == nil {
+		return
+	}
+	_ = srv.Log.Pairing(ctx, audit.ActionPair, code, why)
 }
 
 // noisePublic returns this API's public Noise key, derived from the private
