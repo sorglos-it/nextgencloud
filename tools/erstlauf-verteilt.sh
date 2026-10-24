@@ -378,11 +378,19 @@ if [ "$offen" = offen ]; then
 	warum="the first setup has not happened: /var/lib/ngc/setup-code is still there, so this installation has no admin and no trust list yet. Open https://$ZONE in a browser and type the code in"
 	[ "$drei" = getan ] || unmeasurable 3 "$s3" "$warum - the pairing code comes from a signed-in admin"
 	unmeasurable 5 "Systemrechte setzen" "needs station 4"
-	unmeasurable 8 "App erscheint im Menue" "needs station 7, and a second user to show that the rights page offers an app one cannot see yet"
+	unmeasurable 8 "App erscheint im Menue" "needs station 7, and a second user to show that the rights page offers an app one cannot see yet - and v0.2.1 can make no second user at all (see the other branch of this station)"
 else
 	[ "$drei" = getan ] || unmeasurable 3 "$s3" "no controller is paired yet: the code is shown in the browser (Benutzer und Server -> Server -> Kopplungscode), is good ONCE (dbapi.OncePair) and for 24 hours - a script cannot be the admin that mints it"
 	unmeasurable 5 "Systemrechte setzen" "the servers are adopted, and giving one its system rights is a click of a signed-in admin on the rights page - there is no file on a machine that says it was done"
-	unmeasurable 8 "App erscheint im Menue" "needs station 7 and a second user"
+	# NOT "needs a second user" any more. There is no way to make one.
+	# Measured 24.10.2026 against v0.2.1 at three places that would each have
+	# to carry it: the actions of the users app on the API side are list,
+	# rights, set-rights, trust, pair-code, join-code, pending, pending-api,
+	# nodes and log - no add, no invite; the HTTP paths of the API are setup,
+	# login/start, login/finish, logout, trust and ws - no registration; and
+	# the web app has no mask for it (its "Benutzer" tab only lists). The one
+	# admin of the first setup is the only account an installation ever gets.
+	unmeasurable 8 "App erscheint im Menue" "this station is about a CIRCLE - the desktop shows an app only to somebody holding its 'use' right, and the rights page offered rights only for apps one could already see - so it takes a SECOND user to ask it. v0.2.1 can make no second user: ngc.users has no add action, the API has no registration path, and the interface has no mask. So the station is not unmeasured here, it is unreachable"
 fi
 
 # ---------------------------------------------------------------------------

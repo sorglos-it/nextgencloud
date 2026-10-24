@@ -335,6 +335,31 @@ und die Katalogrunde schlägt **erst eine Stunde nach dem Start** zum ersten Mal
 (`server.go`: „The first beat is an hour after the start and not at the start",
 mit Begründung).
 
+## Befund 10 — es gibt keinen zweiten Benutzer, und zwar überhaupt nicht
+
+Station 8 ist die einzige der acht Hürden vom Oktober, die ein **Kreis** ist:
+der Schreibtisch zeigt eine App nur dem, der ihr Recht „use" hält, und die
+Rechteseite bot Rechte nur für Apps an, die man schon sehen konnte. Um zu
+zeigen, ob der Kreis offen ist, braucht man einen **zweiten** Benutzer.
+
+**Den kann v0.2.1 nicht anlegen.** Gemessen am 24.10.2026 an den drei Stellen,
+die es tragen müssten:
+
+1. **Die Aktionen der Benutzer-App auf der API-Seite** (`coreapp/users.go`):
+   `list`, `rights`, `set-rights`, `trust`, `pair-code`, `join-code`,
+   `pending`, `pending-api`, `nodes`, `log`. Kein `add`, kein `invite`.
+2. **Die HTTP-Pfade der API** (`shared/session/session.go`): `/api/v1/setup`,
+   `/login/start`, `/login/finish`, `/logout`, `/trust`, `/ws`. Kein Weg, sich
+   anzumelden oder jemanden einzuladen.
+3. **Die Oberfläche**: der Reiter „Benutzer" in `apps/web/.../users.js` **listet
+   nur** (Name, Rollen, zwei Schritte, gesperrt, zuletzt angemeldet). Es gibt
+   keine Maske zum Anlegen.
+
+Der eine Admin aus der Ersteinrichtung ist also das einzige Konto, das eine
+Anlage je bekommt. Station 8 ist damit nicht „noch nicht gemessen", sondern
+**nicht erreichbar** — und das ist ein Satz über das Produkt, nicht über
+diesen Prüflauf.
+
 ## Was der Erstlauf verteilt NICHT durchläuft, und warum
 
 **Erster Lauf, vor der Ersteinrichtung:** 0 rot, **9 unmessbar**, Ausstieg 2.
