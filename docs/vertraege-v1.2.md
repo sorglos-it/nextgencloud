@@ -5073,6 +5073,9 @@ nicht geübt.
 - Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
+
+---
+
 ## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
 
 Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
