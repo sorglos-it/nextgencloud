@@ -1099,7 +1099,7 @@ func TestCallResultAboveLimitClosesWithTooLarge(t *testing.T) {
 	w := newWorld(t)
 	// The one action this build carries out answers a number; a result that
 	// is too large has to be put there.
-	w.srv.acts[trustKey] = func(context.Context, access.Decision, []byte) (any, *wire.Close) {
+	w.srv.acts[trustKey] = func(context.Context, *trust.List, access.Decision, []byte) (any, *wire.Close) {
 		return strings.Repeat("x", wire.MaxCallResult), nil
 	}
 	ended := w.tunnel(t, func(a *apiSide) {
@@ -1120,7 +1120,7 @@ func TestCallResultAboveLimitClosesWithTooLarge(t *testing.T) {
 // names. Whoever tells them apart fails here.
 func TestAResultWithANullIsNamedTooLargeAsWell(t *testing.T) {
 	w := newWorld(t)
-	w.srv.acts[trustKey] = func(context.Context, access.Decision, []byte) (any, *wire.Close) {
+	w.srv.acts[trustKey] = func(context.Context, *trust.List, access.Decision, []byte) (any, *wire.Close) {
 		// A typed nil is a null, and no result of this contract holds one.
 		return (*core.TrustResult)(nil), nil
 	}
@@ -1159,8 +1159,10 @@ func TestAServerWiredWrongRefusesEveryChannel(t *testing.T) {
 }
 
 // stageOpen is the OPEN of ngc.store/controller/stage: a core action of this
-// controller that the API opens without a user and that this build does not
-// carry out.
+// controller that the API opens without a user. It carries NO params, so it
+// serves the case below - a server built without an updater, which does not
+// carry the action out. A server that HAS one does (update.go), and the OPEN
+// for that one carries the params (stageOpenWithParams).
 func stageOpen(t testing.TB) []byte {
 	t.Helper()
 	inner := mustJSON(t, wire.Open{App: core.AppStore, Service: core.ServiceController, Action: core.ActStage,
