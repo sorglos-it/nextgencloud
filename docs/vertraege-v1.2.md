@@ -4959,3 +4959,53 @@ Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweim
 Anlage sagt einmal.
 
 Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
+
+## Punkt 75: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
+
+Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
+hintereinander:
+
+```
+WARN  tunnel failed err="link: the API broke the contract of the tunnel"
+WARN  Die Verbindung einer App wurde abgebrochen. app=org.sorglos.terminal code=E_PROTOCOL
+      grund="Der Dienst der App endete mit einem Fehler."
+INFO  tunnel up                                            (eine Sekunde später)
+```
+
+Gearbeitet wurde in diesem Moment an einer **Einrichtung** — und abgebrochen wurde
+`org.sorglos.terminal`, also eine **andere, bereits laufende** App. Die Oberfläche sagte dazu
+„Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen." Im Protokoll der API
+steht dazu nichts.
+
+**Das ist von der Ursache des Abbruchs unabhängig, und darum steht es als eigener Punkt.** Ob
+der Tunnel wegen der API-Fassung brach (dazu unten), wegen Last oder aus einem dritten Grund:
+dass die Arbeit an App A eine laufende App B aus der Leitung wirft, ist für sich ein Fehler. Wer
+im Terminal gerade etwas tippte, hat seine Sitzung verloren, weil jemand anders eine App
+einrichtete. Die Trennung, die ein Container leistet, endet offenbar am gemeinsamen Tunnel.
+
+**Was die Fassung damit zu tun hat — gemessen und abgewogen getrennt:**
+
+- **Gemessen:** vor dem Tausch (API bis 12:20) scheiterte das Aktivieren mit `E_PROTOCOL`; nach
+  dem Tausch auf 0.2.2 ist eine Einrichtung auf derselben Maschine `svc-1` **durchgelaufen**
+  (12:25:37 bis 12:28:04, `ngc_app` mit `active 1`, Behälter läuft). In den Protokollen aller
+  fünf NGC-Maschinen gibt es in diesen Stunden **genau einen** Treffer auf `E_PROTOCOL`, und das
+  ist der um 12:14:38. Nach 12:21 keinen.
+- **Abgewogen, nicht bewiesen:** dass die API-Fassung die Ursache war. Sie ist die einfachere
+  Erklärung, weil sie genau zwischen den beiden Versuchen gewechselt hat. Dagegen steht, dass
+  zur selben Zeit eine andere Sitzung Last auf `svc-1` und `svc-2` fuhr — dann wäre es
+  **Punkt 70** unter anderem Namen (ein Paket über eine Fenstergröße kommt unter Last nicht
+  durch, `E_PROTOCOL` statt `ok`). Ob um 12:14 schon Last lief, ist nicht gemessen.
+- **Was den Beweis brächte:** eine Einrichtung gegen 0.2.2 unter **angesagter** Last. Das ist ein
+  eigener Auftrag und nicht Teil dieser Messreihe.
+
+**Zu entscheiden ist zweierlei, und beides ist keine Messung:**
+
+1. Ob ein Fehler auf dem Tunnel überhaupt eine fremde App treffen darf — und wenn nicht, wo die
+   Trennung hingehört.
+2. Ob die Oberfläche beim Abbruch sagen muss, **welche** App es getroffen hat. „Das hat der
+   Rechner nicht angenommen" stand bei der Einrichtung; dass daneben eine Terminal-Sitzung
+   starb, hat niemand erfahren.
+
+Der Abbruch selbst ist von der Koordinationssitzung gemessen worden; die Zeile im Protokoll von
+`svc-1`, die fehlende Wiederholung nach 12:21 und die durchgelaufene Einrichtung um 12:25 sind
+hier nachgemessen. Herkunft: `docs/uhr-in-den-laden.md`, Abschnitt 12.

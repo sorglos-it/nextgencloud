@@ -26,6 +26,13 @@ Sitzung.
 Die letzte Zeile ist **nicht** ein Rest, den man noch schnell abarbeitet: sie
 ist gesperrt, und der Riegel ist in Abschnitt 9 gemessen.
 
+> **Nachtrag vom selben Tag, etwa 12:30 (Uhr der Anlage): die Uhr ist
+> eingerichtet und sie antwortet mit einer Uhrzeit.** Das ist nach dieser
+> Tabelle passiert und steht in **Abschnitt 12 bis 14**. Die Tabelle oben
+> bleibt stehen, wie sie gemessen wurde — und eine Zeile fehlt dort immer
+> noch: **wer** eingerichtet hat, ist nicht gemessen. Solange das offen ist,
+> steht hier **nicht**, dass „der Weg geht".
+
 ---
 
 ## 1. Die Sicherung — wohin der alte Katalog gelegt ist
@@ -333,3 +340,121 @@ Speicher auf der gewählten Maschine, und beide Ströme der Aktion `zeit`.
   Bildschirm gesehen.
 - **Die Lücke M1 bleibt offen.** Sie schließt, wenn Schritt 6 eine Uhrzeit
   zeigt — nicht vorher.
+
+Was von diesem Abschnitt eine halbe Stunde später nicht mehr stimmte, steht in
+Abschnitt 12. Er bleibt stehen, damit man sieht, was wann gewusst war.
+
+---
+
+## 12. Nachtrag: die Uhr ist eingerichtet — und sie antwortet
+
+Zwischen der Messung oben und dieser hier ist die Uhr auf der Anlage
+eingerichtet worden. Gemessen, nicht erzählt:
+
+```
+ngc_app:  org.sorglos.uhr  1.0.0  store global  node svc-1  active 1  grants (leer)
+svc-1:    ngc-uhr-ad8c00e2 | localhost/ngc/uhr:1.0.0 | Up
+```
+
+Der Ablauf aus dem Protokoll von `svc-1`:
+
+```
+12:20/12:21  api-1 getauscht -> 0.2.2   (nicht von dieser Sitzung)
+12:25:37     useradd ngc-uhr-ad8c00e2
+12:25:44     Aktion zeit   -> 510 Byte auf stderr
+12:25:59     Aktion zeit   -> 510 Byte auf stderr
+12:26:00     Aktion zeit   -> 510 Byte auf stderr
+12:28:03     container died   (Behälter 3800792d…)
+12:28:04     cleanup, remove, image pull, create, init, start  (Behälter 741d600b…)
+```
+
+Die Uhr liegt auf **svc-1**, also auf der anderen Maschine als das Terminal
+(`svc-2`). Damit liegen zum ersten Mal zwei Apps auf zwei Maschinen. `grants`
+ist leer — die Uhr fordert keine Rechte, und sie hat auch keine bekommen.
+
+**Was nicht gemessen ist und was deshalb hier nicht steht:** wer diese
+Einrichtung ausgelöst hat. Eine Einrichtung ist eine Aufgabe mit vollen
+Rechten und soll ohne einen Menschen nicht gehen (Abschnitt 9). Ob Thomas sie
+ausgelöst hat oder eine andere Sitzung, klärt die Koordinationssitzung. **Bis
+das geklärt ist, ist dies kein Beleg, dass der Weg geht** — es ist ein Beleg,
+dass er gegangen worden ist.
+
+## 13. Beide Ströme der Aktion `zeit` — gemessen, getrennt
+
+Ein einzelner Aufruf im eigenen Behälter der Uhr auf `svc-1`, die beiden
+Ströme getrennt aufgefangen (`podman exec … /usr/lib/ngc/ngc-uhr` mit
+`NGC_ACTION=zeit`):
+
+```
+Rückgabewert: 0
+
+STDOUT  (21 Byte):  2026-10-24T12:31:52Z
+STDERR  (33 Byte):  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**Beide Ströme kommen an, und zwar jeder dort, wo er hingehört.** Auf stdout
+steht eine echte Uhrzeit — das ist die Zeile, die das Fenster zeigt. Auf
+stderr steht die Meldung, die nur das Protokoll des Controllers je sieht. Das
+ist genau die Messung, für die diese App gebaut wurde, und beim Terminal war
+sie einmal schiefgegangen.
+
+**Die App tut also, was sie soll.** Was damit **nicht** gemessen ist: dass das
+Fenster die Zeile auch anzeigt. Zwischen stdout des Dienstes und dem Text im
+Fenster liegen der Controller, der Tunnel, die API und die Schale. Dafür muss
+ein Mensch einmal hinsehen.
+
+## 14. Die 510 Byte — ein Befund, der sich nicht mehr aufklären lässt
+
+Dreimal hat die Aktion `zeit` **genau 510 Byte** auf stderr geschrieben. Das
+passt zu **keiner** Meldung, die der Dienst überhaupt schreiben kann. Die
+Längen sind nachgerechnet, nicht geschätzt:
+
+| was der Dienst schreiben kann | Byte |
+|---|---|
+| Erfolgsmeldung `ngc-uhr 1.0.0 beantwortet "zeit"` | **33** |
+| Hilfe (`usage`) | 61 |
+| `NGC_ACTION ist leer …` | 86 |
+| **beobachtet** | **510** |
+
+Und im heutigen Behälter sind es gemessen **33 Byte**, nicht 510.
+
+Der Unterschied: die 510 Byte kamen aus Behälter `3800792d…`, der um 12:28:03
+**gestorben** und um 12:28:04 entfernt und neu gebaut wurde. Er existiert
+nicht mehr:
+
+```
+podman ps -a  ->  741d600b37b5 | ngc-uhr-ad8c00e2 | Up   (nur dieser eine)
+```
+
+**Damit ist der Inhalt dieser 510 Byte endgültig verloren**, und das ist der
+eigentliche Befund:
+
+- Der Controller schreibt ins Protokoll **nur die Anzahl** der Byte
+  („a service wrote to stderr … bytes=510"), nie den Text.
+- Den Text gibt es nur, wenn `serve.CallInput.LogStderr` an ist, und das ist
+  von Haus aus aus.
+- In `/etc/ngc/controller.json` gibt es **keinen Schalter** dafür. Die Schlüssel
+  dort sind `anchor`, `apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`,
+  `releaseKey`, `roles` — und sonst keiner.
+
+Der einzige Lauf, bei dem etwas schieflief, hat also eine Zahl hinterlassen und
+keinen Satz. Genau in dem Fall, für den ein Protokoll da ist, steht nichts
+drin.
+
+**Gemessen:** 510 Byte, dreimal, aus einem Behälter, der nicht mehr da ist;
+heute 33 Byte und eine Uhrzeit auf stdout; keine Möglichkeit, den Text
+nachzulesen.
+
+**Abgewogen, und ausdrücklich nicht gemessen:** dass die drei Läufe
+**fehlgeschlagen** sind. Dafür spricht, dass 510 zu keiner vorgesehenen
+Meldung passt und dass der Behälter zwei Minuten später starb. Dagegen
+spricht nichts Gemessenes — es ist nur nicht nachweisbar. Welcher Code 510
+Byte schreibt, ist offen; dass der Dienst es nicht kann, ist nachgerechnet.
+Ob die Laufzeit um ihn herum oder der Behälter sie geschrieben hat, ist nicht
+festzustellen, solange der Text nicht aufgehoben wird.
+
+**Die saubere Gegenprobe kostet einen Knopfdruck:** einmal „Noch einmal
+lesen" im Fenster der Uhr. Steht danach im Protokoll von `svc-1`
+`bytes=33`, dann war 510 eine Eigenheit des gestorbenen Behälters und ist
+erledigt. Steht dort wieder `bytes=510`, ist es ein laufender Fehler und
+wiegt schwerer als alles andere an dieser App.
