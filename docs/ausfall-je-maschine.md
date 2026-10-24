@@ -971,6 +971,18 @@ ist mit einem `start` rückgängig.
 
 ## Was offen bleibt
 
+**Der Ausfall von zwei Datenbankknoten gleichzeitig ist ungemessen.** Keine der
+beteiligten Sitzungen hat ihn gefahren, und aus zwei verschiedenen Gründen, die
+beide dastehen sollen. Bei mir ist es Methode: ich hatte die Erwartung dafür
+nicht aufgeschrieben, und ohne die fange ich nicht an. Bei der Release-Sitzung
+ist es der Auftrag — zwei von drei Knoten anzuhalten heißt, die Mehrheit der
+laufenden Anlage wegzunehmen und jedes Schreiben zu verweigern, und das ist
+Thomas' Entscheidung, nicht ihre. Die Erwartung dazu ist **ihre und unbelegt**:
+lesen geht noch, jedes Schreiben wird verweigert, und die Anlage sollte `503`
+mit `db-busy` liefern und nicht `500`. Nach den beiden gemessenen DB-Fällen ist
+das plausibel — aber plausibel ist nicht gemessen, und die Reihe oben lebt
+davon, dass der Unterschied benannt wird.
+
 **Eins, und es ist dasselbe in allen sechs Fällen: (c) Apps sehen, (d) eine App
 öffnen und (e) eine neue einrichten sind nicht gemessen.** Dafür braucht es eine
 Anmeldung, und in `ngc_user` steht genau ein Benutzer: `weiricth`, `admin`, kein
