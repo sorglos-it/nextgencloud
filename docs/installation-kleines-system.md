@@ -4,10 +4,24 @@ Ein Rechner. Alles drauf: API, Controller, Weboberfläche, SQLite.
 Für jemanden, der NGC noch nie gesehen hat.
 
 **Woher das hier kommt:** jeder Schritt steht in den Vertragspunkten 47, 51, 56, 57, 58, 59,
-61 oder im Code. Was dort nicht steht, steht unten unter „Nicht gemessen".
+61, 71 oder im Code. Was dort nicht steht, steht unten unter „Nicht gemessen".
 
 **Gemessen auf:** Debian 13 (trixie), Apache 2.4.69, PHP 8.4, podman 5.4.2, systemd läuft.
-Es war eine WSL2-Instanz, also ein echtes Debian-Userland (Punkt 56).
+Der erste Teil dieser Anleitung entstand auf einer WSL2-Instanz, also einem echten
+Debian-Userland (Punkt 56). Die Abschnitte, die seit dem 19.10.2026 dazugekommen sind, sind
+an der laufenden Anlage nachgesehen (Debian 13.7, `ngc-api`/`ngc-controller` **0.2.2**,
+Oberfläche **0.2.0**, Stand 24.10.2026).
+
+> **Was sich seit dem 19.10.2026 geändert hat, und warum diese Anleitung länger geworden ist.**
+> Zwischen dem 19. und 21.10.2026 ist der Weg vom Release bis zur laufenden App zum ersten Mal
+> von **einer** Person von Anfang bis Ende gegangen worden. Er ist **kein einziges Mal**
+> durchgelaufen — an sechs kleinen Stellen hintereinander nicht (Punkt 71, „Sechs Wände auf
+> einem Weg"). Die alte Fassung dieser Anleitung endete bei „der Tunnel steht". Hinter diesem
+> Punkt lagen aber noch **drei** Stationen, die hier gefehlt haben und ohne die niemand je eine
+> App zum Laufen bringt: der **Name**, unter dem die Anlage antwortet (Schritt 0), das
+> **Aufnehmen** des gekoppelten Controllers samt **Systemrechten** (Schritt 9) und das Recht
+> **„benutzen"** für eine eingerichtete App (Schritt 12).
+> Alle drei sind auf der echten Maschine passiert, keine war vorher aufgeschrieben.
 
 ---
 
@@ -31,11 +45,16 @@ Diese zwei Dinge sind **keine Programmierarbeit**. Ohne sie geht nichts.
 ### Der Store-Schlüssel
 
 - **Einen offiziellen NGC-Store gibt es nicht.** Der Platzhalter
-  `REPLACE-THIS-LINE-WITH-THE-NGC-STORE-KEY` ist noch drin (Punkt 57).
+  `NGC_STORE_KEY_DEFAULT=REPLACE-THIS-LINE-WITH-THE-NGC-STORE-KEY` steht am 24.10.2026
+  unverändert in `ngc-all.sh` (Zeile 177, Zweig `ngc-kette`).
 - **Also muss jede Installation ihren eigenen Store nennen**: `store_url` und `store_key`
   in `answer.yaml`, beide zusammen oder keins (`shared/ulh.md`).
 - Seit Punkt 57 bricht das Skript ab, wenn beide leer sind: „NGC has no official app store
   yet …", Ausstiegscode 1, **bevor** etwas geschrieben wird.
+- **Das ist nicht kosmetisch, das ist eine Sperre.** Eine Installation aus einem
+  veröffentlichten Release ist heute **nur** möglich, wenn du dir einen Store ausdenkst. Der
+  Prüflauf `tools/erstlauf.sh` nennt dafür `https://store.erstlauf.invalid` und sagt es laut;
+  dort antwortet dann nichts, und damit bleibt der Katalog leer (Schritt 11).
 
 ---
 
@@ -43,9 +62,21 @@ Diese zwei Dinge sind **keine Programmierarbeit**. Ohne sie geht nichts.
 
 - Debian 13, systemd läuft, root.
 - [ulh](https://github.com/sorglos-it/ulh) — die Skripte liegen dort unter
-  `apps/cli/assets/scripts/`.
+  `apps/cli/assets/scripts/`. **Auf `main` liegen sie nicht:** am 24.10.2026 hat
+  `origin/main` **null** `ngc-*`-Skripte, alle fünf liegen auf dem Zweig `ngc-kette`
+  (`ngc-all.sh`, `ngc-api.sh`, `ngc-controller.sh`, `ngc-db.sh`, `ngc-web.sh`).
 - **Ein unterschriebenes Release.** Ohne Release geht nichts (siehe Stolperstein 4).
-- Eine `answer.yaml` für `ngc-all` und `ngc-web`. Welche Schlüssel: `shared/ulh.md`.
+- Eine `answer.yaml` für `ngc-all` und `ngc-web`. `ngc-all` fragt fünf Dinge, in dieser
+  Reihenfolge (`ngc-all.sh`, Zeilen 17–21):
+
+  | # | Schlüssel | Was |
+  |---|---|---|
+  | 1 | `name` | Name dieser Maschine und ihrer API (`wire.ValidName`) |
+  | 2 | `hostname` | Name oder IPv4-Adresse, unter der der Browser sie erreicht |
+  | 3 | `store_url` | der App-Store — **nicht leer lassen**, siehe Abschnitt 1 |
+  | 4 | `store_key` | sein öffentlicher Schlüssel |
+  | 5 | `pair_code` | nur bei `configure`: der Kopplungscode aus dem Browser (Schritt 8) |
+
 - Einen Hostnamen. DNS-Name in Kleinbuchstaben oder IPv4 — **kein IPv6**
   (`shared/ulh.md`, Regel „Hosts und Adressen").
 
@@ -55,6 +86,48 @@ Diese zwei Dinge sind **keine Programmierarbeit**. Ohne sie geht nichts.
 
 Jeder Schritt: **was du tust → was du siehst, wenn es geht → was du siehst, wenn es nicht geht.**
 
+### Schritt 0 — Den Namen auf **deinem eigenen** Rechner eintragen
+
+**Das ist der Schritt, der in dieser Anleitung gefehlt hat, und er kommt vor allen anderen.**
+
+Die Anlage antwortet unter **ihrem Namen**, nicht unter ihrer IP-Adresse. Was du in Schritt 2
+als `hostname` angibst, steht danach überall: in `/etc/ngc/web.json` als `apis[].url` und als
+`rp.id`, in `/etc/ngc/apache-apis.conf` am `BalancerMember`, im TLS-Zertifikat als `CN` und
+`subjectAltName`. Auf der laufenden Anlage heißt der Name `ngc.test`, und `/config.json` gibt
+ihn genau so an den Browser weiter:
+
+```
+{"version":"0.2.0","anchor":{…},"rp":{"id":"ngc.test","origins":["https://ngc.test"]},
+ "apis":["https://ngc.test:7443"]}
+```
+
+**Was du auf deinem Rechner einträgst** — in der Datei `hosts`, eine Zeile, IP-Adresse der
+Anlage und der Name aus Schritt 2:
+
+```
+10.2.3.208   ngc.test
+```
+
+- Windows: `C:\Windows\System32\drivers\etc\hosts`, Editor als Administrator.
+- Linux/macOS: `/etc/hosts`, als root.
+- Hast du einen echten DNS-Server, gehört der Name dorthin; dann entfällt dieser Schritt.
+
+**Warum es ohne nicht geht, und zwar an zwei verschiedenen Stellen:**
+
+1. **Der Browser warnt.** Das Zertifikat lautet auf den Namen. Rufst du `https://10.2.3.208/`
+   auf, passt der Name im Zertifikat nicht zur Adresse in der Leiste, und der Browser zeigt
+   seine Warnseite. Gemessen wurde mit einem **selbst unterschriebenen** Zertifikat und einem
+   Browser, der es für den Lauf annimmt (`ignoreHTTPSErrors`); ein echter Browser nimmt es
+   nicht ohne Weiteres an (Punkt 59).
+2. **Passschlüssel gehen über eine IP-Adresse gar nicht.** Ein Passschlüssel hängt an der
+   `rp.id`, und das ist hier `ngc.test` — ein **Name**. Eine IP-Adresse kann keine `rp.id`
+   sein. Über `https://10.2.3.208/` lässt sich also kein Passschlüssel anlegen und keiner
+   benutzen, egal wie man die Zertifikatswarnung wegklickt. Die Oberfläche empfiehlt Passkeys
+   selbst (Schritt 6) — über die IP ist diese Empfehlung nicht befolgbar.
+
+**Gegenprobe, bevor du weitergehst:** `ping ngc.test` von deinem Rechner muss die Adresse der
+Anlage nennen. Erst danach lohnt Schritt 5.
+
 ### Schritt 1 — Release bauen und unterschreiben
 
 `ngc-store release` über drei Teile, jeden mit `ngc-store check` prüfen.
@@ -63,6 +136,25 @@ Jeder Schritt: **was du tust → was du siehst, wenn es geht → was du siehst, 
   `ngc-controller amd64` (Punkte 56, 57).
 - **Geht nicht:** `release wrong: <Grund>`, Ausstiegscode 1. Bei falschem Aufruf Code 2
   (`shared/ulh.md`).
+
+**Die Programme müssen mit der Versionsnummer im Bauch gebaut sein.** Das ist Wand 2 von
+sechs: im Oktober wurde ohne `-ldflags "-X main.Version=…"` gebaut, jedes Programm meldete den
+Rückfallwert `0.0.0-dev` aus `apps/server-api/main.go:43` — und die Oberfläche hält jede
+Rechnerzeile gegen `validVersion` (`contracts/text.js:84`, genau MAJOR.MINOR.PATCH) und
+verwarf deshalb die **ganze** Antwort. Auf dem Schirm stand „Die Rechner konnten nicht geladen
+werden. Bitte das Fenster neu öffnen." — und das Fenster neu öffnen half nicht, weil die
+Version dieselbe blieb.
+
+Dafür gibt es seit dem 23.10.2026 ein Skript, und du nimmst es, statt den Befehl abzutippen:
+
+```bash
+bash tools/build-servers.sh <ausgabeverzeichnis> amd64
+```
+
+Es stempelt die Nummer aus den `VERSION`-Dateien ein. **Jedes Programm trägt seine eigene
+Nummer**, und das ist kein Fehler: `apps/server-api/VERSION` ist `0.2.0`,
+`apps/server-controller/VERSION` ist `1.0.0`, `apps/web/VERSION` ist `0.2.1` (24.10.2026).
+Welche davon die Nummer **des Release** ist, steht nirgends — siehe „Nicht gemessen".
 
 Die Form der Archive ist festgelegt und wird geprüft (Punkt 56):
 
@@ -87,9 +179,70 @@ Richtet API, Schlüssel, Zertifikat und Dienst ein und startet die API.
 
 **Den Einmal-Code aufschreiben.** Er liest nur root, er kommt in kein Log, und er ist
 einmal brauchbar (`shared/ulh.md`). Auch die Kennung und den Fingerabdruck: die vergleichst
-du in Schritt 5.
+du in Schritt 6.
 
-### Schritt 3 — `ngc-web install`
+**Was die Versionsnummer angeht, fragst du die installierten Programme selbst:**
+
+```bash
+/usr/lib/ngc/ngc-api -version
+/usr/lib/ngc/ngc-controller -version
+```
+
+Auf der laufenden Anlage antworten sie `ngc-api 0.2.2 (contract 1)` und
+`ngc-controller 0.2.2 (contract 1)`. Steht dort `0.0.0-dev`, ist Schritt 1 ohne das Flag
+gelaufen — dann **jetzt** zurück und neu bauen, nicht erst in Schritt 10, wo es als „Die
+Rechner konnten nicht geladen werden" wieder auftaucht.
+
+### Schritt 3 — Dem Dienst `/etc/ngc` zum Schreiben erlauben
+
+**Das ist Wand 1 von sechs, und sie steht noch** (nachgesehen am 24.10.2026).
+
+`ngc-api.service` wird mit `ProtectSystem=strict` geschrieben, und die schreibbaren Pfade sind
+`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`
+(`ngc-all.sh:1322`, dieselbe Zeile in `ngc-api.sh:1065`, Zweig `ngc-kette`). **`/etc/ngc`
+selbst steht nicht dabei.** Der Vertrauensanker liegt aber dort, und er wird **atomar**
+geschrieben: `config.SaveAnchor` (`shared/config/config.go:451`) legt erst eine Datei
+`.trust-anchor.json.tmp-*` **im selben Ordner** an. Ein Ordner, in dem keine Datei entstehen
+darf, lässt kein atomares Ersetzen zu — auch dann nicht, wenn die Zieldatei selbst `0644`
+trägt.
+
+Das ist die einzige der sechs Wände, die den Grund **selbst nennt** (`state/trust.go:249`):
+
+> the trust anchor outside the database could not be moved up; this API still pins the older
+> version — `pinned=1 stored=2`
+
+Die Folge steht in derselben Zeile: **die Anlage bleibt auf der alten Vertrauensliste
+festgenagelt.** Das merkst du nicht in Schritt 2 — dort läuft alles mit Code 0 durch, die API
+läuft, der Einmal-Code steht auf dem Schirm. Du merkst es erst, wenn später nichts mehr
+nachkommt.
+
+**Was du tust** — einen Drop-in anlegen, statt die Unit zu ändern (die Unit schreibt das
+Skript bei jedem `configure` neu, ein Drop-in bleibt):
+
+```bash
+mkdir -p /etc/systemd/system/ngc-api.service.d
+printf '[Service]\nReadWritePaths=/var/lib/ngc /etc/ngc\n' \
+  > /etc/systemd/system/ngc-api.service.d/anker.conf
+systemctl daemon-reload
+systemctl restart ngc-api
+```
+
+- **Geht:** `systemctl show ngc-api.service -p ReadWritePaths` nennt `/etc/ngc`.
+  Auf der laufenden Anlage steht dort `/var/lib/ngc /etc/ngc /etc/ngc/tls`.
+- **Gegenprobe, die nicht lügt** — in der **echten** Sandbox der Unit schreiben, nicht in der
+  Datei nachlesen:
+
+  ```bash
+  systemd-run --pipe -p ProtectSystem=strict \
+    -p 'ReadWritePaths=/var/lib/ngc /etc/ngc' \
+    touch /etc/ngc/.probe && rm -f /etc/ngc/.probe
+  ```
+
+  Ohne den Drop-in antwortet dasselbe mit
+  `touch: cannot touch '…': Read-only file system`. Diese zwei Läufe gegeneinander sind der
+  Beweis; `systemctl show` allein rechnet Drop-ins ein, die niemand angesehen hat.
+
+### Schritt 4 — `ngc-web install`
 
 Apache, PHP, Oberfläche nach `/var/www/ngc/`, Zertifikat, `web.json`, Lastverteilung.
 
@@ -102,9 +255,9 @@ Apache, PHP, Oberfläche nach `/var/www/ngc/`, Zertifikat, `web.json`, Lastverte
   interface, and this version of ngc-web knows 4 of them.` Das Skript macht weiter. Welche
   die fünfte ist, ist **nicht gemessen** (Punkt 56, Befund 3).
 
-### Schritt 4 — Die Einrichtungsseite im Browser
+### Schritt 5 — Die Einrichtungsseite im Browser
 
-`https://<host>/` aufrufen.
+`https://<host>/` aufrufen — mit dem **Namen**, nicht der IP (Schritt 0).
 
 - **Geht:** „**NGC einrichten** — Diese Anlage ist neu. Auf dem Bildschirm des Servers steht
   ein Einmal-Code. Bitte tippen Sie ihn hier ein." Dazu ein Feld und `Weiter` (Punkt 58).
@@ -115,9 +268,10 @@ Apache, PHP, Oberfläche nach `/var/www/ngc/`, Zertifikat, `web.json`, Lastverte
   (Punkt 58).
   **Achtung:** diesen Satz gibt es auch, wenn der Dienst weg ist **oder** die Datenbank
   gerade besetzt ist. Der Benutzer kann die drei nicht unterscheiden (Punkt 58, P9).
-  Also erst `curl` von der Maschine aus probieren, bevor du NGC verdächtigst.
+  Also erst `curl` von der Maschine aus probieren, bevor du NGC verdächtigst — und auf
+  **deinem** Rechner den Eintrag aus Schritt 0 prüfen.
 
-### Schritt 5 — Ersten Verwalter anlegen
+### Schritt 6 — Ersten Verwalter anlegen
 
 Einmal-Code eintippen, `Weiter`.
 
@@ -135,26 +289,30 @@ Einmal-Code eintippen, `Weiter`.
 
 **Ein Passschlüssel ist nicht nötig.** Der erste Verwalter arbeitet mit **Passwort**
 (`proveWithPassword`, `KIND_PASSWORD`, `ALG_EDDSA`, frischer Salt — Punkt 58). Passkeys sind
-die Kür.
+die Kür — und sie brauchen den Namen aus Schritt 0.
 
-### Schritt 6 — Kopplungscode holen (nur hier, nirgends sonst)
+### Schritt 7 — Kopplungscode holen (nur hier, nirgends sonst)
 
 **Jetzt nicht den Browser schließen und nicht neu laden.** Bis der Controller gekoppelt ist,
 kommt nur dieser eine Browser hinein (`shared/ulh.md`, „Reihenfolge nach der
 Ersteinrichtung"; Punkt 60).
 
-- In der angemeldeten Oberfläche: **Benutzer & Rechte** → Reiter **Server** → Knopf
-  **„Kopplungscode zeigen"**.
-  Belegt im Code: `apps/web/public/assets/js/apps/users.js:600` (`fillPairCode`),
-  `showPairCode` ab 613, Reiter `["servers", "Server"]` in Zeile 105 — auf dem Zweig `web`
-  (Punkt 61).
-- **Geht:** der Code steht auf dem Schirm. Er fängt mit `ngc-pair:` an.
-- **Geht nicht:** kein Code. Die Oberfläche zeigt ihn **nur**, wenn er zu ihrer neuesten
-  geprüften Fassung der Vertrauensliste passt (`tunnel.checkCode`). Passt er nicht, kommt er
-  gar nicht auf den Schirm — „ein Code auf dem Schirm ist ein Code, den jemand einfügt"
-  (Kommentar in `users.js`).
+- In der angemeldeten Oberfläche: **Benutzer & Rechte** → Reiter **Server** → Abschnitt
+  **Kopplungscode** → Knopf **„Kopplungscode zeigen"**.
+  Belegt im Code: `apps/web/public/assets/js/apps/users.js:1140` (`fillPairCode`), Reiter
+  `["servers", "Server"]` in Zeile 107. Die vier Reiter heißen **Benutzer**,
+  **Rollen und Rechte**, **Server**, **Protokoll** (Zeilen 104–109).
+- Der Reiter **Server** hat sechs Abschnitte, in dieser Reihenfolge: **Wartende Server**,
+  **Wartende API-Server**, **Server dieser Anlage**, **Eingetragene Server**,
+  **Kopplungscode**, **Beitrittscode** (`users.js:734–744`). Du brauchst in Schritt 7 den
+  fünften und in Schritt 9 den ersten.
+- **Geht:** der Code steht auf dem Schirm, dazu „Gültig bis …". Er fängt mit `ngc-pair:` an.
+- **Geht nicht:** kein Code, sondern „Dieser Code passt nicht zu dieser Anlage." Die
+  Oberfläche zeigt ihn **nur**, wenn er zu ihrer neuesten geprüften Fassung der
+  Vertrauensliste passt (`tunnel.checkCode`) — „ein Code auf dem Schirm ist ein Code, den
+  jemand einfügt" (Kommentar in `users.js`).
 
-### Schritt 7 — `ngc-all configure` mit dem Kopplungscode
+### Schritt 8 — `ngc-all configure` mit dem Kopplungscode
 
 Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
 
@@ -162,7 +320,8 @@ Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
   `printf '%s\n' "$pair_code" | ngc-controller pair` durch, damit er nicht in
   `/proc/<pid>/cmdline` landet (`shared/ulh.md`).
 - **Geht:** Kopplung `RC=0`, `/etc/ngc/trust-anchor.json` **entsteht**,
-  `ngc-controller.service` läuft, und der Tunnel steht (Punkt 61).
+  `/etc/ngc/controller.json` entsteht, `ngc-controller.service` läuft, und der Tunnel steht
+  (Punkt 61).
 - **Geht:** `ngc-controller` druckt seinen **Fingerabdruck** und den **Anker aus dem
   Kopplungscode** (Nummer und Fingerabdruck des Hashes). **Beides mit der Anzeige der
   Oberfläche vergleichen** (`shared/ulh.md`).
@@ -172,7 +331,59 @@ Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
 - **Geht nicht, nach gelungener Kopplung antwortet die Oberfläche 500:** siehe
   Stolperstein 2.
 
-### Schritt 8 — Gegenprobe
+**Auf einer Maschine bekommt der Controller alle vier Rollen** — `ROLES=(web api db services)`
+(`ngc-all.sh:150`). Die Rolle `services` ist die, die später Apps ausführt; ohne sie bietet der
+Store den Rechner nicht an (Schritt 10). Du musst dafür nichts tun: `controller.json` der
+laufenden Anlage trägt `"roles": ["web","api","db","services"]`.
+
+### Schritt 9 — Den Controller **aufnehmen** und dabei die **Systemrechte** setzen
+
+**Hier endete die alte Fassung dieser Anleitung, und hier strandet jeder, der sie befolgt.**
+Gekoppelt ist nicht aufgenommen. Der Tunnel steht, der Controller meldet sich — aber er steht
+noch **nicht in der Vertrauensliste**, und solange er dort nicht steht, darf er nichts.
+
+- In der angemeldeten Oberfläche: **Benutzer & Rechte** → Reiter **Server** → Abschnitt
+  **Wartende Server**. Dort steht er mit seinem **Fingerabdruck**, darüber der Satz
+  „Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt."
+- **Den Fingerabdruck aus Schritt 8 vergleichen.** Erst dann aufnehmen.
+- Es öffnet sich **„Server »…« aufnehmen"**. Darin steht, unter welchem Namen er in der Liste
+  heißt, der Fingerabdruck, und — das ist der Teil, der gefehlt hat — ein Kasten
+  **„Aufgaben mit Systemrechten"** mit dem Hinweis:
+
+  > Wer hier einen Haken hat, darf auf diesem Server Apps einrichten, entfernen, Daten
+  > löschen und das Terminal öffnen.
+
+  Darunter **„Einzelne Personen"** und darunter die Rollen.
+- **Dein eigener Haken ist schon gesetzt.** Darunter steht: „Ihr Haken ist gesetzt. Nehmen Sie
+  ihn weg, wenn Sie auf diesem Server selbst nichts einrichten sollen — dann kann es dort
+  zunächst niemand. Das lässt sich später unter »Eingetragene Server« ändern."
+- `Server aufnehmen`.
+- **Geht:** „Der Server »…« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: …" mit
+  den Namen, die du angekreuzt hast.
+- **Geht auch, und das ist die Sackgasse:** nimmst du **alle** Haken weg, steht dort „Auf
+  diesem Server darf noch niemand Apps einrichten." Das ist kein Fehler, das ist die Wahrheit
+  — und der Weg heraus führt über **Eingetragene Server**, wo sich beide Listen jederzeit
+  ändern lassen.
+
+**Warum das eine eigene Station ist, und warum sie so neu ist.** Bis zum 23.10.2026 trug die
+Oberfläche einen frisch aufgenommenen Controller mit `rootUsers: []` und `rootRoles: []` ein,
+und **keine Seite konnte diese beiden Listen danach ändern**. `trust.MayRoot`
+(`shared/trust/trust.go:419`) fragt genau sie: der Benutzer steht in `RootUsers`, oder eine
+seiner Rollen in `RootRoles` — sonst `false`. Geprüft wird das an **jeder** Root-Aufgabe
+(`shared/task/task.go:199`, `shared/core/uiproof.go:132`), und „App einrichten" ist eine.
+Zwei leere Listen, die niemand füllen kann, hießen: **auf diesem Controller kann nie eine App
+eingerichtet werden.** Das ist Wand 4 von sechs.
+
+Gebaut ist die fehlende Oberfläche in PR #87 (`rootPicker`, `users.js:310`), und PR #105 hat
+entschieden, dass der Haken **der unterschreibenden Person vorgekreuzt** ist — abwählbar, nur
+`rootUsers`, nur dieser Controller. **Nicht** über eine Rolle: eine Rolle gibt das Recht an
+alle weiter, die sie heute oder morgen tragen, und das ist eine andere Entscheidung als „ich
+für diesen Rechner" (`users.js:290–309` trägt die Begründung).
+
+**Für einen API-Server gibt es diesen Kasten nicht**, und das ist richtig: `MayRoot` gibt für
+alles, was kein Controller ist, ohnehin `false` (`askJoinAPI`, `users.js:1285`).
+
+### Schritt 10 — Gegenprobe
 
 - Ein **zweiter** Browser muss jetzt **„Bei NGC anmelden"** zeigen, nicht mehr die
   Einrichtungsseite (Punkt 61).
@@ -181,6 +392,107 @@ Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
   (`index.php:27`, `$anchorFile = '/etc/ngc/trust-anchor.json'`; `shared/config/config.go:32`,
   `AnchorFile`). Ohne Anker hält die Oberfläche **jede** Anlage für neu — und auch eine
   gültige, gespeicherte Sitzung hilft dann nicht (Punkt 60).
+- **Beide Seiten messen, nicht eine.** API und Oberfläche können verschiedener Meinung sein:
+  `curl -sk -o /dev/null -w '%{http_code}\n' https://<host>/api/v1/setup` muss nach der
+  Einrichtung **404** sagen, und die Seite im Browser muss **die Anmeldung** zeigen. Auf der
+  laufenden Anlage: Seite `200`, `setup` `404`. Sagt die API 404 und der Browser zeigt die
+  Einrichtung, fehlt der Anker; zeigt der Browser die Anmeldung und die API sagt 200, ist die
+  Kette unlesbar.
+- **Im Store muss der Rechner stehen:** App-Store → der Rechner aus Schritt 9 steht in der
+  Auswahl **Rechner**. Steht dort „Die Rechner konnten nicht geladen werden. Bitte das Fenster
+  neu öffnen.", ist es Wand 2 — zurück zu Schritt 1. Steht dort „Eine Angabe dieses Servers
+  ist unlesbar (`version`)." — dasselbe, nur sagt die Oberfläche seit PR #104 **welches Feld**.
+  Steht dort „Kein Rechner für Dienste da. Bitte zuerst einen Rechner hinzufügen.", fehlt die
+  Rolle `services` oder der Controller ist nicht online (`store.js:614`).
+
+### Schritt 11 — Auf den Katalog warten (bis zu eine Stunde)
+
+**Eine frische Anlage hat eine Stunde lang keinen Laden.** `server.go:386` legt einen
+**Stundenticker** an, `Server.hour` holt die Kataloge — und es gibt **keinen Abruf beim Start
+und keine Handauslösung**. Bis der erste Tick kommt, steht im Store:
+
+> Der Katalog dieses Stores ist nicht echt.
+
+**Das ist nicht wahr, und zwar nur in der Formulierung.** Gemeint ist „noch nicht geholt". Wer
+den Satz liest, sucht einen Schlüsselfehler, und das ist die falsche Stelle. Das ist Wand 3 von
+sechs (Punkte 65, 66; behoben in PR #86).
+
+- **Was du tust:** warten. Bis zu 60 Minuten.
+- **Hast du in Abschnitt 1 einen erfundenen Store eingetragen** (weil es keinen offiziellen
+  gibt), antwortet dort auch nach einer Stunde nichts. Dann führt der Weg über **Hochladen**:
+  App-Store → **Hochladen** („Ein Paket von der Festplatte einrichten", `store.js:503`).
+
+### Schritt 12 — App einrichten und das Recht **„benutzen"** vergeben
+
+**Eine eingerichtete App bleibt unsichtbar, solange niemand das Recht „benutzen" hat.** Das
+ist die dritte Station, die hier gefehlt hat.
+
+**Einrichten:** App-Store → die App → alle Rechte erlauben, die ihr Manifest verlangt → Auswahl
+**Rechner** → `Aktivieren`.
+
+- **Geht:** „Die App ist eingerichtet." Und sie steht **sofort** im Startmenü — ohne
+  Neuladen; die Oberfläche sagt sich das selbst (siehe Schritt 13).
+- **Geht nicht, es fehlen Haken:** „Bitte alle Rechte erlauben. Ohne sie kann die App nicht
+  arbeiten." Eine halb erlaubte App gibt es nicht (`store.js:630`).
+- **Geht nicht, du darfst dort nichts:** dann hat Schritt 9 keinen Haken für dich gesetzt.
+  Zurück zu **Eingetragene Server**.
+
+**Das Recht vergeben:** Benutzer & Rechte → Reiter **Rollen und Rechte**. Dort steht je Rolle
+ein Kasten, darüber „Ein Haken heißt: alle mit dieser Rolle dürfen das." Für jede App gibt es
+die Zeile `<Name der App> · benutzen` (`users.js:1592`) und dazu jede Aktion, die ihr
+Manifest nennt. Haken setzen, speichern.
+
+- **Die Rolle `admin` hat keine Haken, und das ist Absicht.** Dort steht: „Diese Rolle darf
+  jede eingerichtete App benutzen. Das ist fest und lässt sich nicht abwählen." Die Rechte
+  stehen benannt da, ohne Kasten und ohne Speicherknopf.
+- **Ist noch keine App da**, steht „Es ist noch keine App eingerichtet."
+
+**Warum es diese Station braucht, und warum sie fast nicht zu lösen war.** Der Schreibtisch
+zeigt eine App nur dem, der das Recht `<app>/use` hält: `apps()` überspringt jede Zeile ohne
+`rq.Rights[a.ID+"/"+core.RightUse]` (`apps/server-api/classes/coreapp/desktop.go:162`). Und die
+Seite „Rollen und Rechte" baut ihre Auswahl aus **genau dieser gefilterten Liste**
+(`users.js:621`, `this.appsNow()`). Eine neu eingerichtete App, die noch niemand benutzen
+darf, stand also in keinem Schreibtisch und damit in keiner Rechteliste: **der Haken, der sie
+sichtbar machen würde, war nur dort zu setzen, wo sie schon sichtbar ist.** Das ist Wand 6 von
+sechs.
+
+Behoben am 21.10.2026 mit `c0f0022`: `rights.Of` ruft für einen Admin `adminApps`
+(`apps/server-api/classes/rights/rights.go:56–83`), und das setzt `<app>/use` **und** jede
+Aktion jeder eingerichteten App — **ohne Zeile in der Datenbank**. Damit ist die Liste für
+einen Verwalter vollständig, die App steht im Menü und also auch in der Rechteliste.
+Dass das Recht in **keiner** Zeile liegt, ist dabei der Kern: ein Recht, das in einer Zeile
+läge, könnte man dem Verwalter wegnehmen, indem man die Seite ohne den Haken speichert.
+
+**Was davon bleibt, klein, aber echt:** `adminApps` und das Menü lassen eine
+**abgeschaltete** App beide aus (`!a.Active`). Die Rechte einer App lassen sich also nicht
+vorbereiten, solange sie aus ist. Das ist so gewollt und hier nur vermerkt.
+
+### Schritt 13 — Die Oberfläche zieht sich selbst nach
+
+**Du musst nicht mehr Strg+F5 drücken, und du sollst es auch nicht.** Am 21.10.2026 musste an
+jeder Station von Hand neu geladen werden, und mehrfach sah ein veralteter Schirm wie ein
+Fehlschlag aus. Das ist gebaut:
+
+- Wer in **diesem Fenster** etwas ändert, sagt es weiter: eine App einrichten, ein Recht
+  vergeben, einen Server aufnehmen. Die vier Zustände heißen `apps`, `rights`, `nodes`,
+  `users` (`shell/changed.js:31–34`); die Seiten hängen sich daran
+  (`users.js:486–490`, `store.js:149–150`) und bauen sich neu.
+- **Kein Zeitgeber, mit Absicht.** Eine Liste von Apps ändert sich Minuten bis Monate
+  auseinander; eine Frage je Sekunde wäre eine Frage je Sekunde für nichts, auf einem Tunnel,
+  der jede andere Sitzung mitträgt (`changed.js:24–26`).
+
+**Und was es ehrlich nicht kann:** eine Änderung, die **jemand anderes** gemacht hat. Ein
+zweiter Verwalter richtet eine App ein, während dein Fenster offen steht — davon sagt keine
+Nachricht der Sitzungsverbindung etwas. Die Verbindung trägt genau zwei Nachrichten von der
+API zur Oberfläche: `trust` („es gibt eine neuere Fassung der Vertrauensliste") und `notify`
+(ein Satz für den Menschen). Mehr gibt es nicht, und mehr zu erfinden wäre eine Änderung an
+`shared/wire` — und das ist eingefroren (`changed.js:1–26`).
+
+Deshalb sagt jede so gebaute Ansicht, **seit wann** sie steht, und bietet **einen Knopf**, der
+neu fragt; und sie fragt **von selbst** neu, wenn du das Fenster wieder ansiehst
+(`shell/stale.js`). Nicht nach einem Zeitgeber, sondern weil Zurückkommen genau der Moment ist,
+in dem ein Mensch erwartet, zu sehen, was jetzt da ist. Ein Schirm, der alt sein kann, darf
+nicht frisch aussehen.
 
 ---
 
@@ -212,7 +524,11 @@ Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
   Nummer und Hash jedem Browser in `config.json` mit — und Apache läuft als `www-data`.
 - **Gemessen:** `0600` → 500. **`0644` → 200** und die Seite (Punkt 61).
 - Was den Anker schützt, ist die **Unterschrift der Vertrauensliste**, nicht der Dateimodus.
-- **Behoben in beiden Skripten.** Siehst du trotzdem 500: Modus der Datei prüfen.
+- **Behoben in beiden Skripten** (ulh, `ngc-kette`, `223baac`). Auf der laufenden Anlage
+  trägt `/etc/ngc/trust-anchor.json` `-rw-r--r--`. Siehst du trotzdem 500: Modus der Datei
+  prüfen.
+- **Nicht verwechseln mit Wand 1** (Schritt 3): dort darf die Datei nicht **entstehen**, hier
+  darf sie nicht **gelesen** werden. Zwei verschiedene Fehler am selben Pfad.
 
 ### 3. Die Balancer-Zeile
 
@@ -229,8 +545,8 @@ Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
 - Die Planzeile daneben („`upgrade=websocket` braucht Apache 2.4.47; Debian 13 bringt es
   mit") ist **richtig in der Fassung und falsch im Ort**.
 - **Behoben** in `shared/ulh.md`, in `apps/server-controller/templates/apache-apis.conf.tmpl`
-  (die Vorlage trägt den Parameter heute in Zeile 14 am `BalancerMember`, Zeile 19 ist das
-  nackte `ProxyPass`) und in `ngc-web.sh`.
+  und in `ngc-web.sh`. Auf der laufenden Anlage steht `upgrade=websocket` am
+  `BalancerMember`, und `ProxyPass "/api/" "balancer://ngc-api/api/"` ist nackt.
 - **Was du prüfst:** `apachectl configtest` **vor** dem Neuladen. Das machen die Skripte
   auch — Apache wird erst nach `configtest` neu geladen (`shared/ulh.md`).
 
@@ -266,20 +582,19 @@ Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
   **Wer nach dem Einrichten den Browser schließt oder neu lädt, kommt nicht mehr hinein.**
   Die Installation aus Punkt 59 war danach nur über ein Zurücksetzen der Testdatenbank zu
   erreichen.
-- **Also:** Schritt 6 **im selben Seitenaufbau** wie Schritt 5. Code holen, dann koppeln,
-  dann darf der Browser zu.
-- **Punkt 60 sagt „der Knopf dafür gibt es nicht". Das ist falsch** (Berichtigung in
+- **Also:** Schritt 7 **im selben Seitenaufbau** wie Schritt 6. Code holen, dann koppeln,
+  dann aufnehmen, dann darf der Browser zu.
+- **Punkt 60 sagt „den Knopf dafür gibt es nicht". Das ist falsch** (Berichtigung in
   Punkt 61). Der Knopf heißt „Kopplungscode zeigen". Der Zähler „null Treffer in
-  `apps/web`" kam aus einem Arbeitsbaum auf `main`, wo `apps/web` nur zwei Dateien hat —
-  der Oberflächencode liegt auf dem Zweig `web`. In diesem Arbeitsbaum nachgezählt:
-  `apps/web/` hat `CLAUDE.md` und `VERSION`. **Ein Zähler über den falschen Baum ist kein
-  Befund.**
+  `apps/web`" kam aus einem Arbeitsbaum auf `main`, wo `apps/web` damals nur zwei Dateien
+  hatte. **Ein Zähler über den falschen Baum ist kein Befund.** Heute liegt der
+  Oberflächencode auf `main` (`apps/web/public/assets/js/`).
 
 ---
 
-## 5. Zwei Umgebungsfallen, die als Programmfehler aussahen
+## 5. Umgebungsfallen, die als Programmfehler aussahen
 
-Beide nur in WSL gemessen (Punkt 56).
+Die ersten drei nur in WSL gemessen (Punkt 56).
 
 - **`/tmp` war zu 100 % voll** (32-GB-tmpfs, zwei ulh-Prüfläufe mit 13 und 19 GB).
   apt zerlegt dort seine Signaturen und meldete dann
@@ -293,7 +608,13 @@ Beide nur in WSL gemessen (Punkt 56).
   Error** und `curl` kam auf `http=000`. Ursache: WSL hatte den Namen aus `/etc/hosts`
   entfernt, während Apache und `web.json` weiter darauf zeigten. Nach dem Wiedereintragen:
   Seite 200, `/api/v1/setup` 200, `NRestarts=0` (Punkt 59). Ein Proxy-Fehler der
-  Oberfläche, der wie ein Fehler von NGC aussieht.
+  Oberfläche, der wie ein Fehler von NGC aussieht. **Dasselbe gilt für Schritt 0 auf deinem
+  eigenen Rechner:** fehlt der Eintrag dort, sieht es aus wie ein Fehler der Anlage.
+- **In WSL lässt sich keine App einrichten.** Der Kern kann nicht verschlüsseln:
+  `# CONFIG_FS_ENCRYPTION is not set` auf `6.18.33.2-microsoft-standard-WSL2`, gemessen am
+  23.10.2026. `apps/server-controller/classes/serve/activate.go` sagt es an der Zeile selbst:
+  auf so einem Kern endet **jede** Aktivierung in `runtime.ErrNoFscrypt`. **Alle**
+  WSL-Instanzen teilen diesen Kern. Für Schritt 12 brauchst du eine echte Maschine.
 
 ---
 
@@ -301,13 +622,36 @@ Beide nur in WSL gemessen (Punkt 56).
 
 Das steht hier, damit niemand es für geprüft hält.
 
-- **Dass Apps laufen.** Ob mit gekoppeltem Controller wirklich Container und Terminal
-  starten, ist der nächste Messpunkt. Belegt ist bisher nur: der Tunnel steht (Punkt 61).
+- **Diese Anleitung selbst ist nicht in einem Zug nachgefahren.** Die Schritte 0 bis 10 sind
+  aus Messprotokollen und aus der laufenden Anlage zusammengestellt, die Schritte 11 bis 13
+  aus dem Code und aus Punkt 71. **Niemand ist sie an einer frischen Maschine von Schritt 0
+  bis Schritt 13 durchgegangen.** Genau das war die Ursache aller sechs Wände: jede
+  Teilstrecke war geprüft, die Lücken lagen zwischen zwei geprüften Teilstrecken.
+  `tools/erstlauf.sh` baut den Weg als Prüflauf nach — **lies, was er heute wirklich
+  meldet**, bevor du dich darauf verlässt: am 23.10.2026 Phase A allein **1 rot**
+  (Station 1, Wand 1) und **7 unmeasurable**, Ausstiegscode 1 (`docs/erstlauf.md`).
+- **Wand 1 ist nicht behoben, nur umgangen.** Schritt 3 legt einen Drop-in an. Die Zeile
+  `ReadWritePaths=${NGC_DATA} ${NGC_TLS}` steht am 24.10.2026 unverändert in `ngc-all.sh:1322`
+  und `ngc-api.sh:1065` auf dem ulh-Zweig `ngc-kette`. Wer ohne Schritt 3 installiert, steht
+  wieder vor der Wand vom Oktober.
+- **Welche Nummer die Nummer des Release ist.** Jedes Programm trägt seine eigene
+  (`0.2.0`, `1.0.0`, `0.2.1` in den `VERSION`-Dateien), ein Release hat **ein** Feld
+  `Version` in `store.Release`, und welche der drei das sein soll, steht nirgends. Auf der
+  laufenden Anlage melden beide Programme `0.2.2` und die Oberfläche `0.2.0` — sie sind also
+  auch in Betrieb verschieden.
 - **Ein echtes Zertifikat.** Gemessen wurde mit **selbst unterschriebenem** Zertifikat und
   einem Browser, der es für diesen Lauf annimmt (`ignoreHTTPSErrors`, `--host-resolver-rules`).
-  Was ein Nutzer mit `letsencrypt` erlebt, ist **nicht** gemessen (Punkt 59).
+  Was ein Nutzer mit `letsencrypt` erlebt, ist **nicht** gemessen (Punkt 59). Was ein
+  **echter** Browser mit dem selbst unterschriebenen Zertifikat macht, auch nicht.
 - **Passkeys.** Der erste Verwalter läuft mit Passwort, und das ist vertragsgemäß. Die
-  Oberfläche empfiehlt Passkeys selbst; der Weg dorthin ist nicht gemessen (Punkt 59).
+  Oberfläche empfiehlt Passkeys selbst; der Weg dorthin ist nicht gemessen (Punkt 59). Dass
+  sie über eine IP-Adresse **nicht** gehen, folgt aus `rp.id` — gemessen ist es nicht.
+- **Ein zweiter Benutzer.** Ein Benutzer entsteht nur als **neue Fassung der
+  Vertrauensliste**, und die wird **im Browser mit dem Schlüssel der Person unterschrieben**;
+  die API prüft eine Liste, die man ihr reicht, und stellt keine aus. Keine Phase des
+  Prüflaufs hält diesen Schlüssel, und darum ist Schritt 12 **nur mit dem ersten Verwalter**
+  gegangen: dass das Recht „benutzen" bei einem **zweiten** Menschen wirklich ankommt, ist in
+  keiner Phase gemessen (`docs/erstlauf.md`, Abschnitt 6).
 - **Die fünfte Schutzeinstellung** von `ngc-web`. Das Skript sagt laut, dass es nur vier von
   fünf kennt. Welche fehlt, ist nicht geklärt (Punkt 56, Befund 3).
 - **Dass podman die Härtungsschalter einhält.** Gemessen ist, dass sie **geschickt** werden —
@@ -318,29 +662,64 @@ Das steht hier, damit niemand es für geprüft hält.
   eine suid-Datei unter `/data` danach wirkungslos ist (Punkt 51).
 - **Die 23 podman-Fälle überspringen sich auf Windows laut.**
   `TestCreateBuildsTheArgumentList` muss auf Linux nachgemessen werden (Punkt 51).
+- **Dass eine eingerichtete App wirklich antwortet, auf einer Maschine.** Am 23.10.2026 ging
+  eine App auf und antwortete nicht: `ls` kam als **nichts** zurück, dasselbe `ls` im
+  Container lieferte eine Liste — die Ausgabe ging **auf dem Weg** verloren, und ein offenes
+  Fenster bewies gar nichts. Behoben mit dem Stand von `main` (PR 95/100), und die Trennung
+  der beiden Ströme ist in `serve.RunService` gemessen. Dass **podmans** eigene Engine sie
+  genauso übergibt (`runtime.Podman.Exec`), ist nirgends gemessen und braucht einen Container.
 - **Mehrere Maschinen.** Diese Anleitung ist der kleine Fall: **eine** Maschine, SQLite
   (`config.DriverSQLite`), eine Datei je Programm — `/var/lib/ngc/api/ngc.db` und
   `/var/lib/ngc/controller/state.db`. MariaDB mit Galera ist ein anderer Fall und steht hier
   nicht (Punkt 47).
-- **Ob die fünf Skripte auf ulh-`main` liegen.** Punkt 47 zählte: `origin/main` hat **null**
-  `ngc-*`-Skripte, sie liegen auf eigenen Zweigen. Ob das heute noch so ist, habe ich in
-  dieser Sitzung **nicht** nachgezählt — ich habe nur im NGC-Repo gelesen. Ein Push nach
-  ulh-`main` erreicht per Auto-Update sofort alle Nutzer, deshalb entscheidet das Thomas
-  (Punkt 47).
-- **Diese Anleitung selbst ist nicht nachgefahren.** Sie ist aus Messprotokollen
-  zusammengestellt, nicht an einer frischen Maschine Schritt für Schritt geprüft. Der erste,
-  der sie befolgt, misst sie.
+- **Dass die fünf Skripte je auf ulh-`main` kommen.** Nachgezählt am 24.10.2026: `origin/main`
+  hat weiter **null** `ngc-*`-Skripte. Ein Push nach ulh-`main` erreicht per Auto-Update
+  sofort alle Nutzer, deshalb entscheidet das Thomas (Punkt 47).
 
 ---
 
-## 7. Noch zu entscheiden (Thomas)
+## 7. Wo diese Anleitung etwas versprochen hat, das nicht trägt
+
+Nicht weggelassen, sondern hingeschrieben.
+
+- **„Der Tunnel steht" war nicht das Ende.** Die alte Fassung endete mit Schritt 8 und einer
+  Gegenprobe. Wer nur das tat, hatte eine Anlage, in der sich **keine App einrichten lässt** —
+  der Controller stand nicht in der Vertrauensliste, und niemand hatte Systemrechte. Drei
+  Stationen fehlten: Schritt 9, 11 und 12.
+- **„Einen Hostnamen" war zu wenig.** Der Satz stand in Abschnitt 2 als eine Zeile unter
+  Werkzeugen. Dass der Name auf **dem Rechner des Lesers** eingetragen sein muss und dass es
+  über eine IP-Adresse keine Passschlüssel gibt, stand nirgends. Jetzt ist es Schritt 0.
+- **Die Reihenfolge der alten Schritte 4 bis 7 hielt nicht, was sie andeutete.** „Nicht neu
+  laden" stand dort — aber das Aufnehmen des Controllers fehlte ganz, und genau das ist der
+  Schritt, der **nach** dem Koppeln noch im selben angemeldeten Fenster geschehen muss.
+- **„Dass Apps laufen" stand unter „Nicht gemessen" und klang wie eine Kleinigkeit.** Es war
+  die Hälfte des Wegs, und auf ihr standen drei der sechs Wände.
+- **Der Satz „Der Katalog dieses Stores ist nicht echt" ist weiter falsch formuliert**,
+  solange PR #86 nicht in `main` ist. Er sagt „gefälscht", wo „noch nicht geholt" gemeint ist.
+  Das ist dieselbe Klasse wie die Anmeldelüge aus Punkt 50: ein **leerer Zustand** wird als
+  **Angriff** dargestellt. Wer das liest, sucht lange an der falschen Stelle.
+- **Diese Anleitung wird wieder veralten**, und zwar an derselben Stelle wie zuletzt: zwischen
+  zwei geprüften Teilstrecken. Der Schluss aus Punkt 71 gilt auch für sie — ein Durchlauf von
+  Anfang bis Ende gehört in die Prüfung, nicht in die Woche eines Menschen. Solange er von
+  Hand läuft, läuft er selten, und was nur selten läuft, bricht zwischen zwei Läufen an der
+  nächsten kleinen Stelle.
+
+---
+
+## 8. Noch zu entscheiden (Thomas)
 
 Außer den zwei Punkten aus Abschnitt 1:
 
+- **Wand 1 richtig zumachen.** `/etc/ngc` gehört in `ReadWritePaths` von `ngc-api.service`,
+  in `ngc-all.sh:1322` und `ngc-api.sh:1065`. Beide liegen im **ulh**-Repo auf Zweigen, an
+  denen andere Sitzungen arbeiten. Solange das offen ist, braucht jede Installation den
+  Drop-in aus Schritt 3 — eine Anleitung, die einen Handgriff gegen einen bekannten Fehler
+  verlangt, ist die zweitbeste Lösung.
 - **`noexec` auf `/data`.** Punkt 36 nennt es nicht, und es ist eine Verhaltensänderung für
   jede App, die unter `/data` Skripte hält (Punkt 51).
 - **Die fünf ulh-Skripte nach `main` zusammenführen.** Ein Push dorthin erreicht sofort alle
   Nutzer (Punkt 47).
 - **Wo gemessen wird:** entweder weiter mit selbst unterschriebenem Zertifikat, oder auf
   einer Maschine mit echtem Namen und `letsencrypt` — das ist der Fall, den ein Nutzer
-  erlebt (Punkt 58).
+  erlebt (Punkt 58), und es ist auch der einzige, in dem Passschlüssel überhaupt prüfbar sind.
+- **Welche Nummer die Nummer eines Release ist.** Drei Programme, drei Nummern, ein Feld.
