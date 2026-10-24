@@ -16,7 +16,7 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 74"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 83"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -41,6 +41,14 @@ die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 | **Einträge** | **36** | **57** | **93** |
 
 Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
+
+> **Diese Aufstellung ist stehengeblieben, und das steht hier, statt sie zu erraten.** Sie zählt
+> die Reihe B bis Punkt 74. Gemessen am 24.10.2026 mit `tools/check-buch.sh`: die Datei trägt
+> **65** Kapitel, Punkt 19 bis 83, ohne Lücke und ohne doppelte Nummer. Die Zeilen 75 bis 83
+> stehen inzwischen alle in der Tabelle unten — 75 bis 82 hat eine andere Sitzung nachgetragen
+> (`10f0105`), 83 diese Prüfrunde. Die Aufteilung in „gilt / überholt / offen" für fremde Punkte
+> nachzutragen hieße dagegen, über deren Stand zu entscheiden. Das gehört dem Koordinator, nicht
+> dieser Prüfrunde.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -165,8 +173,9 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
 | 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
 | 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
-| 84 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
-| 85 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
+| 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
+| 85 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
+| 86 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5777,8 +5786,214 @@ Messung, die schon aufgeschrieben ist, und keines ließ sich ohne jenen Arbeitsb
 laufende Anlage war ein Handbau, und als sie wegging, hing an ihr mehr, als irgendwo
 aufgeschrieben stand. Was nur auf einer Maschine liegt, ist nicht gesichert. Der kleine Fall
 läuft jetzt auf `ngc-ein`, und `ngc-ein` kommt aus einem Skript.
+## Punkt 84: Eine Prüfrunde über die Nähte von zwei Tagen — die Nähte halten, der Satz darüber nicht
 
-## Punkt 84: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
+Zwischen dem 19. und 24.10.2026 sind rund dreißig Pull Requests auf `main` gelandet, viele davon
+in Stunden, aus Sitzungen, die nebeneinander liefen. In genau diesem Zeitraum war der CI-Schritt
+„check.sh + counted test run" bei praktisch jedem Pull Request rot, weil die Zählung ihre Datei
+nie bekam (behoben mit PR 109). Rot war also kein Signal, und Grün gab es nicht. Jede Sitzung hat
+ihren Teil gemessen; **den entstandenen Stand im Zusammenhang hatte niemand gelesen.**
+
+Diese Runde liest ihn — Fenster `6cf5cef..17b9895`, 30 zusammengeführte Pull Requests.
+
+### Was gehalten hat, und wie es gemessen ist
+
+| Zusicherung | Wie gemessen | Ergebnis |
+|---|---|---|
+| `shared/` ist eingefroren | `git diff --numstat 6cf5cef..HEAD -- shared/` | **0 Zeilen**, kein Commit |
+| Kein Konfliktmarker steht noch im Baum | Suche nach den drei Markerzeilen über Go, JS, CSS, MD, SH, HTML | 0 Treffer |
+| Keine Hälfte fehlt in den Oberflächen | 41 ESM-Module einzeln in Node geladen (die Link-Zeit findet jeden fehlenden Export) | **0 Link- oder Parse-Fehler** |
+| Kein Fall ist beim Auflösen verlorengegangen | je Merge mit Konflikthunks: Fallnamen **beider** Eltern gegen das Ergebnis | **0 verlorene Fälle** in allen 24 geprüften Merges |
+| Die Oberfläche schreibt nichts | `grep -rc 'console\.'` über `apps/web/public/assets/js` | **0** |
+| Kein Fremdtext als Markup | jede Senke (`innerHTML`, `document.write`, `outerHTML`, …) einzeln gelesen | nur die eine gezäunte Ausnahme `shell/frame-boot.js` |
+| Kein Geheimnis in Protokollen oder Prozesslisten | jeder Log-Aufruf der geänderten Go-Dateien mit geheimnisverdächtigem Feld; jede `exec.Command` | 4 Treffer, alle Längen oder IDs; kein Geheimnis auf `argv` |
+| Punktnummern und CHANGELOG | Nummernfolge, doppelte Überschriften | keine Lücke, keine echte Dublette |
+
+Die von Hand aufgelösten Nähte sind einzeln gegen **beide** Eltern gelesen (`git show --cc`):
+`docs/vertraege-v1.2.md`, `apps/web/public/assets/css/shell.css`,
+`apps/web/public/assets/js/apps/users.js` und `store.js`, dazu `CHANGELOG.md` und
+`apps/server-controller/classes/serve/app.go`. Drei Ketten, bei denen zwei Sitzungen aufeinander
+angewiesen waren, sind **durchgegangen** statt nur angesehen:
+
+- `users.js` `appsNow()` → `this.ctx` → `desktop.js appCtx()` — dort steht ein echter Getter auf
+  `this.appList`, das `load()` ersetzt. Der Kommentar verspricht einen frischen Lesevorgang, und
+  es gibt einen.
+- `rights.Of` (ein Verwalter hält jedes App-Recht ohne Zeile) → `rights.Check` →
+  `Dispatcher.apps` — dieselbe Bedingung an allen drei Stellen, auch im Fehlerfall des Manifests.
+- `dispatch.go` `CloseBecause` → `reason.Screen` — die eine Zusicherung, die ein Leck wäre, wenn
+  sie fehlte: `AppUnknown` darf nicht auf den Schirm. `browser.go:409` filtert.
+
+### Der Fund: der Satz über dem Code sagt „zwei", der Code sagt „drei"
+
+`apps/server-api/classes/browser/browser.go:426`, vor dieser Änderung:
+
+> `closeChannel` … **and Close and CloseWith are the two ways in.**
+
+`CloseBecause` kam am 23.10.2026 mit „api: every refused channel names the check that said no"
+und ruft `closeChannel` ebenfalls (`browser.go:412`). Es sind **drei** Wege hinein, nicht zwei.
+Derselbe falsche Satz stand in `lint_test.go:233` — also in dem Fall, der die Aussage messen soll.
+
+**Was dabei schiefgeht:** der nächste Mensch liest einen Satz über eine Sicherheitszusicherung
+(„genau eine Stelle vermerkt einen CLOSE von uns"), der die Lage nicht mehr beschreibt, und
+schließt daraus entweder, ein neuer `Close*`-Weg sei nicht vorgesehen, oder er übersieht, dass ein
+neuer Weg durch `closeChannel` gehen **muss**. Der Prüfsatz konnte das nicht sehen: er zählt nur,
+**wo** `SentClose` steht, nicht **wer** `closeChannel` erreicht — und ein neuer Aufrufer
+verschiebt die Stelle des Vermerks nicht.
+
+**Gemessen, dass die Lücke echt war:** derselbe Mutant — ein vierter, nirgends aufgeschriebener
+Aufrufer von `closeChannel` — läuft am alten Fall `TestOnlyProtocolErrorHoldsANumber` grün durch
+(`ok`, Ausstiegscode 0) und tötet den neuen.
+
+**Behoben, und zwar als Messung statt als Prosa:** der Satz ist richtiggestellt, und
+`TestTheWaysIntoCloseChannelAreTheNamedOnes` misst jetzt die **Menge** der Aufrufer gegen die
+Liste, die im Kommentar steht. Nach `Z:\GitHub\claude-md\messen.md`: in einer **Kopie** des Baums,
+nie im Arbeitsbaum, jeder Lauf mit `-count=1`, und das Messskript bricht ab, statt eine Zahl zu
+nennen, wenn seine eigene Vorbereitung nicht genau einmal gegriffen hat.
+
+| | Mutation | Ergebnis |
+|---|---|---|
+| Dichtheitsprobe | keine | grün — sonst wäre die Kopie der Fund |
+| Sterbender Mutant | vierter Aufrufer `closeSneaky` von `closeChannel` | **gestorben**: „closeChannel is reached from [Close CloseBecause CloseWith closeSneaky]" |
+| Lebende Kontrolle | lokaler Parameter `cl` → `clo` in `closeChannel`, übersetzt | **gelebt** |
+
+### Der zweite Fund, und er stand quer im Weg: das Buch war rot auf seiner eigenen Prüfung
+
+`tools/check-buch.sh` ist in diesem Fenster entstanden, genau gegen den Fehler, den ich beim
+Anhängen dieses Punktes selbst getroffen habe: eine andere Sitzung hatte die **81** schon
+vergeben, während dieser Zweig geschrieben wurde. Der Prüfer hat die Dublette gefangen, der Punkt
+ist auf 82 weitergezählt — das Werkzeug tut, was es soll.
+
+**Nur war es selbst eine stehengebliebene Hälfte.** Das Buch verlangt in seinem eigenen Kopf: „Wer
+einen Punkt anhängt, trägt ihn in die Tabelle der Reihe B ein — sonst wird die Prüfung rot, und
+das ist Absicht." Gemessen am Buch von `origin/main`, ohne eine Zeile von mir:
+
+```
+buch: these points have a chapter but no row in the Reihe-B table of contents:
+      75 76 77 78 79 80 81
+buch: NOT ok
+```
+
+**Sieben** Kapitel ohne Zeile — und `check.sh` ruft `tools/check-buch.sh` auf. `main` war damit
+**rot auf seiner eigenen Prüfung**, und zwar an der Stelle, die laut Kommentar „die Stelle ist, an
+der die nächste freie Nummer abgelesen wird". Die Prüfung kam, die Zeilen kamen nicht mit: der
+Prüfer landete am 24.10., die sieben Punkte entstanden am selben Tag aus anderen Sitzungen, und
+niemand hat beides zusammen gesehen. Genau der Grund, warum es diese Runde gibt.
+
+**Was dabei schiefgeht:** solange `check.sh` rot ist, weil das Buch rot ist, liest niemand mehr
+hin — und ein echter Fund in derselben Prüfung geht im Dauer-Rot unter. Das ist dieselbe Klasse
+wie das kaputte CI-Zählwerk, das diese Runde überhaupt nötig gemacht hat: **eine Prüfung, die
+immer rot ist, prüft nichts.**
+
+**Behoben — und zwar zweimal, unabhängig voneinander, was den Befund erst rund macht.** Ich habe
+die acht Zeilen 75 bis 82 nachgetragen, jede aus dem eigenen Kapitel geschrieben. Beim nächsten
+Holen von `main` stand dort `10f0105` „docs: put points 75-82 into the Reihe-B table of contents"
+— **eine andere Sitzung hatte dieselbe Lücke zur selben Zeit gefunden und gefüllt.** Beim
+Zusammenführen habe ich meine sieben Zeilen fallengelassen und die ihren genommen; von mir bleibt
+die Zeile für diesen Punkt.
+
+Das ist kein Ärgernis, sondern die Bestätigung: dieselbe Lücke wurde an einem Tag von zwei
+Sitzungen unabhängig gefunden, und **keine von beiden hätte davon erfahren**, hätte nicht eine von
+ihnen nachgeholt und gemerkt, dass die Arbeit schon getan war. Doppelte Arbeit ist der
+sichtbare Teil; der unsichtbare ist, dass wir beide auch dieselbe Lücke **übersehen** haben
+könnten. Danach:
+
+```
+buch: ok (65 points, 19-83, no duplicate, no gap, no dead reference)
+```
+
+**Was ich dabei NICHT getan habe:** die Aufstellung „Stand in Zahlen" zählt die Reihe B weiter bis
+Punkt 74. Sie für fremde Punkte auf „gilt / überholt / offen" aufzuteilen hieße, über deren Stand
+zu entscheiden; das steht dem Koordinator zu. Statt zu raten steht die Lücke jetzt **als Lücke**
+über der Tabelle, mit der gemessenen Kapitelzahl daneben.
+
+### Abgewogen und verworfen: `E_TIMEOUT` heißt nicht „Rechner weg"
+
+Der Verdacht war eine echte Naht. PR 102 lässt einen App-Kanal, dessen Uhr abgelaufen ist, mit
+`E_TIMEOUT` statt `E_INTERNAL` enden (23.10., 18:02 Uhr), und `reason.ForCode` aus PR 120 bildet
+`E_TIMEOUT` auf `NodeAway` ab — „Der Rechner für diese Aktion ist gerade nicht verbunden."
+(18:11 Uhr, neun Minuten später, andere Sitzung). Das wäre genau die Klasse aus Punkt 50: ein
+Zustand wird als etwas anderes dargestellt.
+
+**Es ist keiner.** `relay.openAndPump` kürzt einen vom Controller geschlossenen Kanal auf
+`code = ""` ab (`relay.go:379-382`, Zweig `theirClose`), und `ForCode("")` ist `None`. Der
+`E_TIMEOUT` des Controllers erreicht `ForCode` nie; der Controller schreibt seinen eigenen Grund
+in sein eigenes Journal, was der Kommentar an `relay.Forward` auch sagt. **Gelesen, nicht
+gemessen.**
+
+### Zur Entscheidung, nicht behoben: `Serves` antwortet für eine Abhängigkeit zweimal verschieden
+
+`apps/server-controller/classes/serve/serve.go:292` trägt `installKey` **bedingungslos** in
+`s.acts` ein, während `activateKey` (Zeile 305) und `stageKey` (Zeile 306) nur eingetragen werden,
+wenn ihre Abhängigkeit da ist. `install` und `stage` brauchen **dieselbe** Abhängigkeit
+(`s.d.Updater`), und beide weisen bei `nil` mit demselben Code ab. Auf einem Controller ohne
+Updater antwortet `Serves(…/install)` also **wahr** und `Serves(…/stage)` **falsch** — über eine
+Abhängigkeit.
+
+Der Kommentar direkt darüber (Zeile 295–301) begründet das Gattern genau damit, dass `Serves` die
+Frage beantworten soll, die ihm gestellt wird. `stageKey` kam mit PR 121 am 24.10. und hat das
+neue Muster nur auf den **neuen** Schlüssel angewandt.
+
+**Was heute schiefgeht: nichts** — `Serves` hat im Produktionscode keinen einzigen Aufrufer, der
+Fund ist latent. Und `serve.go:433-441` nennt den bedingungslosen Eintrag von `installKey`
+ausdrücklich als Stand „seit Aufgabe 19". Eine dokumentierte Entscheidung umzudrehen ist nicht
+Sache dieser Runde: **Thomas entscheidet**, ob `installKey` auf `d.Updater != nil` gegattert wird
+— verhaltensneutral auf der Leitung, denn der unbekannte Schlüssel endet in `Server.core` mit
+demselben `E_INTERNAL` — oder ob der Satz über `Serves` die Ausnahme nennt.
+
+### Ein Fund außerhalb des Fensters, der Vollständigkeit wegen
+
+`apps/server-api/classes/rights/check.go:24` nennt als Nachrechenanweisung „`grep -n
+'Open\.[A-Za-z]*' check.go rights.go`, **five hits**". Der genannte Befehl liefert **sieben**. Die
+Aufzählung darunter ist weiter richtig — gelesen werden genau `Params`, `Action`, `Task`,
+`Confirm`, und `Window`/`E2E` nicht —, nur die Zahl reproduziert nicht. Gemessen über die
+Fassungen: es waren schon **sieben**, als der Satz am 12.10.2026 geschrieben wurde. Also **kein
+Fund dieser Nähte**, und hier nicht angefasst.
+
+### Was diese Runde nicht gelesen hat
+
+Ehrlichkeit ist hier mehr wert als Vollständigkeit.
+
+- **Nicht gelesen, weil fremde Arbeit:** `tools/erstlauf.sh`, `docs/app-weg.md`,
+  `docs/messungen-m1-m3.md`, `docs/thomas-entscheidet.md`.
+- **Nicht gelesen, weil nach dem Fenster:** alles, was nach `17b9895` auf `main` kam — beim
+  Schreiben dieses Punktes **62 Commits** bis Punkt 82, darunter die PRs 124 bis 141. Dieser
+  Zweig führt sie mit, **geprüft sind sie nicht.**
+- **Nur überflogen, nicht Zeile für Zeile:** `tools/erstlauf-probe/main.go`,
+  `tools/proxmox-sechs*.sh`, `versuch-rust/sign`, `versuch-port/wordcraft` — dort nur, dass
+  `exec.Command` einen festen Pfad ohne Shell nimmt —, die Installations- und Proxmox-Dokumente.
+- **Ein Werkzeug, das nichts gemessen hat, und darum verworfen:** ein Scanner auf unexportierte
+  Go-Deklarationen ohne Leser — die typische Form einer stehengebliebenen Hälfte — hat
+  Methodenaufrufe der Form `empfaenger.name` nicht als Leser erkannt und `closeChannel` selbst
+  als „nirgends gelesen" gemeldet, bei drei belegten Aufrufen. Nach messen.md ist ein Lauf, dessen
+  Kontrolle sich falsch verhält, wertlos; der Scanner ist **verworfen, nicht geflickt**. Die
+  Klasse „unexportierte Hälfte ohne Aufrufer" ist damit **nicht geprüft**.
+- **Die Linux-Seite ist nicht gelaufen:** gemessen wurde auf dem Windows-Rechner, 88 Fälle
+  überspringen sich dort selbst (`check.sh` sagt die Zahl). `go test -race` ist nicht gelaufen.
+
+### Der Prüfsatz am Ende
+
+**Zwei Zahlen, weil sie zwei verschiedene Bäume messen** — darum stehen beide da:
+
+```
+am Kopf des Fensters (17b9895), also an dem Stand, der geprüft ist:
+  vorher   ->  ci-count: ok (3425 cases ran, 88 skipped)
+  nachher  ->  ci-count: ok (3426 cases ran, 88 skipped)
+
+am zusammengeführten Kopf dieses Zweiges, den der Pull Request anbietet:
+  bash tools/check.sh                 ->  check: ok, Ausstiegscode 0, 323 passed, 0 failed
+  bash tools/ci-count.sh <test.json>  ->  3451 passed, 0 FAILED, 88 SKIPPED
+                                          ci-count: ok (3451 cases ran, 88 skipped)
+```
+
+Der **eine** Fall zwischen 3425 und 3426 ist `TestTheWaysIntoCloseChannelAreTheNamedOnes`. Die
+**25** zwischen 3426 und 3451 sind **nicht** meine: sie kommen mit den 59 Commits, die nach
+`17b9895` auf `main` gelandet sind und die dieser Zweig mitführt — gelaufen sind sie, **geprüft
+nicht.** Wer die 3451 als Zahl dieser Prüfrunde liest, schreibt ihr fünfundzwanzig Fälle gut, die
+eine andere Sitzung gemessen hat.
+
+Herkunft: Prüfrunde über die Nähte des Fensters 19.–24.10.2026, Zweig `pruefrunde-naehte`.
+
+## Punkt 85: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
 
 Dies ist kein neuer Einzelbefund, sondern das Muster über drei, die am 24.10.2026 unabhängig
 voneinander an verschiedenen Stellen gemessen wurden. Es steht hier zusammen, weil es dreimal
@@ -5832,7 +6047,7 @@ dreimal etwas erst beim gezielten Hinsehen aufgefallen ist.
 
 Herkunft: `docs/ausfall-je-maschine.md` für die Fälle 1 und 2, Punkt 78 für Fall 3.
 
-## Punkt 85: Ein fehlendes Mitglied des Lastverteilers wird dem Benutzer als `HTTP 500` zugestellt — und nichts schreibt es auf
+## Punkt 86: Ein fehlendes Mitglied des Lastverteilers wird dem Benutzer als `HTTP 500` zugestellt — und nichts schreibt es auf
 
 Gemessen am 24.10.2026 zwischen 13:57 und 14:07 UTC an der verteilten Anlage, api-2 (VMID 302) mit
 `qm stop` abgeschaltet und wieder angefahren. Der Fall ist der harmloseste der sechs Ausfälle und
@@ -5895,7 +6110,7 @@ das `::` der Weg aller neun ist, steht damit nicht fest. Belegt ist, dass es im 
   wirkt sofort; das Erste ist richtiger und liegt beim Netz.
 - Ob Apache den Fehlschlag eines Mitglieds ins Fehlerprotokoll schreiben soll (`LogLevel
   proxy:info` genügt dafür). Heute ist der Ausfall nur aus dem Zugriffsprotokoll zu erschließen,
-  und das ist dieselbe Gestalt wie Punkt 84: die Auskunft ist da, der Anlass fehlt.
+  und das ist dieselbe Gestalt wie Punkt 86: die Auskunft ist da, der Anlass fehlt.
 
 Zum Vergleich, weil es im selben Lauf gemessen wurde und die Messlatte setzt: der Ausfall der
 **Datenbank** (db-1) wird mit eigenem Code `E_UNREACHABLE`, eigener Meldung „Dienst nicht
