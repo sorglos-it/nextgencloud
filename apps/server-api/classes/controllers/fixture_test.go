@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/config"
@@ -114,7 +115,9 @@ func newServer(t *testing.T) (*Server, fixture) {
 	if node == "" {
 		t.Fatal("the fixture's trust list names no controller")
 	}
-	srv := &Server{S: s, Tunnels: NewRegistry()}
+	// The log is set as package server sets it, so every case of this package
+	// measures the program and not a Server with the line switched off.
+	srv := &Server{S: s, Tunnels: NewRegistry(), Log: &audit.Log{DB: s.DB, Now: s.Now}}
 	pub, err := srv.noisePublic()
 	if err != nil {
 		t.Fatalf("noise public: %v", err)

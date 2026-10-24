@@ -4912,6 +4912,53 @@ Browserprobe lief grün gegen sie. Was sie umgeworfen hat, ist **nicht gemessen*
 statische Dateien einer Oberfläche sind keine plausible Ursache. Solange sie unten ist, kann
 niemand die Schritte aus `docs/zweiter-benutzer-schritte.md` gehen.
 
+## Punkt 74: Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen
+
+Gemessen am 24.10.2026 auf der verteilten Anlage, an den App-eigenen Containerspeichern der
+beiden Dienstmaschinen — nicht an den Namen der Maschinen und nicht an der Datenbank allein.
+
+Das Terminal läuft auf **beiden** Dienstmaschinen:
+
+```
+svc-1:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up About an hour
+svc-2:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up 39 minutes
+ngc_app.node: svc-2        (eine Zeile, eine Maschine)
+```
+
+Der Verlauf aus den Protokollen der beiden Controller:
+
+```
+svc-1  10:56:53  container create / init / start      erste Einrichtung
+svc-1  11:05:40  Controller neu gestartet -> container init / start
+svc-2  11:28:10  useradd ngc-terminal-439982dd
+svc-2  11:28:14  container create / init / start      zweite Einrichtung
+ngc_app.updated  etwa 11:28
+```
+
+**Was gemessen ist:** das Terminal wurde zuerst auf `svc-1` eingerichtet, später auf `svc-2`.
+Der Container auf `svc-1` wurde nie entfernt. Mehr noch: der Controller auf `svc-1` hat ihn nach
+seinem eigenen Neustart um 11:05 **wieder angeworfen** — die alte Einrichtung ist also nicht nur
+ein vergessener Prozess, sie ist dauerhaft und übersteht einen Neustart. `ngc_app` trägt nur die
+neueste Maschine, also weiß die Oberfläche von `svc-1` nichts und kann dort auch nichts
+abräumen.
+
+**Was das kostet, soweit es hier zu sehen ist:** CPU und Speicher einer App, die niemand zählt;
+ein Container mit den Rechten der App (beim Terminal: `root` in seinem Container) auf einer
+Maschine, auf der die Anlage ihn nicht mehr verzeichnet; und bei einer App mit eigenen Daten
+zwei Datenstände, von denen die Oberfläche einen nicht kennt.
+
+**Was nicht gemessen ist, und was darum zu entscheiden wäre:**
+
+- Ob das so **gemeint** ist. Dass eine App absichtlich auf mehreren Maschinen laufen soll, ist
+  möglich — dann fehlt aber die Stelle, die das verzeichnet, denn `ngc_app.node` ist ein
+  einzelnes Feld. Im Vertrag ist dazu nichts nachgelesen worden.
+- Ob eine Einrichtung auf einer neuen Maschine die alte **abräumen** soll (dann fehlt der
+  Schritt), oder ob die Anlage **beide** verzeichnen soll (dann fehlt die Spalte).
+
+Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
+Anlage sagt einmal.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
 ---
 
 ## Punkt 75: Die Maschine, auf der die ersten Messungen entstanden, ist aus — die Messungen gelten, die Anweisungen nicht

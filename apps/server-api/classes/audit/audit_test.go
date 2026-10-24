@@ -409,3 +409,81 @@ func TestNoteKeepsTheOtherKinds(t *testing.T) {
 		t.Fatalf("query: %v %d", err, len(rows))
 	}
 }
+
+// ---- Pairing ----------------------------------------------------------------
+
+// TestAPairingOfAnUnknownActionIsDropped holds the grammar of the "Aktion"
+// column: Pairing writes one of pairActions or the placeholder, never a third
+// word -- and it writes the entry all the same, because the attempt is the
+// event.
+//
+// The word is "login" and not a broken one on purpose. A newline or an empty
+// string is caught by clean for EVERY entry of this log, so a case built on
+// one of those measures clean and not the closed list here -- measured on
+// 24.10.2026: with the list switched off (lost := false) such a case still
+// went green. What only the list catches is a word that passes the grammar
+// and is still not a pairing, and that is the one an admin would misread:
+// "login" in the Aktion column of a trust entry reads as an attempt to sign
+// in.
+func TestAPairingOfAnUnknownActionIsDropped(t *testing.T) {
+	lg := newLog()
+	err := lg.Pairing(ctx, "login", wire.CodeVerify, reason.PairProof)
+	if !errors.Is(err, ErrDropped) {
+		t.Fatalf("pairing: %v, want ErrDropped", err)
+	}
+	e := only(t, lg)
+	if e.Action != Dropped {
+		t.Fatalf("action %q, want %q", e.Action, Dropped)
+	}
+	// The entry is there and still says why it failed.
+	if e.Kind != core.LogTrust || e.Result != string(wire.CodeVerify) ||
+		e.Detail != string(reason.PairProof) {
+		t.Fatalf("entry %+v", e)
+	}
+}
+
+// TestAPairingReasonOutsideTheListIsDropped is the same for the detail: the
+// one field of this log that carries a sentence takes only sentences of
+// package reason.
+func TestAPairingReasonOutsideTheListIsDropped(t *testing.T) {
+	lg := newLog()
+	err := lg.Pairing(ctx, ActionJoin, wire.CodeVerify, reason.Reason("Passwort: hunter2"))
+	if !errors.Is(err, ErrDropped) {
+		t.Fatalf("pairing: %v, want ErrDropped", err)
+	}
+	e := only(t, lg)
+	if e.Detail != Dropped || e.Action != ActionJoin {
+		t.Fatalf("entry %+v", e)
+	}
+}
+
+// TestAPairingThatGotThroughCarriesNoReason pins the other end: no code means
+// "ok", and an entry without a reason has an empty detail rather than a
+// placeholder, so an admin never reads a dropped field where nothing was
+// dropped.
+func TestAPairingThatGotThroughCarriesNoReason(t *testing.T) {
+	lg := newLog()
+	if err := lg.Pairing(ctx, ActionPair, "", reason.None); err != nil {
+		t.Fatalf("pairing: %v", err)
+	}
+	e := only(t, lg)
+	if e.Result != "ok" || e.Detail != "" || e.User != UserSystem {
+		t.Fatalf("entry %+v", e)
+	}
+}
+
+// TestEveryPairingReasonSurvivesAsADetail is the sibling of
+// TestEveryReasonSurvivesAsADetail for the two sentences Pairing uses: both
+// have to pass the grammar of clean unchanged, or the line an admin reads
+// would be a placeholder exactly when it matters.
+func TestEveryPairingReasonSurvivesAsADetail(t *testing.T) {
+	for _, why := range []reason.Reason{reason.PairProof, reason.JoinProof, reason.Defect, reason.DB} {
+		lg := newLog()
+		if err := lg.Pairing(ctx, ActionPair, wire.CodeVerify, why); err != nil {
+			t.Fatalf("%q: %v", why, err)
+		}
+		if e := only(t, lg); e.Detail != string(why) {
+			t.Fatalf("%q came out as %q", why, e.Detail)
+		}
+	}
+}
