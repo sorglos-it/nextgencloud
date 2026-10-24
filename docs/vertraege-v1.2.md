@@ -5350,7 +5350,7 @@ nicht geübt.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
 
-## Punkt 81: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
+## Punkt 82: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
 
 Dies ist kein neuer Einzelbefund, sondern das Muster über drei, die am 24.10.2026 unabhängig
 voneinander an verschiedenen Stellen gemessen wurden. Es steht hier zusammen, weil es dreimal
