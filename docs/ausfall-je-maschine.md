@@ -828,9 +828,15 @@ untergeht: **AES-256-CTR gibt Vertraulichkeit, keine Beglaubigung.** Ein
 verändertes Byte fängt die `sha256`-Liste im Verzeichnis — und die fängt einen
 **Unfall**, nicht jemanden, der in den Ordner schreiben darf, denn der kann die
 Liste mitändern. Nach derselben Rechnung wie bei den 224 Byte gehört die
-Prüfsummenliste darum **zu den Schlüsseln**, nicht neben die Daten: ein paar
-Kilobyte, und erst damit ist die Beglaubigung so weit getrennt wie die
-Vertraulichkeit. Das ist ein Vorschlag von mir, keine Messung.
+Prüfsummenliste darum **zu den Schlüsseln**, nicht neben die Daten.
+
+Das war mein Vorschlag, und er ist **gebaut und gemessen** — von der
+Sicherungs-Sitzung, nicht von mir. Mit einem angehängten Byte in
+`app-daten.tar.enc`: der Datenordner allein enthält **null Prüfsummen**, es ist
+also nichts zu vergleichen; mit `summen.txt` aus dem Schlüssel-Ordner meldet
+`sha256sum -c` `app-daten.tar.enc: FAILED` und `state.db: OK`. Damit gilt für
+beide Hälften derselbe Satz: wer nur die Daten hat, kann sie weder lesen noch
+unbemerkt ändern. Laufzeit kostet es nicht.
 
 **Und zu meiner eigenen Datei, nach derselben Rangfolge:** sie bleibt liegen.
 Sie trägt einen argon2id-Abdruck, keinen Klartext, auf dem Rechner ihres
