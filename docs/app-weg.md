@@ -526,9 +526,12 @@ Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sit
 das gelaufen ist, sind Schritt 2 und Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft —
 und dieses Papier sagt es hier, statt es wie Erledigtes aussehen zu lassen.
 
-**Und eines liegt dazwischen:** die Anlage holt den Katalog **stündlich**. Zwischen „die App ist
-im Laden" und „die App steht in der Oberfläche" liegt also bis zu eine Stunde, ohne dass etwas
-kaputt ist. Wer in dieser Zeit sucht, sucht einen Fehler, den es nicht gibt.
+**Und eines liegt dazwischen:** die Anlage holt den Katalog von selbst nur **stündlich**.
+Zwischen „die App ist im Laden" und „die App steht in der Oberfläche" liegt also bis zu eine
+Stunde, ohne dass etwas kaputt ist — wer in dieser Zeit sucht, sucht einen Fehler, den es nicht
+gibt. Warten muss man aber nicht: der Reiter „Quellen" hat einen Knopf **„Jetzt nachsehen"**,
+und er sagt daneben, wie alt der Stand ist („Zuletzt geprüft: …"). Gemessen am 24.10.2026: die
+Folge 7 war um 13:44 von selbst geholt, und die Uhr stand danach im Reiter „Apps".
 
 ---
 
@@ -725,7 +728,7 @@ Grenzen, die heute wirklich gelten:
 * **Inhalt:** nur Form — Pfade, Kreise, Rechtecke. **Kein `<script>`, kein `<foreignObject>`,
   kein `<image>`, kein `xlink:href` oder `href` nach außen, keine Schriftart von außen.** Ein
   SVG ist ein Dokument und kann all das. Ob jemand es prüft, steht gleich darunter.
-* **Wirkung:** heute keine. Siehe Befund 6.
+* **Wirkung:** heute keine. Siehe Befund 9.
 
 ---
 
@@ -753,7 +756,7 @@ wie man es für etwas anderes macht.
 `<id>:<fassung>` nennt und `services/<arch>.tar` schreibt. Die Prüfungen, die es dafür schon
 gibt, sind genau die, die man will: Basis hängt an einem Digest (`runtime.CheckBase`) und das
 Programm im Zusammenhang passt zur Architektur (`runtime.checkProgram`). Damit wären die drei
-Stellen aus Befund 6 auf eine Angabe zusammengezogen.
+Stellen aus Befund 8 auf eine Angabe zusammengezogen.
 
 Nebenbei: `node/image.go` sagt von sich selbst „WRITTEN AND COMPILED, NOT RUN" — auf dem
 Rechner, auf dem es geschrieben wurde, gab es kein podman. Ein Baurechner mit podman gibt es
@@ -854,7 +857,59 @@ nicht ändern.
 Laden eine Messung des Rückfalls mit, und eine Gegenprobe („was passiert, wenn der Laden weg
 ist") trifft womöglich die falsche Maschine.
 
-### Befund 6: Die Architektur steht an drei Stellen
+### Befund 6: Die erste Anmeldung scheitert immer, die zweite geht
+
+Gemessen am 24.10.2026 auf `ngc.mein.lan`, in **einem** Browserprofil, auf **einer** Seite,
+mit demselben Namen und demselben Kennwort:
+
+```
+Anmeldung Versuch 1: nein   ("Anmeldung fehlgeschlagen.")
+Anmeldung Versuch 2: JA     (Schreibtisch kommt)
+```
+
+Dreimal nachgestellt, immer dasselbe Bild. Thomas kannte es schon und hielt es für die zwei
+APIs der Anlage — das ist es **nicht**: die Shell redet nicht mit `api-1` oder `api-2`
+unmittelbar, sondern über `ngc.mein.lan/api/v1/ws`, und in beiden Versuchen über denselben Weg.
+
+**Nicht gemessen:** woran es liegt. Der Verdacht geht auf die Vertrauensliste — der erste
+Versuch holt die Kette erst (`openTrustFromChain`, „login: no trust list") und scheitert dabei,
+der zweite findet sie vor. Das ist eine Vermutung, keine Messung.
+
+**Warum es mehr ist als ein Schönheitsfehler:** wer sich zum ersten Mal anmeldet, bekommt den
+Satz für ein falsches Kennwort. Er wird sein Kennwort für falsch halten, es noch einmal tippen —
+und dann geht es, ohne dass er weiß, warum. Ein Mensch lernt daraus „man muss es zweimal
+machen"; ein Skript lernt es nicht und meldet eine falsche Anmeldung.
+
+**Vorschlag:** eigener Lauf. Zuerst messen, ob der erste Versuch die Vertrauensliste holt und
+daran scheitert; wenn ja, sie holen, **bevor** die Maske eine Anmeldung annimmt.
+
+### Befund 7: Ein Name, der nicht in die Grammatik passt, bekommt den Satz für ein falsches Kennwort
+
+`http.loginStart` prüft den Namen im **Browser**, bevor es etwas sendet:
+
+```js
+if (!validLoginName(name)) throw new ApiError(wire.CODES.PROTOCOL);
+```
+
+Erlaubt sind nur Kleinbuchstaben, Ziffern und `. _ -` (das erste Zeichen ein Buchstabe oder eine
+Ziffer, `contracts/text.js`, `trust.ValidLoginName`). Ein Name mit einem Großbuchstaben, einem
+`@`, einem Leerzeichen oder einem Umlaut wird also **lokal** abgelehnt, und die Maske sagt
+„Anmeldung fehlgeschlagen." — der Satz für ein falsches Kennwort.
+
+Gemessen am 24.10.2026, weil es mich selbst eine Runde gekostet hat: drei Versuche, **kein
+einziger Aufruf** an eine API (im Protokoll beider APIs kein Eintrag), weil im Namen ein
+Leerzeichen stand. Das Fehlerbild sieht aus wie ein Netz- oder Kennwortproblem und ist eine
+Zeichenprüfung.
+
+Der Code beklagt diese Verwechslung an zwei anderen Stellen ausdrücklich — für eine Maschine
+ohne Passwortschlüssel und für einen Passschlüssel, den es nicht gibt, steht dort „the same lie
+as above". An dieser dritten Stelle macht er sie.
+
+**Vorschlag:** für einen Namen außerhalb der Grammatik einen eigenen Satz, der sagt, was ein
+Name sein darf. Er verrät nichts: die Grammatik ist öffentlich und sagt nichts darüber, wer
+existiert — genau das steht als Begründung über `loginStart`.
+
+### Befund 8: Die Architektur steht an drei Stellen
 
 `GOARCH` beim Übersetzen, `--arch` bei `podman build`, und der Name `services/<arch>.tar`. Wer
 eine davon vergisst, bekommt ein Abbild, das baut, sich sichern, laden und einrichten lässt und
@@ -865,7 +920,7 @@ liest; es läuft aber nur in `ngc-controller image`, also nur für das Terminal 
 **Vorschlag:** mit Befund 1 erledigt. Ein Unterbefehl, der den App-Ordner nimmt, nennt die
 Architektur einmal und schreibt den tar-Namen selbst.
 
-### Befund 6: `icon` wird getragen und nie gezeigt
+### Befund 9: `icon` wird getragen und nie gezeigt
 
 Das Manifest-Feld `icon` geht den ganzen Weg — `pack` prüft, dass die Datei im ui-tar liegt
 (`shared/store/pack.go:131`), der Schreibtisch reicht es als `core.DesktopApp.Icon` an die
@@ -944,6 +999,6 @@ go run ./apps/cli check -store uhr-probe /pfad/laden
 # 6. einrichten: in der App „App-Store" unter „Apps" (aus dem Laden) oder
 #    „Hochladen" (Paket von der Platte), dann „Installieren", „Aktivieren",
 #    persönlich unterschreiben, dann in „Benutzer & Rechte" das Recht
-#    <app>/use verteilen. Der Laden wird stündlich geholt - bis dahin steht
-#    die App noch nicht in der Liste.
+#    <app>/use verteilen. Der Laden wird von selbst nur stündlich geholt -
+#    unter "Quellen" holt ihn "Jetzt nachsehen" sofort.
 ```
