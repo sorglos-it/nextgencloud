@@ -291,6 +291,15 @@ und das Einzige im Produkt, das es richtigstellt, ist ein Admin, der die App neu
 einrichtet — eine Runde über das Netz, mit Lizenz und Paket, für zwei Zeilen, die in der
 Sicherung schon dastanden.
 
+**Das gilt für die Wiederherstellung und NICHT für einen Ausfall**, und die Verwechslung wäre
+teuer: wer diesen Befund als „Apps kommen nicht von allein zurück" liest, baut einen Schritt
+ein, den es nicht braucht. Die Sitzung „Was passiert, wenn ein Rechner ausfällt" hat den anderen
+Weg gemessen — ihre Messung, nicht meine: nach einem Ausfall und Neustart kommen die
+App-Container auf svc-1 und svc-2 **eine Sekunde** nach dem Start des Controllers von selbst
+wieder, mit `pragma integrity_check` vorher und nachher ok. Der Unterschied ist genau der
+Systembenutzer: bei einem Ausfall ist er noch da, bei einer Wiederherstellung auf eine neue
+Maschine nicht. `node.Restore` kann mit dem einen umgehen und mit dem anderen nicht.
+
 ### Das Stück, das die Wand wegnimmt
 
 `tools/sicherung-zurueck` ruft für jede App-Kennung die beiden Funktionen des Produkts selbst —
@@ -474,14 +483,17 @@ Antwort, die ich nicht erwartet habe: **es gibt keine Schrittfolge, er kam allei
 
 Gemessen von derselben Sitzung, db-1 aus von 13:46 bis 13:51 UTC, **nicht von mir**:
 
-- Der Weg zurück war das Einschalten der Maschine und vier Sekunden warten: 13:47:16
-  „Starting mariadb.service" bis 13:47:20 „ready for connections". Danach
-  `wsrep_cluster_size 1`, Primary, über drei Minuten im Halbminutentakt nachgeprüft. **Kein
-  einziger Befehl von Hand, kein `galera_new_cluster`.**
-- Und es war ein harter Schnitt: die Journalspitze fehlt (letzter Eintrag 13:37:00, obwohl die
-  Maschine 13:45:51 nachweislich noch antwortete).
-- Die **Bedingung** ist kein Befehl, sondern eine Datei: `grastate.dat` mit
-  `safe_to_bootstrap: 1`.
+- Der ganze Weg zurück war `qm start 303` und vier Sekunden warten: 13:47:16
+  „Starting mariadb.service", 13:47:20 „WSREP: Recovered cluster id", „Server db-1 synced with
+  group", „ready for connections". Danach `wsrep_cluster_size 1`, Primary, über drei Minuten im
+  Halbminutentakt nachgeprüft. **Kein einziger Befehl von Hand**; `galera_new_cluster` lag
+  bereit und war nicht nötig.
+- Und es war ein harter Schnitt — `qm stop` ist in Proxmox der Stecker. Belegt an der fehlenden
+  Journalspitze: letzter Eintrag des vorigen Starts 13:37:00, obwohl die Maschine 13:45:51
+  nachweislich noch antwortete. Alles dazwischen lag nicht auf der Platte.
+- Die **Bedingung** ist kein Befehl und keine Datei, die man hinlegt, sondern ein Zustand:
+  `grastate.dat` mit `safe_to_bootstrap: 1` und `seqno: -1`. Ein Knoten, der weiß, dass er der
+  letzte war, zieht sich selbst hoch.
 
 **Was daraus ausdrücklich NICHT folgt:** dass db-1 sich immer fängt. Der Stillstand von heute
 früh (02:45 bis 09:30) hing an `safe_to_bootstrap: 0`, und was den Unterschied macht, ist
@@ -519,7 +531,9 @@ macht).
   Gegenprobe, dass sie bei einem einzigen Byte greift.
 - Abschnitt 8 ganz — die beiden Fälle der Transportprüfung sind meine Messung; der
   47-KB-Dump und die Wiederkehr von db-1 in vier Sekunden sind die Messung der Sitzung „Was
-  passiert, wenn ein Rechner ausfällt" und stehen hier mit ihr als Herkunft.
+  passiert, wenn ein Rechner ausfällt" und stehen hier mit ihr als Herkunft. Ebenso in
+  Abschnitt 6 die Wiederkehr der App-Container **nach einem Ausfall** — ihre Messung, die meine
+  ergänzt und sie gegen eine falsche Lesart schützt.
 
 **Abgewogen** (aus Gemessenem geschlossen, nicht ausgeführt):
 

@@ -5388,6 +5388,12 @@ keinen an. Ohne diesen Schritt bleibt nach einer Wiederherstellung **jede** App 
 und das Einzige im Produkt, das es richtigstellt, ist ein Admin, der die App neu aus dem Laden
 einrichtet — für Zeilen, die in der Sicherung schon dastanden.
 
+**Nicht zu verwechseln mit einem Ausfall.** Die Sitzung „Was passiert, wenn ein Rechner
+ausfällt" hat den anderen Weg gemessen — ihre Messung, in ihrem eigenen Papier: nach einem Neustart
+kommen die App-Container auf svc-1 und svc-2 eine Sekunde nach dem Controller von selbst wieder.
+Der Unterschied ist genau dieser Benutzer — bei einem Ausfall ist er noch da, bei einer
+Wiederherstellung auf eine neue Maschine nicht.
+
 Mit `tools/sicherung-zurueck` (ruft `runtime.EnsureUser` und `runtime.EnsureData`, die Funktionen
 des Produkts selbst) ging es weiter, Ausstiegscode 0. Die fscrypt-Schlüsselkennungen auf 310 sind
 danach **bitgleich** mit denen auf svc-1 — der Schlüssel der App-Daten reist allein in
