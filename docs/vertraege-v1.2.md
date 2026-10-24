@@ -5512,6 +5512,13 @@ Gemessen am 24.10.2026 als root, in WSL (Debian, Go 1.27), Zweig `terminal-fault
 need root", Zweig `ausfall` — ein Zweig, der **keine Zeile Go anfasst**. Derselbe Satz war im
 `main`-Lauf davor (40102495746) grün.
 
+**Herkunft:** der rote Lauf kommt aus der Sitzung, die den Ausfall je Maschine gemessen hat
+(CI-Lauf 40105559326; ihr eigener Punkt stand bei diesem Zweig noch in einem offenen Vorschlag). Dass die **Vorrichtung** des Falls schuld ist und nicht der
+Produktionscode, hat die Sitzung „Sichern und wiederherstellen" zuerst gesagt. Welche Stelle der
+Vorrichtung es ist, weicht von ihrer Lesart ab, und beides steht unten: sie hielt das endende
+`exit` der Eingabe für den Gewinner des Rennens, gemessen gewinnt es, weil **gar kein Fehler
+entstand**.
+
 ```
 terminal_test.go:665: exit 0 although the channel broke, after 2.002541317s, stderr ""
 --- FAIL: TestAFaultEndsTheTerminalAtOnce (2.00s)
@@ -5577,6 +5584,27 @@ beim n-ten Mal kaputtgeht, macht die Stückelung eines Datenstroms zum Teil der 
 die Stückelung eines Pseudoterminals gehört dem Kern, nicht dem Prüfsatz. Wer „der Kanal ist weg"
 meint, baut einen Kanal, der von Anfang an weg ist, und belegt mit einem Zähler, dass die gemeinte
 Stelle überhaupt erreicht wurde.
+
+### Die naheliegende andere Reparatur flattert ebenfalls — gemessen, nicht vermutet
+
+Vorgeschlagen war, die Eingabe mit `holdOpen` offen zu halten und das `exit` zu streichen, damit
+das saubere Ende von `pumpIn` das Rennen nicht gewinnen kann. Das lässt `errWriter` aber, wie es
+ist — und damit bleibt die Stückelung die Entscheiderin. Dieselbe Sonde, 5 Läufe:
+
+```
+code=1 nach    1,7 – 2,4 ms   Schreibvorgänge=2  Größen=[10 2]     3 von 5
+code=1 nach   30,0 s          Schreibvorgänge=2  Größen=[12 2]     2 von 5
+```
+
+Der zweite Schreibvorgang — und damit der Fehler — kommt in diesen zwei Läufen erst, als `sleep
+30` fertig ist und das Pseudoterminal **ein zweites Mal** etwas herausgibt. Der Fall wäre dort rot,
+jetzt am Zeitriegel (30 s gegen `faultWithin` von 5 s) statt an `code == 0`. Die Datei hält dieses
+Mittel schon seit 18.10.2026 als erfolglos fest; was hier dazukommt, ist die Zahl.
+
+**Also gehört die Reparatur an den Schreibkanal, nicht an die Eingabe:** solange die Attrappe einen
+**zweiten** Schreibvorgang braucht, entscheidet die Stückelung, und man verschiebt nur, welcher
+Riegel reißt. Nur fünf Läufe, und das ist wenig — als Beleg, dass dieses Mittel das Flattern nicht
+beendet, reichen sie, weil es schon zweimal rot war.
 
 **Nicht gemessen und darum offen:** warum der Lauf auf einem GitHub-Runner häufiger oder seltener
 stückelt als hier. Die 23 % gelten für diese Maschine; dass es dieselbe Ursache ist, folgt aus der
