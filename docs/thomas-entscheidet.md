@@ -13,10 +13,13 @@ Je Frage: **Worum** · **Heute** · **Entschieden** · **Warum** · **Zu bauen**
 Was nicht entschieden ist:
 
 - **Bei Thomas bleiben 2, 3 und 4.** Schlüssel, und was öffentlich wird. Das gehört keinem Agenten.
-- **Offen bleiben 20 und 30.** Bei 20 fehlt die Messung, die entscheiden würde. 30 hängt an Frage 2.
+- **Offen bleibt 30.** Es hängt an Frage 2, nicht an der Rangfolge.
+- **20 ist nachgetragen.** Die fehlende Messung wurde am 24.10.2026 gemacht (M1). Sie hat die Annahme hinter der Frage widerlegt, nicht die Frage beantwortet. Die Zahlen stehen in `docs/messungen-m1-m3.md`.
 - **Bei 5** ist die Reihenfolge entschieden, der Push selbst bleibt bei Thomas.
 
 Alles unter **Heute** ist am Quelltext von `main` nachgesehen, Stand 24.10.2026.
+Eine Ausnahme: bei Frage 20 ist es **gemessen**, und die Messung hat den Quelltext-Schluss
+widerlegt. Das steht dort.
 
 ---
 
@@ -227,12 +230,17 @@ P13 (20) bleibt offen. P14 (21) ist ein Satz. P15 (22) kommt nach dem Schnitt.
 
 ### 20. P13 — Prozessdeckel je App
 
-> **Bleibt offen. Es fehlt die Messung**, die entscheiden würde. Siehe **M1** unten.
+> **Nachgetragen am 24.10.2026.** Diese Frage stand offen, weil die Messung fehlte. Die Messung ist gemacht (**M1**) — und sie hat die Annahme hinter der Frage widerlegt. Zahlen und Messaufbau: `docs/messungen-m1-m3.md`.
 
-- **Worum:** Jede App teilt sich heute den einen Deckel von 512 Prozessen.
-- **Heute:** Ein Feld im Manifest dafür gibt es nicht. Der Bedarf ist **nicht gemessen**: niemand weiß, wie viele Prozesse eine echte App braucht und ob eine davon an die 512 stößt.
-- **Warum nicht entschieden:** Die Frage ist nur über die Stabilität zu entscheiden — ob der gemeinsame Deckel reißt. Ohne die Zahl wäre jede Antwort geraten: ein Feld in einen Vertrag zu schreiben ist eine Zusage, die für immer gilt, und 512 als Grenze zu lassen ist eine Behauptung über einen Bedarf, den niemand kennt.
-- **Solange die Messung fehlt:** nicht in v1.3. Der Punkt kommt von selbst zurück, sobald eine App an die 512 stößt — und dann mit einer Zahl.
+- **Worum:** Ob jede App ihren eigenen Prozessdeckel im Manifest bekommt.
+- **Hier stand etwas Falsches:** „Jede App teilt sich heute den einen Deckel von 512 Prozessen." Der Satz stimmt **in beiden Hälften nicht**. Er war aus dem Quelltext geschlossen, nicht gemessen.
+- **Heute, jetzt gemessen:** Der Deckel ist **2048, nicht 512** — abgelesen am cgroup des laufenden Containers (`pids.max`) und von innen nachgefahren: bei `pids.current = 2047` meldet der Container „Cannot fork", `pids.events` zeigt genau eine Bremsung. Und er ist **nicht geteilt**: jeder Container hat seinen eigenen. Eine App am Anschlag lässt die Nachbarin unberührt, sogar unter demselben Benutzer. Eine offene Terminal-Sitzung kostet 2 Prozesse und rund 9 Aufgaben; 64 Sitzungen kommen auf 588. Ein Feld im Manifest gibt es weiter nicht.
+- **Entschieden (24.10.2026):** **Kein Prozessdeckel je App in v1.3.**
+- **Warum:**
+  - **STABILITÄT entscheidet.** Die Frage stand offen, weil ein geteilter Deckel reißen könnte — eine App zieht die anderen mit. Gemessen: den geteilten Deckel gibt es nicht. Damit fällt der Grund weg, aus dem ein Feld je App die Stabilität tragen sollte: es gäbe nichts zu trennen, was nicht schon getrennt ist. Ein Feld je App könnte den eigenen Deckel nur **senken** — es schützt niemanden vor der App, höchstens die App vor sich selbst. Gemessen, nicht abgewogen.
+  - Sicherheit und Leistung werden nicht gebraucht.
+- **Was offen bleibt, und das ehrlich:** Ob eine **andere** App mit 2048 auskommt, ist nicht gemessen — es gibt keine zweite. Im Katalog der laufenden Anlage steht genau eine App, das Terminal; das Abbild `ngc/portversuch` startet `sleep infinity` und ist eine Attrappe, kein Maßstab. Der Punkt kommt von selbst zurück, sobald eine App an ihren eigenen Deckel stößt — und dann mit einer Zahl. Dasselbe Ergebnis wie vorher, aber aus einem anderen Grund: nicht weil die Messung fehlt, sondern weil die gemessene Lage kein Feld verlangt.
+- **Zu bauen:** `--pids-limit` im Controller selbst setzen, statt podmans Voreinstellung zu erben — die 2048 sind nicht von NGC gesetzt und auf einem Server mit anderer `containers.conf` ein anderer Wert.
 
 ### 21. P14 — Eine Oberfläche darf 16 MiB, ein Programm 4 GiB
 
@@ -375,28 +383,42 @@ P13 (20) bleibt offen. P14 (21) ist ein Satz. P15 (22) kommt nach dem Schnitt.
 
 ## Was fehlt — die Messungen, die eine Entscheidung tragen würden
 
-Drei Messungen fehlen. Eine hält eine Frage offen, eine könnte eine Entscheidung
-später umdrehen, eine bestimmt nur eine Zahl. Jede ist ein eigener Punkt.
+Hier standen drei Messungen, die fehlten. **Alle drei sind am 24.10.2026 gemacht**
+— an laufenden Systemen, nicht am Quelltext. Die Zahlen, der Messaufbau und die
+Lücken, die dabei offen blieben, stehen in `docs/messungen-m1-m3.md`. Was unten
+steht, ist die Vorgabe: was jeweils gebraucht wurde und welche Frage daran hing.
 
-### M1 — Wie viele Prozesse braucht eine echte App? (hält **20** offen)
+### M1 — Wie viele Prozesse braucht eine echte App? (hielt **20** offen · **gemessen**)
 
-Gebraucht wird: die Zahl der gleichzeitig laufenden Prozesse je App unter Last,
+Gebraucht wurde: die Zahl der gleichzeitig laufenden Prozesse je App unter Last,
 für das Terminal und für mindestens eine zweite App, und ob eine davon dem
-gemeinsamen Deckel von 512 nahekommt. Ohne diese Zahl ist ein Prozessdeckel je App
-eine Zusage auf Verdacht.
+Deckel nahekommt.
 
-### M2 — Was kostet eine größere Oberflächengrenze im Speicher? (könnte **21** umdrehen)
+**Ergebnis:** Der Deckel ist 2048 und gilt je Container, nicht geteilt. Damit ist
+Frage 20 entschieden — siehe dort. Zwei Lücken blieben: eine zweite echte App gibt
+es nicht, und über 64 Sitzungen hinaus blieb die Messvorrichtung stehen, nicht der
+Container.
 
-Gebraucht wird: der Speicherbedarf der Shell bei acht offenen Apps, einmal mit
+### M2 — Was kostet eine größere Oberflächengrenze im Speicher? (könnte **21** umdrehen · **gemessen**)
+
+Gebraucht wurde: der Speicherbedarf der Shell bei acht offenen Apps, einmal mit
 16 MiB je Datei und einmal mit der angehobenen Grenze, samt der Zeit fürs Hashen
-in einem Zug. Liegt der Preis niedrig, kann 21 mit einer Zahl zurückkommen.
+in einem Zug.
 
-### M3 — Wie oft wird ein Kopplungscode neu ausgegeben? (bestimmt die Schwelle in **23**)
+**Ergebnis:** Der Preis liegt **nicht** niedrig — acht Apps mit 64 MiB kosten den
+Browser 1089 MiB statt 209. Frage 21 bleibt, wie sie entschieden war, jetzt mit
+einer Zahl dahinter.
 
-Gebraucht wird: wie oft im normalen Aufsetzen ein Code neu ausgegeben wird und
+### M3 — Wie oft wird ein Kopplungscode neu ausgegeben? (bestimmt die Schwelle in **23** · **gemessen**)
+
+Gebraucht wurde: wie oft im normalen Aufsetzen ein Code neu ausgegeben wird und
 wie viele MAC-Fehlversuche dabei echt vorkommen. Erst daraus ergibt sich, bei
 welcher Zahl der Zähler sperren darf, ohne einen ehrlichen Admin auszusperren.
 Die Entscheidung in 23 hängt nicht daran — nur die Zahl im Zähler.
+
+**Ergebnis:** 1,75 bis 3 Codes je Server. Fehlversuche: **keine gesehen — aber es
+wird auch nichts aufgezeichnet.** Die Schwelle 3 steht darum unter Vorbehalt, und
+„null" heißt hier „nichts gesehen", nicht „nichts passiert".
 
 ---
 
