@@ -423,6 +423,57 @@ Hier gibt es **zwei** Wege, und das ist der Punkt, an dem man sich verläuft:
   und unterschreibt das persönlich. Die Adresse darf einen Pfad tragen
   (`https://store.example.com/uhr`), mehrere Läden können also auf einem Host liegen.
 
+Wer einen **eigenen** Laden betreibt, nimmt also die Kennung **`global`**: `ngc-api.sh` trägt
+`store_url` und `store_key` unter dieser Kennung ein. Ein Katalog, der sich anders nennt, wird
+abgelehnt, und die Anlage sagt dazu nur „Der Katalog ist fehlerhaft oder gehört zu einem anderen
+Store" (`store.VerifyCatalog`, `c.Store != st.ID`) — welche der beiden Kennungen nicht passt,
+sagt sie nicht.
+
+### Gemessen: eine zweite App in einen laufenden Laden
+
+Das ist der Weg, den dieses Papier belegt, auf der verteilten Anlage am 24.10.2026. Der Laden
+ist dort eine eigene Maschine (`store.ngc.mein.lan`), trug den Terminal und die Folge 6.
+
+Der geheime Schlüssel liegt dort, wo das Aufsetz-Skript ihn hingelegt hat —
+`/root/store/store.key` auf der Laden-Maschine — und `ngc-store` liegt unter
+`/usr/local/bin/ngc-store`. Erst der Katalog zur Seite gelegt, dann das Paket dazu, dann neu
+unterschrieben:
+
+```sh
+# auf der Laden-Maschine
+cp -n /var/www/store/catalog.json /root/store/catalog-vor-uhr-20261024.json
+# das Paket dazu (von einem Baurechner hergebracht)
+ngc-store catalog /var/www/store /root/store/store.key global 7 https://store.ngc.mein.lan
+ngc-store check -store global /var/www/store
+```
+
+Das Ergebnis, aus dem Katalog gelesen, der danach dort lag:
+
+```
+store global seq 7
+  org.sorglos.terminal 1.0.0 https://store.ngc.mein.lan/terminal.ngc 108028416 needs=['root']
+  org.sorglos.uhr      1.0.0 https://store.ngc.mein.lan/uhr.ngc       85623296 needs=None
+kid RPmRtyPJs5WQECAkiPeBsg
+```
+
+`check -store global` sagte `store ok`. Drei Dinge daran sind der eigentliche Beleg:
+
+- **Der Terminal ist noch drin.** Ein Katalog ist das ganze Verzeichnis des Ladens — hätte der
+  Lauf nur die neue App genannt, wäre die alte aus dem Laden verschwunden. Dass beide Pakete im
+  Ordner liegen, ist das, was sie beide in den Katalog bringt.
+- **Die Kennung des Schlüssels ist dieselbe** (`kid RPmRtyPJs5WQECAkiPeBsg`). Mit einem anderen
+  Schlüssel wäre der Katalog für diese Anlage wertlos.
+- **Die Uhr trägt kein `needs`.** Sie fragt nichts an, und der Katalogeintrag sagt das von
+  selbst.
+
+Und der Abruf **über Netz**, von der API-Maschine aus, mit geprüftem Zertifikat:
+
+```
+curl -4 https://store.ngc.mein.lan/catalog.json   http=200 verify=0 bytes=1116
+```
+
+Das ist der Teil, den die Einzel-VM nie prüfen konnte, weil der Laden dort danebenlag.
+
 ---
 
 ## 6. Ohne Laden: ein Paket hochladen
@@ -464,11 +515,20 @@ darf, entscheidet niemand automatisch.
 Abbild, Paket, unterschriebener Katalog, `check -store`. Dazu vier Fälle in
 `apps/uhr/classes/uhr_test.go`.
 
-**Nicht gemessen:** dass die Uhr sich auf einer Anlage einrichten und öffnen lässt, und dass
-ihr Fenster die Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese
-Sitzung nicht. Bis das gelaufen ist, sind Schritt 2 und
-Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft — und dieses Papier sagt es hier,
-statt es wie Erledigtes aussehen zu lassen.
+**Gemessen auf der verteilten Anlage:** die Uhr liegt im laufenden Laden
+(`store.ngc.mein.lan`, Kennung `global`, Folge 7), neben dem Terminal und mit derselben
+Unterschrift, und der Katalog wird von der API-Maschine **über Netz** geholt, mit geprüftem
+Zertifikat (`http=200 verify=0`). Siehe Schritt 5, „Gemessen: eine zweite App in einen
+laufenden Laden".
+
+**Nicht gemessen:** dass die Uhr sich dort einrichten und öffnen lässt und dass ihr Fenster die
+Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
+das gelaufen ist, sind Schritt 2 und Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft —
+und dieses Papier sagt es hier, statt es wie Erledigtes aussehen zu lassen.
+
+**Und eines liegt dazwischen:** die Anlage holt den Katalog **stündlich**. Zwischen „die App ist
+im Laden" und „die App steht in der Oberfläche" liegt also bis zu eine Stunde, ohne dass etwas
+kaputt ist. Wer in dieser Zeit sucht, sucht einen Fehler, den es nicht gibt.
 
 ---
 
@@ -581,14 +641,14 @@ wie man es für etwas anderes macht.
 `<id>:<fassung>` nennt und `services/<arch>.tar` schreibt. Die Prüfungen, die es dafür schon
 gibt, sind genau die, die man will: Basis hängt an einem Digest (`runtime.CheckBase`) und das
 Programm im Zusammenhang passt zur Architektur (`runtime.checkProgram`). Damit wären die drei
-Stellen aus Befund 5 auf eine Angabe zusammengezogen.
+Stellen aus Befund 6 auf eine Angabe zusammengezogen.
 
 Nebenbei: `node/image.go` sagt von sich selbst „WRITTEN AND COMPILED, NOT RUN" — auf dem
 Rechner, auf dem es geschrieben wurde, gab es kein podman. Ein Baurechner mit podman gibt es
 inzwischen (Debian unter WSL, 5.4.2), und dieses Papier hat darauf gebaut — aber mit podman
 direkt, nicht über diesen Befehl. **Der Befehl ist weiterhin nie gelaufen.**
 
-### Befund 2: Der geheime Schlüssel des globalen Ladens ist nicht da
+### Befund 2: Wo der geheime Ladenschlüssel liegt, steht nirgends als Regel
 
 Der Laden der Einzel-VM (`"store": "global"`, Folge 1, eine App) ist mit dem Schlüssel
 unterschrieben, dessen öffentlicher Teil in `/etc/ngc/api.json` als `storeKey` steht
@@ -598,25 +658,31 @@ dort unter `/home/berry/ngcapp/store/store-key.pem` liegt, ist der **öffentlich
 Katalog legt (`apps/cli/classes/check.go`, `StoreKeyFile`). Auf dem Baurechner liegt unter
 `/root/ngc-keys/` nur `release.key`, kein Ladenschlüssel.
 
-**Die Folge:** dem globalen Laden dieser Anlage kann **niemand mehr eine zweite App
-hinzufügen**. Jeder neue Katalog bräuchte Folge 2 und dieselbe Unterschrift, und die kann
-niemand mehr leisten. Weiter gesucht habe ich nicht: ein Dateisystem nach geheimen Schlüsseln
-zu durchsuchen ist genau das, was man nicht tun soll.
+**Die Folge:** dem globalen Laden **der Einzel-VM** kann niemand mehr eine zweite App
+hinzufügen. Jeder neue Katalog bräuchte Folge 2 und dieselbe Unterschrift, und die kann niemand
+mehr leisten. Weiter gesucht habe ich nicht: ein Dateisystem nach geheimen Schlüsseln zu
+durchsuchen ist genau das, was man nicht tun soll.
 
-Das ist auch der Grund, warum die zweite App über „Hochladen" geht (Schritt 6) und nicht über
-den globalen Laden.
+**Auf der verteilten Anlage ist es nicht so**, und der Unterschied ist der Befund. Dort liegt
+der geheime Schlüssel auf der Laden-Maschine unter `/root/store/store.key`, weil
+`tools/proxmox-sechs-ngc.sh` ihn dort anlegt — und darum konnte die zweite App dort wirklich in
+den Laden (Schritt 5). Der Ort steht also in einem Aufsetz-Skript für **einen** Prüfstand, und
+sonst nirgends: nicht als Regel, nicht in der Anleitung zum Betrieb eines Ladens, nicht neben
+der Regel für den Release-Schlüssel. Wer die Einzel-VM aufsetzte, hat ihn an einer anderen
+Stelle gesucht und verloren.
 
 **Vorschlag:** zwei Dinge, und das erste ist das wichtigere.
 
-1. **Festlegen, wo Ladenschlüssel liegen, und es aufschreiben.** Für Release-Schlüssel gibt es
-   den Ort schon (`/root/ngc-keys/release.key` auf dem Baurechner) und die Regel, dass der
-   echte Release-Schlüssel auf einem Hardware-Stick liegt (Entwurf 4.8). Für Ladenschlüssel
-   gibt es beides nicht. Ein Laden, dessen Schlüssel weg ist, ist ein Laden, der nie wieder
+1. **Festlegen, wo Ladenschlüssel liegen, und es aufschreiben** — als Regel, nicht als Zeile in
+   einem Skript. Für Release-Schlüssel gibt es den Ort schon (`/root/ngc-keys/release.key` auf
+   dem Baurechner) und die Regel, dass der echte Release-Schlüssel auf einem Hardware-Stick
+   liegt (Entwurf 4.8). Für Ladenschlüssel gibt es die Regel nicht, nur zwei Prüfstände, die es
+   verschieden gemacht haben. Ein Laden, dessen Schlüssel weg ist, ist ein Laden, der nie wieder
    eine App bekommt — und das merkt man erst bei der zweiten.
 2. Für die Einzel-VM: entweder einen neuen Ladenschlüssel ziehen und `storeKey` in
    `/etc/ngc/api.json` tauschen (Root, API neu starten), oder den globalen Laden lassen, wie er
-   ist, und weitere Läden über die Vertrauensliste aufnehmen. Das Zweite rührt nichts an, was
-   läuft, und ist darum das, was ich vorschlage.
+   ist. Das Zweite rührt nichts an, was läuft, und ist darum das, was ich vorschlage — zumal der
+   Weg jetzt auf der verteilten Anlage belegt ist.
 
 ### Befund 3: Der Laden der Einzel-VM steht in einem Heimatverzeichnis
 
@@ -647,7 +713,36 @@ heute ist es nicht da.
 Wenn nicht, ist das ein Fehler der Auslieferung; wenn doch, ist es ein Beleg mehr dafür, dass
 die Einzel-VM ein Handbau ist.
 
-### Befund 5: Die Architektur steht an drei Stellen
+### Befund 5: Jeder Name der Anlage zeigt zusätzlich auf `::`
+
+Gemessen am 24.10.2026 auf api-1: `store.ngc.mein.lan` löst auf **zwei** Adressen auf —
+`10.2.3.215` und `::`, die unbestimmte Adresse. Ein Client, der IPv6 vorzieht, und das ist die
+Vorgabe, landet damit nicht auf der Laden-Maschine, sondern auf der Maschine, von der er fragt:
+
+```
+curl -4 https://store.ngc.mein.lan/catalog.json   http=200 verify=0 bytes=1116
+curl -6 https://store.ngc.mein.lan/catalog.json   http=000 verify=18
+curl    https://store.ngc.mein.lan/catalog.json   scheitert
+```
+
+Und das Zertifikat, das dabei zurückkommt, ist das der API selbst (`CN=ngc.mein.lan`,
+selbstunterschrieben) — nicht das des Ladens. Die Fehlersuche führt darum erst einmal in die
+falsche Richtung: es sieht aus wie eine kaputte CA oder ein falsches Ladenzertifikat. Beides war
+in Ordnung, `openssl s_client` von derselben Maschine sagte `Verify return code: 0 (ok)`.
+
+Dass die API den Katalog heute trotzdem holt, liegt daran, dass Go eine zweite Adresse
+nachprobiert, wenn die erste nicht antwortet (RFC 6555). Das ist Verlass auf einen Rückfall, kein
+Zustand.
+
+**Nicht gemessen:** woher das `::` kommt — welcher Eintrag im Namensdienst oder in `/etc/hosts`
+es setzt, habe ich nicht verfolgt, und auf einer Maschine, auf der andere messen, wollte ich es
+nicht ändern.
+
+**Vorschlag:** den `::`-Eintrag für diese Namen loswerden. Solange er steht, ist jede Messung am
+Laden eine Messung des Rückfalls mit, und eine Gegenprobe („was passiert, wenn der Laden weg
+ist") trifft womöglich die falsche Maschine.
+
+### Befund 6: Die Architektur steht an drei Stellen
 
 `GOARCH` beim Übersetzen, `--arch` bei `podman build`, und der Name `services/<arch>.tar`. Wer
 eine davon vergisst, bekommt ein Abbild, das baut, sich sichern, laden und einrichten lässt und
@@ -686,7 +781,19 @@ go run ./apps/cli pack apps/uhr/templates /pfad/laden/uhr-1.0.0.ngc
 go run ./apps/cli catalog /pfad/laden /pfad/laden-key.seed uhr-probe 1 https://store.ngc.test/uhr
 go run ./apps/cli check -store uhr-probe /pfad/laden
 
-# 5. einrichten: Paket in der App „App-Store" unter „Hochladen" wählen,
-#    „Installieren", „Aktivieren", persönlich unterschreiben,
-#    dann in „Benutzer & Rechte" das Recht <app>/use verteilen.
+# 5. in einen laufenden Laden: Paket neben die anderen legen und den Katalog
+#    mit EINER höheren Folge neu unterschreiben - alle Apps, nicht nur die neue.
+#    Auf der Laden-Maschine:
+#      cp -n /var/www/store/catalog.json /root/store/catalog-vor-<app>-<datum>.json
+#      ngc-store catalog /var/www/store /root/store/store.key global <folge+1> https://store.<zone>
+#      ngc-store check -store global /var/www/store
+#    Gegenprobe von der API-Maschine aus, gegen den NAMEN und über IPv4:
+#      curl -4 https://store.<zone>/catalog.json -o /dev/null -w "%{http_code} %{ssl_verify_result}
+"
+
+# 6. einrichten: in der App „App-Store" unter „Apps" (aus dem Laden) oder
+#    „Hochladen" (Paket von der Platte), dann „Installieren", „Aktivieren",
+#    persönlich unterschreiben, dann in „Benutzer & Rechte" das Recht
+#    <app>/use verteilen. Der Laden wird stündlich geholt - bis dahin steht
+#    die App noch nicht in der Liste.
 ```
