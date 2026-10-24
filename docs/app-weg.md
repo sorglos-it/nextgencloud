@@ -521,7 +521,13 @@ Unterschrift, und der Katalog wird von der API-Maschine **über Netz** geholt, m
 Zertifikat (`http=200 verify=0`). Siehe Schritt 5, „Gemessen: eine zweite App in einen
 laufenden Laden".
 
-**Nicht gemessen:** dass die Uhr sich dort einrichten und öffnen lässt und dass ihr Fenster die
+**Versucht und gescheitert:** die Uhr **einrichten**. Die Oberfläche zeigt sie, der Dialog
+fragt nur nach dem Rechner (sie will keine Rechte), und „Aktivieren" endet mit „Das hat der
+Rechner nicht angenommen" — weil der Tunnel des Controllers in derselben Sekunde abbricht
+(Befund 9). Das ist der Stand, und er ist das Ergebnis dieser Runde: der Weg trägt bis **in**
+den Laden und bis **in** die Oberfläche, und reißt beim Einrichten.
+
+**Nicht gemessen:** dass die Uhr sich einrichten und öffnen lässt und dass ihr Fenster die
 Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
 das gelaufen ist, sind Schritt 2 und Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft —
 und dieses Papier sagt es hier, statt es wie Erledigtes aussehen zu lassen.
@@ -728,7 +734,7 @@ Grenzen, die heute wirklich gelten:
 * **Inhalt:** nur Form — Pfade, Kreise, Rechtecke. **Kein `<script>`, kein `<foreignObject>`,
   kein `<image>`, kein `xlink:href` oder `href` nach außen, keine Schriftart von außen.** Ein
   SVG ist ein Dokument und kann all das. Ob jemand es prüft, steht gleich darunter.
-* **Wirkung:** heute keine. Siehe Befund 9.
+* **Wirkung:** heute keine. Siehe Befund 11.
 
 ---
 
@@ -756,7 +762,7 @@ wie man es für etwas anderes macht.
 `<id>:<fassung>` nennt und `services/<arch>.tar` schreibt. Die Prüfungen, die es dafür schon
 gibt, sind genau die, die man will: Basis hängt an einem Digest (`runtime.CheckBase`) und das
 Programm im Zusammenhang passt zur Architektur (`runtime.checkProgram`). Damit wären die drei
-Stellen aus Befund 8 auf eine Angabe zusammengezogen.
+Stellen aus Befund 10 auf eine Angabe zusammengezogen.
 
 Nebenbei: `node/image.go` sagt von sich selbst „WRITTEN AND COMPILED, NOT RUN" — auf dem
 Rechner, auf dem es geschrieben wurde, gab es kein podman. Ein Baurechner mit podman gibt es
@@ -857,23 +863,31 @@ nicht ändern.
 Laden eine Messung des Rückfalls mit, und eine Gegenprobe („was passiert, wenn der Laden weg
 ist") trifft womöglich die falsche Maschine.
 
-### Befund 6: Die erste Anmeldung scheitert immer, die zweite geht
+### Befund 6: Die erste Anmeldung scheitert immer, die zweite nicht verlässlich
 
 Gemessen am 24.10.2026 auf `ngc.mein.lan`, in **einem** Browserprofil, auf **einer** Seite,
 mit demselben Namen und demselben Kennwort:
 
 ```
-Anmeldung Versuch 1: nein   ("Anmeldung fehlgeschlagen.")
-Anmeldung Versuch 2: JA     (Schreibtisch kommt)
+Lauf A   Versuch 1: nein   Versuch 2: JA
+Lauf B   Versuch 1: nein   Versuch 2: JA
+Lauf C   Versuch 1: nein   Versuch 2: JA
+Lauf D   Versuch 1: nein   Versuch 2: JA
+Lauf E   Versuch 1: nein   Versuch 2: nein   Versuch 3: JA
 ```
 
-Dreimal nachgestellt, immer dasselbe Bild. Thomas kannte es schon und hielt es für die zwei
-APIs der Anlage — das ist es **nicht**: die Shell redet nicht mit `api-1` oder `api-2`
-unmittelbar, sondern über `ngc.mein.lan/api/v1/ws`, und in beiden Versuchen über denselben Weg.
+Fünf Läufe. Der erste Versuch scheitert **immer**; der zweite geht **meistens**. Es ist also
+kein „man muss es zweimal machen", sondern **unzuverlässig** — und das ist schlimmer, weil man
+sich darauf auch nicht einrichten kann.
+
+Thomas kannte das Bild und hielt es für die zwei APIs der Anlage — das ist es **nicht**: die
+Shell redet nicht mit `api-1` oder `api-2` unmittelbar, sondern über `ngc.mein.lan/api/v1/ws`,
+in jedem Versuch über denselben Weg.
 
 **Nicht gemessen:** woran es liegt. Der Verdacht geht auf die Vertrauensliste — der erste
 Versuch holt die Kette erst (`openTrustFromChain`, „login: no trust list") und scheitert dabei,
-der zweite findet sie vor. Das ist eine Vermutung, keine Messung.
+der zweite findet sie vor. Das ist eine Vermutung, keine Messung, und Lauf E passt nicht
+vollständig dazu: wäre es nur das Holen der Kette, müsste der zweite Versuch immer gehen.
 
 **Warum es mehr ist als ein Schönheitsfehler:** wer sich zum ersten Mal anmeldet, bekommt den
 Satz für ein falsches Kennwort. Er wird sein Kennwort für falsch halten, es noch einmal tippen —
@@ -909,7 +923,67 @@ as above". An dieser dritten Stelle macht er sie.
 Name sein darf. Er verrät nichts: die Grammatik ist öffentlich und sagt nichts darüber, wer
 existiert — genau das steht als Begründung über `loginStart`.
 
-### Befund 8: Die Architektur steht an drei Stellen
+### Befund 8: „Der Katalog dieses Stores ist nicht echt" für einen Katalog, der echt ist
+
+Gemessen am 24.10.2026: ein frisch geöffnetes Fenster zeigte im Reiter „Apps" den Satz
+
+> Der Katalog dieses Stores ist nicht echt.
+
+Der Katalog auf der Laden-Maschine war dabei **unberührt** — dieselbe Datei von 11:33, dieselbe
+Schlüsselkennung, `ngc-store check -store global` grün —, und **sechs Minuten vorher** hatte
+dasselbe Fenster beide Apps korrekt aufgelistet. Es ist also der Satz für „dieses Fenster hat
+den Katalog noch nicht geholt", nicht für einen gefälschten Katalog.
+
+Wer das liest, hält seinen Laden für kompromittiert. Das ist die teuerste Fehlmeldung von
+allen, die hier stehen: sie beschuldigt.
+
+Behoben ist es auf dem Zweig `ngc-ersteapp` („Stop calling a store a forger when no catalog was
+fetched yet"); in der 0.2.1, die auf der Anlage läuft, ist der Satz noch da.
+
+**Umgehen:** im Reiter „Quellen" erst **„Jetzt nachsehen"** drücken, dann in „Apps" gehen.
+
+**Vorschlag:** den Zweig `ngc-ersteapp` ansehen und einspielen. Er ist klein (drei Dateien) und
+behebt genau das.
+
+### Befund 9: Beim Aktivieren bricht der Tunnel des Controllers ab
+
+Das ist der Befund, an dem der Weg heute **endet**. Gemessen am 24.10.2026, 12:14:38, beim
+Klick auf „Aktivieren" für die Uhr auf `svc-1`:
+
+Die Oberfläche sagte:
+
+> Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.
+
+Und auf `svc-1` sagte der Controller in derselben Sekunde:
+
+```
+WARN tunnel failed api=wss://api-1.ngc.mein.lan:7443/tunnel
+     err="link: the API broke the contract of the tunnel"
+INFO a service wrote to stderr app=org.sorglos.terminal service=terminal action=shell bytes=530
+WARN Die Verbindung einer App wurde abgebrochen. app=org.sorglos.terminal code=E_PROTOCOL
+INFO tunnel up api=wss://api-1.ngc.mein.lan:7443/tunnel
+```
+
+Der Tunnel kam eine Sekunde später zurück, aber die Einrichtung war gescheitert — **und es riss
+eine laufende Terminal-Sitzung mit**, die nichts damit zu tun hatte.
+
+**Was daran gesichert ist:** die API wurde in diesem Moment **nicht** neu gestartet (im
+Journal zwischen 12:08 und 12:20 kein `Stopping`/`Started`), der Abbruch hängt also am
+Aktivieren und nicht an einem Neustart.
+
+**Was daran nicht gesichert ist:** es ist **eine** Messung, auf der API-Fassung, die bis 12:20
+lief. Danach hat eine andere Sitzung 0.2.2 eingespielt; ob es dort noch auftritt, ist **nicht
+gemessen**. Und warum die API den Vertrag bricht, ist auch nicht gemessen — nur dass der
+Controller es so nennt.
+
+**Warum es wichtig ist:** das ist die Station, die vorher niemand erreichen konnte, weil es nur
+eine App gab. Die erste Einrichtung einer zweiten App trifft sie sofort.
+
+**Vorschlag:** eigener Lauf gegen 0.2.2, mit dem Paket der Uhr, das dafür bereitliegt. Wenn es
+noch auftritt: die Stelle, an der der Controller den Vertragsbruch feststellt
+(`link`), sagt, welche Nachricht ihn auslöst — damit hat die Suche einen Anfang.
+
+### Befund 10: Die Architektur steht an drei Stellen
 
 `GOARCH` beim Übersetzen, `--arch` bei `podman build`, und der Name `services/<arch>.tar`. Wer
 eine davon vergisst, bekommt ein Abbild, das baut, sich sichern, laden und einrichten lässt und
@@ -920,7 +994,7 @@ liest; es läuft aber nur in `ngc-controller image`, also nur für das Terminal 
 **Vorschlag:** mit Befund 1 erledigt. Ein Unterbefehl, der den App-Ordner nimmt, nennt die
 Architektur einmal und schreibt den tar-Namen selbst.
 
-### Befund 9: `icon` wird getragen und nie gezeigt
+### Befund 11: `icon` wird getragen und nie gezeigt
 
 Das Manifest-Feld `icon` geht den ganzen Weg — `pack` prüft, dass die Datei im ui-tar liegt
 (`shared/store/pack.go:131`), der Schreibtisch reicht es als `core.DesktopApp.Icon` an die
