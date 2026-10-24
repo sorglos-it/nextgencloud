@@ -5625,8 +5625,14 @@ das Argument praktisch macht und nicht nur richtig. Und geprüft, ob die Trennun
 Die Wortfunde (`dbKey`, `PRIVATE KEY`) sind Feldnamen im NGC-Programm und Fehlermeldungen in
 `libapt-private.so` des Grundabbilds, keine Schlüssel.
 
-Offen bleibt `app-daten.tar`: Klartext, 110 bis 201 MB, zu groß für einen Passwortmanager, und
-es liegt deshalb bei den Daten, obwohl es ohne jeden Schlüssel aufgeht. Es vor dem
-Wegschreiben zu verschlüsseln wäre die bessere Form und ist eine Entscheidung.
+`app-daten.tar` bleibt die Ausnahme: Klartext, 110 bis 201 MB, zu groß für einen
+Passwortmanager, und es liegt deshalb bei den Daten, obwohl es ohne jeden Schlüssel aufgeht.
+**Entschieden ist es** — von der Sitzung, der Thomas die Sicherungsform übergeben hat: die
+App-Daten gehören verschlüsselt, bevor sie die Maschine verlassen, mit einem Schlüssel, der
+nicht mitfährt und in den Schlüssel-Ordner gehört. **Gebaut ist es nicht**, und zwar aus ihrer
+eigenen dritten Bedingung: ein verschlüsseltes Tar, das niemand mehr aufmacht, ist schlechter
+als ein Klartext-Tar, also muss der Weg zurück mit getrenntem Schlüssel erst **einmal gegangen**
+sein. Die Maschine dafür ist abgeräumt. Bis dahin: Klartext mit einer Notiz, die sagt, was er
+ist.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.

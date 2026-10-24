@@ -581,13 +581,44 @@ Daten-Ordner:
 **Null von achtzehn.** Die Trennung ist eine. Der ausgepackte Prüfordner ist danach wieder
 gelöscht.
 
-### Die eine Ausnahme bleibt, und sie lässt sich nicht wegsortieren
+### Die eine Ausnahme: `app-daten.tar`
 
 `app-daten.tar` ist Klartext (Abschnitt 4) und mit 110 bis 201 MB zu groß für einen
 Passwortmanager. Es liegt also im Daten-Ordner, obwohl es ohne jeden Schlüssel aufgeht. Das
 `LIESMICH.txt` sagt es in zwei Sätzen, statt es zu verschweigen: diese eine Datei ist wie ein
-Zugang zu behandeln. Eine bessere Form dafür ist offen — sie wäre, die App-Daten vor dem
-Wegschreiben zu verschlüsseln, und das ist eine Entscheidung und kein Handgriff.
+Zugang zu behandeln.
+
+**Entschieden ist sie trotzdem, und nicht von mir.** Thomas hat die Sicherungsform an die
+Sitzung „Was passiert, wenn ein Rechner ausfällt" übergeben, und ihre Entscheidung lautet: die
+App-Daten gehören **verschlüsselt, bevor sie die Maschine verlassen**, mit einem Schlüssel, der
+nicht mitfährt. Die Begründung ist dieselbe Rechnung wie bei den 224 Byte, eine Stufe weiter:
+ein Gegenstand, der die Anlage aufmacht, ohne dass man etwas dazu braucht, ist genau das, was
+die Trennung vermeiden sollte — und dass er groß ist, macht ihn nicht harmloser, nur
+unhandlicher. Größe ist Leistung, und Leistung steht hinten.
+
+Drei Bedingungen gehören zu der Entscheidung, und die dritte ist die, die das Bauen verschiebt:
+
+1. Der Schlüssel dafür ist ein **neues Geheimnis** und gehört in den Schlüssel-Ordner, nicht
+   neben die Daten. Dann liegt er bei den 75 KB und die Rechnung oben bleibt, wie sie ist.
+2. **Ein Schlüssel, der mitfährt, ist keiner.** Ein Werkzeug, das ihn beim Lauf erzeugt und
+   neben die Daten legt, hat nichts gewonnen — das ist die Falle, in die diese Sorte
+   Verschlüsselung regelmäßig läuft.
+3. **Ein verschlüsseltes `app-daten.tar`, das niemand mehr aufmacht, ist schlechter als ein
+   Klartext-Tar.** „Sicherheit = Stabilität" ist kein Freibrief für starke Verschlüsselung ohne
+   Rückweg: der Weg zurück muss **einmal gegangen** sein, mit dem Schlüssel aus dem
+   Passwortmanager und nicht aus dem Lauf, der ihn gerade erzeugt hat. Sonst tauscht man ein
+   Leseproblem gegen ein Totalverlustproblem.
+
+**Darum ist es hier nicht gebaut.** Bedingung 3 verlangt eine Messung, und die Maschine dafür
+ist weg: VM 310 ist auf Thomas' Wort abgeräumt (Abschnitt 6 beschreibt, was sie getragen hat).
+Die halbe Messung wäre billig — ein Tar verschlüsseln, den Schlüssel wegnehmen, das Scheitern
+zeigen, mit dem Schlüssel aus einem anderen Ordner bitgleich zurückholen — aber die ganze
+hängt daran, dass eine App aus einem **verschlüsselt gesicherten** Datenordner wieder läuft,
+und das braucht wieder eine Maschine. Bis dahin gilt, was die Sitzung selbst sagt: **lieber
+Klartext mit einer Notiz, die sagt, was er ist.** So steht es jetzt in jedem `LIESMICH.txt`.
+
+Was dieses Blatt damit **nicht** behauptet: dass der Klartext in Ordnung ist. Er ist der
+schlechtere von zwei Zuständen und der ehrlichere von zwei Zeitpunkten.
 
 ---
 
@@ -627,9 +658,11 @@ Wegschreiben zu verschlüsseln, und das ist eine Entscheidung und kein Handgriff
   Teil gemessen.
 - Abschnitt 5 die Schritte 2 und 3 — Kopplungscode und Eintrag in die Vertrauensliste. Die
   brauchen einen angemeldeten Admin in der Oberfläche; Schritt 1, 4 und 5 sind gefahren.
-- Abschnitt 9 die bessere Form für `app-daten.tar`: dass es Klartext ist und zu groß für
-  einen Passwortmanager, ist gemessen; es vor dem Wegschreiben zu verschlüsseln ist ein
-  Vorschlag und nicht gebaut.
+- Abschnitt 9 `app-daten.tar`: dass es Klartext ist und zu groß für einen Passwortmanager,
+  ist gemessen. Dass es verschlüsselt gehört, ist **entschieden** — von der Sitzung „Was
+  passiert, wenn ein Rechner ausfällt", der Thomas die Sicherungsform übergeben hat — und
+  **nicht gebaut**: ihre dritte Bedingung verlangt, dass der Weg zurück mit getrenntem
+  Schlüssel einmal gegangen ist, und die Maschine dafür ist abgeräumt.
 - Abschnitt 8 der Unterschied zwischen `safe_to_bootstrap: 1` und `0` — **nicht einmal
   abgewogen, sondern offen**: den zweiten Fall hat niemand erzeugt, und es stehen bewusst keine
   Zeilen dafür hier.
