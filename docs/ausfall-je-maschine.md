@@ -403,6 +403,70 @@ und ein Neustart der API nimmt dort die Laufzeitverzeichnisse der Apps mit. Auf
 api-1, wo beide Dienste laufen, wäre derselbe Neustart darum nicht harmlos
 gewesen; api-2 trägt nur die API.
 
+### api-1 aus — gemessen am 24.10.2026, 13:32–13:34 UTC
+
+Vor dem Schalten gemessen, und schon das ist die halbe Antwort: **alle drei
+Controller nennen in `/etc/ngc/controller.json` genau einen Tunnel,
+`wss://api-1.ngc.mein.lan:7443/tunnel`.** db-1, svc-1 und svc-2 kennen api-2
+nicht. Nur `web.json` auf api-1 nennt beide APIs.
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | nein, vollständig | **nein.** `ngc.mein.lan` und api-1:443 antworten gar nicht; api-2:443 antwortet nicht, vorher wie nachher — dort liegt kein Web |
+| (b)–(e) | nein | **nein**, es gibt keine Seite, die sie anbieten könnte |
+| API-Pfad auf api-2 | — | **lebt, unverändert.** `POST /api/v1/login/start` mit `{}` gibt 400, genau wie im vollen Betrieb und genau wie api-1 sonst |
+| Datenbank | — | `mariadb` auf db-1 die ganze Zeit `active` |
+| Controller | — | **alle drei verlieren den Tunnel und versuchen es ewig bei api-1.** `0` Treffer auf api-2 in allen drei Journalen |
+| laufende Apps | — | **laufen weiter.** `ngc-terminal-439982dd` und `ngc-uhr-ad8c00e2` auf svc-1, `ngc-terminal-439982dd` auf svc-2 — unverändert über den ganzen Ausfall |
+| Ehrlichkeit | Browserfehler, mehr nicht | **nach innen ehrlich, nach außen stumm** — siehe unten |
+| Selbstfang | ja | **ja, und gut.** Oberfläche wieder 200 **vier Sekunden** nachdem die Adresse antwortete; alle drei Controller hängen sich von selbst wieder ein (13:34:02, 13:34:03, 13:34:04). Keine Hand nötig |
+
+**Die Antwort auf die Frage des Auftrags.** „Ist der zweite API-Server etwas
+wert oder nur Zierde?" — Zierde ist zu hart und zu ungenau. Gemessen ist:
+api-2 **arbeitet durchgehend**, er beantwortet die ganze Zeit dieselben
+Anfragen wie api-1 im Normalbetrieb. Nur kommt niemand zu ihm:
+
+- der Apache, der ihn aufrufen würde, lief auf api-1,
+- der Name `ngc.mein.lan` zeigt nur auf api-1,
+- und **kein einziger Controller hat ihn in seiner Liste.**
+
+api-2 ist also kein Zierstück, sondern ein **Ersatzteil, an das nichts
+angeschlossen ist**. Der Unterschied ist wichtig, weil er sagt, was zu tun
+wäre: nicht „api-2 reparieren", sondern drei Verdrahtungen nachziehen — Web
+auch auf api-2, ein Name, der auf beide zeigt, und beide APIs in jeder
+`controller.json`. Dass `web.json` beide schon kennt, zeigt, dass die Bauart
+darauf angelegt ist; nur die Anlage ist nicht so verdrahtet.
+
+**Zur Ehrlichkeit, und hier ist sie zweigeteilt.** Nach innen sagt die Anlage
+die Wahrheit, wörtlich und ohne Beschönigung:
+
+```
+WARN tunnel failed api=wss://api-1.ngc.mein.lan:7443/tunnel err="link: the API cannot be reached"
+INFO status stayed on this server apps=2 err="node: this controller has no tunnel to an API"
+```
+
+Das ist genau richtig: es nennt die Ursache, es nennt die Folge („apps=2
+bleiben hier"), und es schiebt nichts auf den Benutzer. Nach außen aber sieht
+der Benutzer **nur den Verbindungsfehler seines Browsers**. Dass seine Daten
+unangetastet sind, dass die Datenbank läuft, dass seine beiden Apps die ganze
+Zeit weiterlaufen — davon erfährt er nichts, weil die Stelle, die es ihm sagen
+könnte, dieselbe Maschine ist, die fehlt. Das ist kein leerer Zustand, der wie
+ein Angriff aussieht; es ist ein Totalausfall, der wie ein Netzproblem
+aussieht, und immerhin ist er das auch.
+
+Der beruhigendste Einzelbefund dieses Falls: **die Apps laufen weiter, während
+niemand sie sehen kann.** Wer ein Terminal offen hatte, verliert die Seite,
+aber nicht den Behälter.
+
+Eine Messnotiz zum Lesen der Tabelle: meine Sonde schreibt bei „keine Antwort"
+`000000` (die Null von `curl` und die des Rückfalls hintereinander). Und die
+Container-Sonde musste ich korrigieren: über `su` gefragt meldete rootloses
+`podman` „nichts", weil es als `su`-Kind sein Laufzeitverzeichnis nicht findet
+(`mkdir /run/user/0/libpod: permission denied`) — die Container liefen die ganze
+Zeit. Gemessen wird darum von root aus an den `conmon`-Prozessen, die den Namen
+des Behälters hinter `-n` tragen. Eine Sonde, die „nichts" sagt, weil sie selbst
+nicht darf, ist die gefährlichste Sorte.
+
 ## Was offen ist, und warum
 
 Vier der sechs Fälle sind nicht gefahren, und die Spalte „was der Benutzer
