@@ -9,9 +9,13 @@ gelegt. Keine Zeile beschrieb das. Belegt ist der Weg hier mit einer **zweiten**
 (`apps/uhr/`, `org.sorglos.uhr`), die mit Absicht winzig ist: eine Uhr. Was daran Arbeit war,
 ist der Weg, nicht die App.
 
+**Der Weg ist am 24.10.2026 einmal ganz gegangen worden**, auf der verteilten Anlage: Paket
+gebaut, in den Laden gelegt, unterschrieben, über Netz geholt, eingerichtet, geöffnet — und im
+Fenster stand die Zeit des Servers.
+
 **Gemessen und abgewogen stehen getrennt.** Jeder Abschnitt sagt, was gelaufen ist und was
-nicht. Am Ende stehen die Befunde: Stellen, an denen der Weg einen Handgriff braucht, den kein
-Fremder erraten kann.
+nicht. Am Ende stehen elf Befunde: Stellen, an denen der Weg einen Handgriff braucht, den kein
+Fremder erraten kann — oder an denen NGC etwas sagt, was nicht stimmt.
 
 ---
 
@@ -184,7 +188,9 @@ Eine Aktion, die das Manifest nicht trägt, lehnt die Shell ab, bevor sie jemand
 (`appframe.doCall`, `CODES.FORBIDDEN`). Ein Tippfehler im Namen ist also eine Ablehnung und
 kein Aufruf.
 
-**Nicht gemessen:** dass die Uhr-Oberfläche so im Fenster erscheint — siehe Schritt 7.
+**Gemessen am 24.10.2026**, und zwar **im Rahmen der App selbst** gelesen, nicht auf der Seite
+des Schreibtischs: die Oberfläche der Uhr erscheint so im Fenster, mit `#zeit` und `#hinweis`
+aus ihrer eigenen `index.html`. Die Seite trug zwei Rahmen; der Inhalt steht in dem der App.
 
 ---
 
@@ -423,6 +429,57 @@ Hier gibt es **zwei** Wege, und das ist der Punkt, an dem man sich verläuft:
   und unterschreibt das persönlich. Die Adresse darf einen Pfad tragen
   (`https://store.example.com/uhr`), mehrere Läden können also auf einem Host liegen.
 
+Wer einen **eigenen** Laden betreibt, nimmt also die Kennung **`global`**: `ngc-api.sh` trägt
+`store_url` und `store_key` unter dieser Kennung ein. Ein Katalog, der sich anders nennt, wird
+abgelehnt, und die Anlage sagt dazu nur „Der Katalog ist fehlerhaft oder gehört zu einem anderen
+Store" (`store.VerifyCatalog`, `c.Store != st.ID`) — welche der beiden Kennungen nicht passt,
+sagt sie nicht.
+
+### Gemessen: eine zweite App in einen laufenden Laden
+
+Das ist der Weg, den dieses Papier belegt, auf der verteilten Anlage am 24.10.2026. Der Laden
+ist dort eine eigene Maschine (`store.ngc.mein.lan`), trug den Terminal und die Folge 6.
+
+Der geheime Schlüssel liegt dort, wo das Aufsetz-Skript ihn hingelegt hat —
+`/root/store/store.key` auf der Laden-Maschine — und `ngc-store` liegt unter
+`/usr/local/bin/ngc-store`. Erst der Katalog zur Seite gelegt, dann das Paket dazu, dann neu
+unterschrieben:
+
+```sh
+# auf der Laden-Maschine
+cp -n /var/www/store/catalog.json /root/store/catalog-vor-uhr-20261024.json
+# das Paket dazu (von einem Baurechner hergebracht)
+ngc-store catalog /var/www/store /root/store/store.key global 7 https://store.ngc.mein.lan
+ngc-store check -store global /var/www/store
+```
+
+Das Ergebnis, aus dem Katalog gelesen, der danach dort lag:
+
+```
+store global seq 7
+  org.sorglos.terminal 1.0.0 https://store.ngc.mein.lan/terminal.ngc 108028416 needs=['root']
+  org.sorglos.uhr      1.0.0 https://store.ngc.mein.lan/uhr.ngc       85623296 needs=None
+kid RPmRtyPJs5WQECAkiPeBsg
+```
+
+`check -store global` sagte `store ok`. Drei Dinge daran sind der eigentliche Beleg:
+
+- **Der Terminal ist noch drin.** Ein Katalog ist das ganze Verzeichnis des Ladens — hätte der
+  Lauf nur die neue App genannt, wäre die alte aus dem Laden verschwunden. Dass beide Pakete im
+  Ordner liegen, ist das, was sie beide in den Katalog bringt.
+- **Die Kennung des Schlüssels ist dieselbe** (`kid RPmRtyPJs5WQECAkiPeBsg`). Mit einem anderen
+  Schlüssel wäre der Katalog für diese Anlage wertlos.
+- **Die Uhr trägt kein `needs`.** Sie fragt nichts an, und der Katalogeintrag sagt das von
+  selbst.
+
+Und der Abruf **über Netz**, von der API-Maschine aus, mit geprüftem Zertifikat:
+
+```
+curl -4 https://store.ngc.mein.lan/catalog.json   http=200 verify=0 bytes=1116
+```
+
+Das ist der Teil, den die Einzel-VM nie prüfen konnte, weil der Laden dort danebenlag.
+
 ---
 
 ## 6. Ohne Laden: ein Paket hochladen
@@ -464,11 +521,47 @@ darf, entscheidet niemand automatisch.
 Abbild, Paket, unterschriebener Katalog, `check -store`. Dazu vier Fälle in
 `apps/uhr/classes/uhr_test.go`.
 
-**Nicht gemessen:** dass die Uhr sich auf einer Anlage einrichten und öffnen lässt, und dass
-ihr Fenster die Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese
-Sitzung nicht. Bis das gelaufen ist, sind Schritt 2 und
-Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft — und dieses Papier sagt es hier,
-statt es wie Erledigtes aussehen zu lassen.
+**Gemessen auf der verteilten Anlage:** die Uhr liegt im laufenden Laden
+(`store.ngc.mein.lan`, Kennung `global`, Folge 7), neben dem Terminal und mit derselben
+Unterschrift, und der Katalog wird von der API-Maschine **über Netz** geholt, mit geprüftem
+Zertifikat (`http=200 verify=0`). Siehe Schritt 5, „Gemessen: eine zweite App in einen
+laufenden Laden".
+
+**Gemessen am 24.10.2026: der ganze Weg trägt.** Die Uhr wurde aus dem Laden eingerichtet und
+geöffnet, auf der verteilten Anlage, gegen API 0.2.2:
+
+```
+12:27:49  "Installieren" an der Uhr-Karte
+12:27:55  Dialog: nur "Rechner | svc-1 | svc-2 | Aktivieren" - keine Rechte, sie fragt keine an
+12:27:56  Rechner gewählt: svc-1
+12:28:08  "Die App ist eingerichtet."
+12:29:53  Fenster geöffnet
+12:29:55  im Rahmen der App gelesen:  "2026-10-24T12:29:55Z"
+                                      "Die Zeit kommt vom Server."
+```
+
+Und die Gegenproben dazu, weil ein Satz auf dem Schirm noch kein Beleg ist:
+
+- **Sie liegt auf dem Knoten, den ich gewählt habe.** `/var/lib/ngc/apps/org.sorglos.uhr` steht
+  auf **svc-1** und **nicht** auf svc-2. Damit ist zum ersten Mal gemessen, dass eine App dort
+  landet, wo man sie hinschickt — mit einer Maschine war das nicht zu prüfen.
+- **Die Zeit ist echt.** `12:29:55Z` ist die Sekunde, in der das Fenster aufging. Sie wurde
+  nicht aus dem Browser gelesen: sie kam aus dem Behälter.
+- **Sie kam über `stdout`.** Das ist der Stolperstein 4, umgedreht und bewiesen: die Zeile, die
+  der Dienst auf `stdout` schreibt, steht im Fenster. Die andere Zeile, die er gleichzeitig auf
+  `stderr` schreibt, steht dort **nicht** — die sieht nur das Protokoll des Controllers.
+
+**Damit ist die Lücke zu, die diesen Auftrag ausgelöst hat:** NGC hat nicht mehr eine App,
+sondern zwei, und der Weg dahin ist nicht mehr unaufgeschrieben. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
+das gelaufen ist, sind Schritt 2 und Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft —
+und dieses Papier sagt es hier, statt es wie Erledigtes aussehen zu lassen.
+
+**Und eines liegt dazwischen:** die Anlage holt den Katalog von selbst nur **stündlich**.
+Zwischen „die App ist im Laden" und „die App steht in der Oberfläche" liegt also bis zu eine
+Stunde, ohne dass etwas kaputt ist — wer in dieser Zeit sucht, sucht einen Fehler, den es nicht
+gibt. Warten muss man aber nicht: der Reiter „Quellen" hat einen Knopf **„Jetzt nachsehen"**,
+und er sagt daneben, wie alt der Stand ist („Zuletzt geprüft: …"). Gemessen am 24.10.2026: die
+Folge 7 war um 13:44 von selbst geholt, und die Uhr stand danach im Reiter „Apps".
 
 ---
 
@@ -552,8 +645,10 @@ Zwei Fälle halten das auch ohne Behälter fest, und einer davon prüft das Gege
 je **auch** auf `stderr` landet, denn dann lassen sich die Richtungen nicht mehr
 unterscheiden.
 
-Was damit **noch nicht** gemessen ist: dass die Zeile auch durch den Kanal bis ins Fenster
-kommt. Das ist dieselbe Lücke wie in Schritt 7.
+**Und durch den Kanal bis ins Fenster ist es jetzt auch gemessen** (Schritt 7): im Rahmen der
+App stand `2026-10-24T12:29:55Z` — die `stdout`-Zeile. Die `stderr`-Zeile stand dort nicht. Die
+zwei Richtungen sind damit nicht nur im Behälter, sondern über den ganzen Weg
+auseinandergehalten.
 
 ---
 
@@ -561,86 +656,92 @@ kommt. Das ist dieselbe Lücke wie in Schritt 7.
 
 Das Manifest kennt ein Feld `icon`: ein Pfad **unterhalb von `ui/`**, genau wie `ui.entry`
 (`shared/store/manifest.go:43`). Es ist freiwillig — beide heutigen Apps, Terminal und Uhr,
-lassen es weg.
+lassen es weg. **Gezeigt wird es nicht**, und das hat einen Grund, der weiter unten als
+Befund 11 steht.
 
-### Was heute wirklich damit passiert
+### Was die Oberfläche zeichnet
 
-Der Weg des Feldes ist kurz und endet früher, als man denkt:
+Seit heute trägt jedes Schild auf dem Schreibtisch, im Startmenü, im Titelbalken und in der
+Taskleiste ein **Icon der Oberfläche selbst**, nicht mehr den ersten Buchstaben des Namens.
+Welches, entscheidet `apps/web/public/assets/js/shell/icon.js` an der Kennung der App:
 
-1. **Paket.** `pack` verlangt, dass die Datei im ui-tar wirklich liegt: ein `icon`, zu dem
-   `ui/<pfad>` fehlt, lässt das Packen scheitern (`shared/store/pack.go:131`). Der Pfad muss
-   `ValidPath` sein — relativ, keine versteckte Datei, kein `..`
-   (`shared/store/manifest.go:137`).
-2. **API.** Der Schreibtisch reicht den Wert unverändert an die Oberfläche weiter, als
-   `core.DesktopApp.Icon` (`apps/server-api/classes/coreapp/desktop.go:171`).
-3. **Oberfläche.** Und dort hört es auf. **Die Oberfläche liest `icon` nirgends.** Jede App
-   bekommt im Startmenü und auf dem Schreibtisch dasselbe Schild mit dem **ersten Buchstaben
-   ihres Namens** — `Desktop.glyph()`, `apps/web/public/assets/js/shell/desktop.js:479-483`;
-   der Fenstertitel nimmt denselben Buchstaben
-   (`apps/web/public/assets/js/shell/desktop.js:562`).
-
-Für einen App-Bauer heißt das heute: **ein `icon` im Manifest ändert am Bild nichts.** Ob das
-Feld leer ist oder gefüllt — gezeigt wird der Buchstabe. Das ist kein Versehen, sondern so
-beschlossen, und der Kommentar an Ort und Stelle sagt warum: das Icon ist eine Datei aus dem
-ui-tar und darf erst gezeigt werden, wenn dessen Beweis stimmt (Aufgabe 22) — „ein Bild, das
-nicht bewiesen ist, ist ein Bild, das jemand anderes ausgesucht hat".
-
-### Der Satz, den es gibt
-
-`apps/web/public/assets/icons/` — zwölf SVGs, alle nach derselben Regel gezeichnet:
-
-| Datei | wofür |
+| Kennung | Icon |
 | --- | --- |
-| `terminal.svg` | Terminal |
-| `uhr.svg` | Uhr |
-| `laden.svg` | App-Store |
-| `benutzer.svg` | Benutzer und Rechte |
-| `platzhalter.svg` | App ohne eigenes Icon |
-| `rechte.svg` | Rechte, Freigaben, Bestätigungen |
-| `einstellungen.svg` | Einstellungen |
-| `dateien.svg` | Dateien |
-| `knoten.svg` | Knoten einer Anlage |
-| `rechner.svg` | Rechner (`fake-link.js`) |
-| `nicht-erreichbar.svg` | Zustand `unreachable` |
-| `keine-lizenz.svg` | Zustand `unlicensed` |
+| `ngc.store` | `laden` |
+| `ngc.users` | `benutzer` |
+| `org.sorglos.terminal` | `terminal` |
+| `org.sorglos.uhr` | `uhr` |
+| `org.sorglos.calculator` | `rechner` |
+| alles andere | `platzhalter` |
 
-Die letzten beiden sind da, weil der Schreibtisch diese zwei Zustände schon kennt und heute
-nur blass zeichnet (`.dicon.off`, `shell.css:84`); die mittleren vier, weil jede dieser Stellen
-in NGC bereits existiert und sonst beim nächsten Mal wieder einzeln gezeichnet würde.
+Zwei Zustände gehen vor: eine App im Zustand `unreachable` bekommt `nicht-erreichbar`, eine
+im Zustand `unlicensed` bekommt `keine-lizenz` — das blasse Schild allein sagt nicht, welcher
+von beiden es ist.
+
+Eine App, die die Oberfläche nicht kennt, bekommt also den Platzhalter und **nie** ein Bild
+aus ihrem eigenen Paket. Der Name steht unter dem Schild; er ist es, der zwei Platzhalter
+auseinanderhält.
+
+### Wo die Formen liegen, und warum dort
+
+Die Formen stehen **im Code**, als Tabelle in `icon.js`, und werden mit dem DOM zu einem
+`<svg>` zusammengebaut — Element für Element, Merkmal für Merkmal, nie über `innerHTML` und
+nie über eine Adresse.
+
+Das ist keine Vorliebe, sondern eine Regel, die es im Repo schon gab: unter `public/` darf
+nichts liegen, was ein Browser als **Dokument dieser Herkunft** ausführen würde, und ein
+`.svg` ist genau das — ein Dokument mit eigenen Skripten, auf das man einen Menschen direkt
+schicken kann. `apps/web/tests/shell/csp.spec.js:698` hält den Web-Stamm darauf fest und hat
+den ersten Versuch dieses Auftrags abgefangen, der die Dateien als CSS-Maske einbinden wollte.
+Der Weg, den die Regel offenlässt, ist genau der hier gewählte.
+
+Dieselben Formen liegen zusätzlich als Dateien in **`docs/icons/`** — zum Kopieren in die
+eigene `ui/` und für die Übersichtsseite. Die sind **erzeugt, nicht gepflegt**:
+
+```sh
+node apps/web/tests/icons-build.mjs   # schreibt docs/icons/*.svg und uebersicht.html
+```
+
+Dass die zwei Hälften nicht auseinanderlaufen, ist gemessen und nicht geglaubt:
+`apps/web/tests/shell/desktop-icons.spec.js` liest beide und fällt um, wenn sie sich
+unterscheiden.
+
+### Der Satz
+
+Zwölf Icons: `terminal`, `uhr`, `laden` (App-Store), `benutzer`, `rechte`, `platzhalter`,
+`einstellungen`, `dateien`, `knoten`, `rechner`, `nicht-erreichbar`, `keine-lizenz`.
 
 **Die Regel des Satzes** — wer ein dreizehntes zeichnet, hält sie ein:
 
 * Zeichenfläche `viewBox="0 0 24 24"`, nichts innerhalb von 2 Einheiten am Rand.
 * Strichstärke `1.75`, runde Enden und Ecken, `fill="none"`.
-* `stroke="currentColor"` am Wurzel-Element, keine festen Farben.
-* Zwei nebeneinander laufende Striche mindestens 2,5 Einheiten auseinander — alles
-  Engere verschwindet bei 24 px.
+* `stroke="currentColor"`, keine festen Farben.
+* Zwei nebeneinander laufende Striche mindestens 2,5 Einheiten auseinander — alles Engere
+  verschwindet bei 24 px.
 * Keine Schrift, keine Verläufe, keine Filter.
 
-Geprüft wurde das nicht nach Gefühl: **`apps/web/public/assets/icons/uebersicht.html`** stellt
-alle zwölf nebeneinander, hell und dunkel, in 24, 32 und 48 px, dazu eine Zeile, wie sie im
-Startmenü stünden. Die Datei im Browser öffnen, mehr braucht es nicht. Drei Icons
-(Einstellungen, Rechner, Keine Lizenz) sind nach dem ersten Blick auf diese Seite neu
-gezeichnet worden, weil sie bei 24 px zugelaufen sind.
+Geprüft wurde das nicht nach Gefühl: **`docs/icons/uebersicht.html`** stellt alle zwölf
+nebeneinander, hell und dunkel, in 24, 32 und 48 px. Im Browser öffnen, mehr braucht es
+nicht. Drei Icons (Einstellungen, Rechner, Keine Lizenz) sind nach dem ersten Blick auf diese
+Seite neu gezeichnet worden, weil sie bei 24 px zugelaufen sind.
 
 ### Hell und dunkel
 
 Der Schreibtisch hat ein dunkles Thema (`data-theme`). Ein Icon mit fester Farbe ist auf einem
 der beiden Gründe falsch. Deshalb `currentColor`: das Icon nimmt die Textfarbe der Stelle an,
-an der es steht, und ist damit in beiden Themen richtig, ohne zweite Datei.
+an der es steht, und ist in beiden Themen richtig, ohne zweite Datei.
 
-Das gilt aber **nur, wenn das SVG in der Seite steht**. Ein `<img src="icon.svg">` ist ein
-eigenes Dokument und erbt nichts — `currentColor` wird dort schwarz. Wer ein Icon als `<img>`
-oder als CSS-Hintergrund lädt, braucht entweder zwei Dateien oder eine feste Farbe, die auf
-beiden Gründen trägt. Innerhalb der eigenen App-Oberfläche ist das die Entscheidung des
-App-Bauers.
+Das gilt **nur, wenn das SVG in der Seite steht**. Ein `<img src="icon.svg">` ist ein eigenes
+Dokument und erbt nichts — `currentColor` wird dort schwarz. Wer ein Icon als `<img>` oder als
+CSS-Hintergrund lädt, braucht zwei Dateien oder eine feste Farbe, die auf beiden Gründen
+trägt. Innerhalb der eigenen App-Oberfläche ist das die Entscheidung des App-Bauers.
 
 ### Wie ein App-Bauer eins benutzt
 
-Innerhalb der eigenen Oberfläche sofort und ohne Bedingung: Datei nach `ui/` kopieren und in
-`index.html` einsetzen.
+**In der eigenen Oberfläche**, sofort und ohne Bedingung: Datei aus `docs/icons/` nach `ui/`
+kopieren und in `index.html` einsetzen. Innerhalb des eigenen Fensters wirkt sie.
 
-Als **App-Icon** im Manifest:
+**Als App-Icon im Manifest** — eingepackt wird es, gezeigt heute nicht (Befund 11):
 
 ```
 <app-ordner>/
@@ -657,15 +758,17 @@ Als **App-Icon** im Manifest:
 Grenzen, die heute wirklich gelten:
 
 * **Pfad:** relativ, unterhalb `ui/`, kein führender `/`, kein `..`, keine versteckte Datei
-  (`ValidPath`). Die Datei muss im Paket liegen, sonst packt `pack` nicht.
-* **Größe:** für `icon` selbst steht keine Zahl im Code. Die Grenze ist die des ui-tars, und
-  eine eigene Zahl erfände dieses Papier. Praktisch: die zwölf Dateien hier sind zwischen
-  290 und 620 Bytes groß. **Mehr als 4 KB ist für ein Strich-Icon kein Icon mehr**, das ist
-  die Hausregel dieses Satzes, keine Prüfung des Systems.
+  (`ValidPath`). Die Datei muss im Paket liegen, sonst packt `pack` nicht
+  (`shared/store/pack.go:131`).
+* **Größe:** für `icon` selbst steht keine Zahl im Code; die Grenze ist die des ui-tars. Die
+  zwölf Dateien hier sind zwischen 290 und 620 Bytes groß. **Mehr als 4 KB ist für ein
+  Strich-Icon kein Icon mehr** — Hausregel dieses Satzes, keine Prüfung des Systems.
 * **Inhalt:** nur Form — Pfade, Kreise, Rechtecke. **Kein `<script>`, kein `<foreignObject>`,
-  kein `<image>`, kein `xlink:href` oder `href` nach außen, keine Schriftart von außen.** Ein
-  SVG ist ein Dokument und kann all das. Ob jemand es prüft, steht gleich darunter.
-* **Wirkung:** heute keine. Siehe Befund 6.
+  kein `<image>`, kein `<use>`, kein `href` oder `xlink:href`, keine Schrift von außen.** Ein
+  SVG ist ein Dokument und kann all das. Wer es prüft, steht in Befund 11.
+* **Wirkung:** heute keine. Wer sein eigenes Bild im Startmenü sehen will, braucht eine
+  Zeile in `icon.js` — und das ist kein Dauerzustand, sondern der Punkt, an dem Befund 11
+  hängt.
 
 ---
 
@@ -693,14 +796,14 @@ wie man es für etwas anderes macht.
 `<id>:<fassung>` nennt und `services/<arch>.tar` schreibt. Die Prüfungen, die es dafür schon
 gibt, sind genau die, die man will: Basis hängt an einem Digest (`runtime.CheckBase`) und das
 Programm im Zusammenhang passt zur Architektur (`runtime.checkProgram`). Damit wären die drei
-Stellen aus Befund 5 auf eine Angabe zusammengezogen.
+Stellen aus Befund 10 auf eine Angabe zusammengezogen.
 
 Nebenbei: `node/image.go` sagt von sich selbst „WRITTEN AND COMPILED, NOT RUN" — auf dem
 Rechner, auf dem es geschrieben wurde, gab es kein podman. Ein Baurechner mit podman gibt es
 inzwischen (Debian unter WSL, 5.4.2), und dieses Papier hat darauf gebaut — aber mit podman
 direkt, nicht über diesen Befehl. **Der Befehl ist weiterhin nie gelaufen.**
 
-### Befund 2: Der geheime Schlüssel des globalen Ladens ist nicht da
+### Befund 2: Wo der geheime Ladenschlüssel liegt, steht nirgends als Regel
 
 Der Laden der Einzel-VM (`"store": "global"`, Folge 1, eine App) ist mit dem Schlüssel
 unterschrieben, dessen öffentlicher Teil in `/etc/ngc/api.json` als `storeKey` steht
@@ -710,25 +813,31 @@ dort unter `/home/berry/ngcapp/store/store-key.pem` liegt, ist der **öffentlich
 Katalog legt (`apps/cli/classes/check.go`, `StoreKeyFile`). Auf dem Baurechner liegt unter
 `/root/ngc-keys/` nur `release.key`, kein Ladenschlüssel.
 
-**Die Folge:** dem globalen Laden dieser Anlage kann **niemand mehr eine zweite App
-hinzufügen**. Jeder neue Katalog bräuchte Folge 2 und dieselbe Unterschrift, und die kann
-niemand mehr leisten. Weiter gesucht habe ich nicht: ein Dateisystem nach geheimen Schlüsseln
-zu durchsuchen ist genau das, was man nicht tun soll.
+**Die Folge:** dem globalen Laden **der Einzel-VM** kann niemand mehr eine zweite App
+hinzufügen. Jeder neue Katalog bräuchte Folge 2 und dieselbe Unterschrift, und die kann niemand
+mehr leisten. Weiter gesucht habe ich nicht: ein Dateisystem nach geheimen Schlüsseln zu
+durchsuchen ist genau das, was man nicht tun soll.
 
-Das ist auch der Grund, warum die zweite App über „Hochladen" geht (Schritt 6) und nicht über
-den globalen Laden.
+**Auf der verteilten Anlage ist es nicht so**, und der Unterschied ist der Befund. Dort liegt
+der geheime Schlüssel auf der Laden-Maschine unter `/root/store/store.key`, weil
+`tools/proxmox-sechs-ngc.sh` ihn dort anlegt — und darum konnte die zweite App dort wirklich in
+den Laden (Schritt 5). Der Ort steht also in einem Aufsetz-Skript für **einen** Prüfstand, und
+sonst nirgends: nicht als Regel, nicht in der Anleitung zum Betrieb eines Ladens, nicht neben
+der Regel für den Release-Schlüssel. Wer die Einzel-VM aufsetzte, hat ihn an einer anderen
+Stelle gesucht und verloren.
 
 **Vorschlag:** zwei Dinge, und das erste ist das wichtigere.
 
-1. **Festlegen, wo Ladenschlüssel liegen, und es aufschreiben.** Für Release-Schlüssel gibt es
-   den Ort schon (`/root/ngc-keys/release.key` auf dem Baurechner) und die Regel, dass der
-   echte Release-Schlüssel auf einem Hardware-Stick liegt (Entwurf 4.8). Für Ladenschlüssel
-   gibt es beides nicht. Ein Laden, dessen Schlüssel weg ist, ist ein Laden, der nie wieder
+1. **Festlegen, wo Ladenschlüssel liegen, und es aufschreiben** — als Regel, nicht als Zeile in
+   einem Skript. Für Release-Schlüssel gibt es den Ort schon (`/root/ngc-keys/release.key` auf
+   dem Baurechner) und die Regel, dass der echte Release-Schlüssel auf einem Hardware-Stick
+   liegt (Entwurf 4.8). Für Ladenschlüssel gibt es die Regel nicht, nur zwei Prüfstände, die es
+   verschieden gemacht haben. Ein Laden, dessen Schlüssel weg ist, ist ein Laden, der nie wieder
    eine App bekommt — und das merkt man erst bei der zweiten.
 2. Für die Einzel-VM: entweder einen neuen Ladenschlüssel ziehen und `storeKey` in
    `/etc/ngc/api.json` tauschen (Root, API neu starten), oder den globalen Laden lassen, wie er
-   ist, und weitere Läden über die Vertrauensliste aufnehmen. Das Zweite rührt nichts an, was
-   läuft, und ist darum das, was ich vorschlage.
+   ist. Das Zweite rührt nichts an, was läuft, und ist darum das, was ich vorschlage — zumal der
+   Weg jetzt auf der verteilten Anlage belegt ist.
 
 ### Befund 3: Der Laden der Einzel-VM steht in einem Heimatverzeichnis
 
@@ -759,7 +868,210 @@ heute ist es nicht da.
 Wenn nicht, ist das ein Fehler der Auslieferung; wenn doch, ist es ein Beleg mehr dafür, dass
 die Einzel-VM ein Handbau ist.
 
-### Befund 5: Die Architektur steht an drei Stellen
+### Befund 5: Jeder Name der Anlage zeigt zusätzlich auf `::`
+
+Gemessen am 24.10.2026 auf api-1: `store.ngc.mein.lan` löst auf **zwei** Adressen auf —
+`10.2.3.215` und `::`, die unbestimmte Adresse. Ein Client, der IPv6 vorzieht, und das ist die
+Vorgabe, landet damit nicht auf der Laden-Maschine, sondern auf der Maschine, von der er fragt:
+
+```
+curl -4 https://store.ngc.mein.lan/catalog.json   http=200 verify=0 bytes=1116
+curl -6 https://store.ngc.mein.lan/catalog.json   http=000 verify=18
+curl    https://store.ngc.mein.lan/catalog.json   scheitert
+```
+
+Und das Zertifikat, das dabei zurückkommt, ist das der API selbst (`CN=ngc.mein.lan`,
+selbstunterschrieben) — nicht das des Ladens. Die Fehlersuche führt darum erst einmal in die
+falsche Richtung: es sieht aus wie eine kaputte CA oder ein falsches Ladenzertifikat. Beides war
+in Ordnung, `openssl s_client` von derselben Maschine sagte `Verify return code: 0 (ok)`.
+
+Dass die API den Katalog heute trotzdem holt, liegt daran, dass Go eine zweite Adresse
+nachprobiert, wenn die erste nicht antwortet (RFC 6555). Das ist Verlass auf einen Rückfall, kein
+Zustand.
+
+**Nicht gemessen:** woher das `::` kommt — welcher Eintrag im Namensdienst oder in `/etc/hosts`
+es setzt, habe ich nicht verfolgt, und auf einer Maschine, auf der andere messen, wollte ich es
+nicht ändern.
+
+**Vorschlag:** den `::`-Eintrag für diese Namen loswerden. Solange er steht, ist jede Messung am
+Laden eine Messung des Rückfalls mit, und eine Gegenprobe („was passiert, wenn der Laden weg
+ist") trifft womöglich die falsche Maschine.
+
+### Befund 6: Die erste Anmeldung scheitert immer, die zweite nicht verlässlich
+
+Gemessen am 24.10.2026 auf `ngc.mein.lan`, in **einem** Browserprofil, auf **einer** Seite,
+mit demselben Namen und demselben Kennwort:
+
+```
+Lauf A   Versuch 1: nein   Versuch 2: JA
+Lauf B   Versuch 1: nein   Versuch 2: JA
+Lauf C   Versuch 1: nein   Versuch 2: JA
+Lauf D   Versuch 1: nein   Versuch 2: JA
+Lauf E   Versuch 1: nein   Versuch 2: nein   Versuch 3: JA
+```
+
+Fünf Läufe. Der erste Versuch scheitert **immer**; der zweite geht **meistens**. Es ist also
+kein „man muss es zweimal machen", sondern **unzuverlässig** — und das ist schlimmer, weil man
+sich darauf auch nicht einrichten kann.
+
+**Alle fünf Läufe waren gegen die API-Fassung, die bis 12:20 lief** (`config.json` nannte
+0.2.1). Danach wurde 0.2.2 eingespielt, und **der erste Lauf dagegen kam beim ERSTEN Versuch
+durch.** Ein Lauf ist keine Messung — es kann derselbe Zufall sein, der in Lauf E dreimal
+brauchte. Aber es ist der erste Hinweis, dass 0.2.2 hier anders ist, und wer das nachmisst,
+fängt dort an.
+
+Thomas kannte das Bild und hielt es für die zwei APIs der Anlage — das ist es **nicht**: die
+Shell redet nicht mit `api-1` oder `api-2` unmittelbar, sondern über `ngc.mein.lan/api/v1/ws`,
+in jedem Versuch über denselben Weg.
+
+**Nicht gemessen: woran es liegt.** Der Verdacht geht auf die Vertrauensliste — der erste
+Versuch holt die Kette erst (`openTrustFromChain`, „login: no trust list") und scheitert dabei,
+der zweite findet sie vor. Das ist eine Vermutung, keine Messung, und **Lauf E passt nicht
+dazu**: wäre es nur das Holen der Kette, müsste der zweite Versuch immer gehen.
+
+**Und das hier ist der ehrliche Teil — was ich NICHT ausschließen konnte.** Es steht hier,
+damit es später niemand als „ging doch" abtut:
+
+- **Das Browserprofil.** Die Läufe A bis D nahmen je ein frisches Profil, Lauf E nicht — aber in
+  Lauf E scheiterte der zweite Versuch im **selben** Profil. Ob ein Profil, das schon einmal
+  drin war, den ersten Versuch bestehen würde, habe ich nicht gemessen.
+- **Die Dauer von Argon2id und mein Zeitlimit.** Der Schlüssel wird im Browser gerechnet. Ich
+  habe 12 bis 25 Sekunden gewartet; ob ein Versuch, der mir als „gescheitert" galt, in Wahrheit
+  noch rechnete, habe ich nicht geprüft — der Satz „Anmeldung fehlgeschlagen." stand allerdings
+  schon auf der Seite, und den schreibt die Maske erst, wenn sie fertig ist.
+- **Der Browser.** Alles mit chromium gemessen, nichts mit Firefox. Der Code kennt für genau
+  diese Gegend Unterschiede zwischen den Maschinen (`passwordLoginFits`, `passkeyFits`), und in
+  Firefox 141 war hier schon einmal etwas anders.
+- **Dass es überhaupt am ersten Versuch hängt** und nicht an der Zeit seit dem Laden der Seite.
+  Jeder erste Versuch kam wenige Sekunden nach dem Laden; ein erster Versuch nach einer Minute
+  Wartezeit ist nicht gemessen.
+
+Ein Fragezeichen also, und es bleibt eines, bis jemand es messend aufmacht.
+
+**Warum es mehr ist als ein Schönheitsfehler:** wer sich zum ersten Mal anmeldet, bekommt den
+Satz für ein falsches Kennwort. Er wird sein Kennwort für falsch halten, es noch einmal tippen —
+und dann geht es, ohne dass er weiß, warum. Ein Mensch lernt daraus „man muss es zweimal
+machen"; ein Skript lernt es nicht und meldet eine falsche Anmeldung.
+
+**Vorschlag:** eigener Lauf. Zuerst messen, ob der erste Versuch die Vertrauensliste holt und
+daran scheitert; wenn ja, sie holen, **bevor** die Maske eine Anmeldung annimmt.
+
+### Befund 7: Ein Name, der nicht in die Grammatik passt, bekommt den Satz für ein falsches Kennwort
+
+`http.loginStart` prüft den Namen im **Browser**, bevor es etwas sendet:
+
+```js
+if (!validLoginName(name)) throw new ApiError(wire.CODES.PROTOCOL);
+```
+
+Erlaubt sind nur Kleinbuchstaben, Ziffern und `. _ -` (das erste Zeichen ein Buchstabe oder eine
+Ziffer, `contracts/text.js`, `trust.ValidLoginName`). Ein Name mit einem Großbuchstaben, einem
+`@`, einem Leerzeichen oder einem Umlaut wird also **lokal** abgelehnt, und die Maske sagt
+„Anmeldung fehlgeschlagen." — der Satz für ein falsches Kennwort.
+
+Gemessen am 24.10.2026, weil es mich selbst eine Runde gekostet hat: drei Versuche, **kein
+einziger Aufruf** an eine API (im Protokoll beider APIs kein Eintrag), weil im Namen ein
+Leerzeichen stand. Das Fehlerbild sieht aus wie ein Netz- oder Kennwortproblem und ist eine
+Zeichenprüfung.
+
+Der Code beklagt diese Verwechslung an zwei anderen Stellen ausdrücklich — für eine Maschine
+ohne Passwortschlüssel und für einen Passschlüssel, den es nicht gibt, steht dort „the same lie
+as above". An dieser dritten Stelle macht er sie.
+
+**Vorschlag:** für einen Namen außerhalb der Grammatik einen eigenen Satz, der sagt, was ein
+Name sein darf. Er verrät nichts: die Grammatik ist öffentlich und sagt nichts darüber, wer
+existiert — genau das steht als Begründung über `loginStart`.
+
+### Befund 8: „Der Katalog dieses Stores ist nicht echt" für einen Katalog, der echt ist
+
+Gemessen am 24.10.2026: ein frisch geöffnetes Fenster zeigte im Reiter „Apps" den Satz
+
+> Der Katalog dieses Stores ist nicht echt.
+
+Der Katalog auf der Laden-Maschine war dabei **unberührt** — dieselbe Datei von 11:33, dieselbe
+Schlüsselkennung, `ngc-store check -store global` grün —, und **sechs Minuten vorher** hatte
+dasselbe Fenster beide Apps korrekt aufgelistet. Es ist also der Satz für „dieses Fenster hat
+den Katalog noch nicht geholt", nicht für einen gefälschten Katalog.
+
+Wer das liest, hält seinen Laden für kompromittiert. Das ist die teuerste Fehlmeldung von
+allen, die hier stehen: sie beschuldigt.
+
+**Hier stand zuerst, der Zweig `origin/ngc-ersteapp` behebe das und sei noch nicht eingespielt.
+Das war falsch**, und es ist nachgemessen worden: die Oberfläche **kennt** den Fall und hat
+einen eigenen, besseren Satz dafür, aus PR 86 —
+
+> Der Katalog dieses Stores ist noch nicht geholt. NGC sieht stündlich nach; unter Quellen steht,
+> wann es das letzte Mal geklappt hat.
+
+Und sie ist **ausgeliefert**: in `/var/www/ngc/public/assets/js/apps/store.js` auf api-1 stehen
+**beide** Sätze (nachgezählt: „noch nicht geholt" einmal, „nicht echt." zweimal). Der alte
+Zweig trägt dieselbe Idee mit schwächerem Text und ist überholt, nicht ungemergt.
+
+**Damit ist der Befund schärfer, nicht erledigt:** ich habe „nicht echt" gesehen, **obwohl** die
+Oberfläche den Fall „noch nicht geholt" kennt und zeigen kann. Dieser Satz fällt nur im letzten
+Zweig — die API hat also etwas **anderes** als `E_NOTFOUND` geantwortet. Es gibt einen zweiten
+Weg zu demselben falschen Satz, und den kennt niemand.
+
+**Nicht gemessen:** welcher Code es war. Der Verdacht fällt auf `E_UNREACHABLE` — dann hätte die
+API den Laden in dem Moment nicht erreicht, und der Satz lügt ein zweites Mal, weil er dem
+Betreiber eine Fälschung unterstellt, wo eine Verbindung fehlte. Zu prüfen ist es an der
+Antwort, nicht am Satz auf dem Schirm.
+
+**Umgehen:** im Reiter „Quellen" erst **„Jetzt nachsehen"** drücken, dann in „Apps" gehen.
+
+**Vorschlag:** den Fall noch einmal herstellen und den **Code** lesen, den die API
+zurückgibt — Netzwerkansicht oder Protokoll der API —, statt den Satz auf dem Schirm. Erst dann
+weiß man, welcher Zweig anzufassen ist. `origin/ngc-ersteapp` ist es nicht; der ist überholt und
+kollidiert mit main.
+
+### Befund 9: Beim Aktivieren brach der Tunnel ab — auf 0.2.1, nicht mehr auf 0.2.2
+
+Das ist der Befund, an dem der Weg heute **endet**. Gemessen am 24.10.2026, 12:14:38, beim
+Klick auf „Aktivieren" für die Uhr auf `svc-1`:
+
+Die Oberfläche sagte:
+
+> Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.
+
+Und auf `svc-1` sagte der Controller in derselben Sekunde:
+
+```
+WARN tunnel failed api=wss://api-1.ngc.mein.lan:7443/tunnel
+     err="link: the API broke the contract of the tunnel"
+INFO a service wrote to stderr app=org.sorglos.terminal service=terminal action=shell bytes=530
+WARN Die Verbindung einer App wurde abgebrochen. app=org.sorglos.terminal code=E_PROTOCOL
+INFO tunnel up api=wss://api-1.ngc.mein.lan:7443/tunnel
+```
+
+Der Tunnel kam eine Sekunde später zurück, aber die Einrichtung war gescheitert — **und es riss
+eine laufende Terminal-Sitzung mit**, die nichts damit zu tun hatte.
+
+**Was daran gesichert ist:** die API wurde in diesem Moment **nicht** neu gestartet (im
+Journal zwischen 12:08 und 12:20 kein `Stopping`/`Started`), der Abbruch hängt also am
+Aktivieren und nicht an einem Neustart.
+
+**Und dann die Gegenprobe, die den Befund halbiert.** Um 12:20 und 12:21 hat eine andere
+Sitzung **API 0.2.2** eingespielt. Derselbe Lauf, derselbe Knoten `svc-1`, dieselbe Aktion, nur
+die neue Fassung — um 12:28:08 sagte die Oberfläche:
+
+> Die App ist eingerichtet.
+
+Der Abbruch ist also **auf 0.2.1 gemessen und auf 0.2.2 nicht mehr aufgetreten**. Je eine
+Messung auf jeder Seite, nicht mehr: dass 0.2.2 es behebt, ist damit **nicht** belegt — belegt
+ist, dass es dort einmal durchlief, wo es vorher einmal riss. Warum die alte Fassung den Vertrag
+brach, ist nicht gemessen und wird es wohl auch nicht mehr.
+
+**Was bleibt, auch ohne Erklärung:** das war die Station, die vorher niemand erreichen konnte,
+weil es nur eine App gab — und die erste Einrichtung einer zweiten App hat sie sofort getroffen.
+Dass sie heute durchläuft, hängt an einer Fassung, die zwischen den beiden Messungen eingespielt
+wurde. Ein Grund mehr, diesen Schritt bei jeder neuen Fassung wirklich zu fahren, statt ihn für
+erledigt zu halten: er war genau einen Vormittag lang kaputt, und es hat es niemand gemerkt,
+weil niemand eine zweite App hatte.
+
+**Nebenwirkung, die bleibt:** der Abbruch riss eine laufende Terminal-Sitzung mit
+(`code=E_PROTOCOL`). Wer an derselben Anlage misst, hatte um 12:14:38 ein Loch in seinen Zahlen.
+
+### Befund 10: Die Architektur steht an drei Stellen
 
 `GOARCH` beim Übersetzen, `--arch` bei `podman build`, und der Name `services/<arch>.tar`. Wer
 eine davon vergisst, bekommt ein Abbild, das baut, sich sichern, laden und einrichten lässt und
@@ -770,43 +1082,54 @@ liest; es läuft aber nur in `ngc-controller image`, also nur für das Terminal 
 **Vorschlag:** mit Befund 1 erledigt. Ein Unterbefehl, der den App-Ordner nimmt, nennt die
 Architektur einmal und schreibt den tar-Namen selbst.
 
-### Befund 6: `icon` wird getragen und nie gezeigt
+### Befund 11: `icon` wird getragen und nie gezeigt
 
 Das Manifest-Feld `icon` geht den ganzen Weg — `pack` prüft, dass die Datei im ui-tar liegt
 (`shared/store/pack.go:131`), der Schreibtisch reicht es als `core.DesktopApp.Icon` an die
 Oberfläche (`apps/server-api/classes/coreapp/desktop.go:171`) — und **kommt nirgends an**. In
-`apps/web/public/assets/js/` liest kein einziger Zugriff dieses Feld. Gezeichnet wird in jedem
-Fall ein Buchstabenschild: `Desktop.glyph()`,
-`apps/web/public/assets/js/shell/desktop.js:479-483`.
+`apps/web/public/assets/js/` liest kein einziger Zugriff dieses Feld.
 
-Die gute Nachricht zuerst, weil sie die wichtigere ist: **es wird heute kein fremdes SVG in die
+Die gute Nachricht zuerst, weil sie die wichtigere ist: **es wird kein fremdes SVG in die
 Oberfläche eingebettet.** Die Stelle, an der ein ungeprüftes Bild aus einem fremden Paket in
-die Seite des Schreibtischs geraten könnte, existiert nicht. Das ist kein Zufall — der
-Kommentar über `glyph()` sagt genau das und hängt das Zeigen an den Beweis des ui-tars
-(Aufgabe 22).
+die Seite des Schreibtischs geraten könnte, existiert nicht. Die Schilder tragen seit
+Kapitel 9 Icons, aber alle zwölf sind Formen der Oberfläche selbst, in `icon.js`, mit dem DOM
+gebaut; `shell/desktop-hostile.spec.js` misst, dass in Schreibtisch, Startmenü und Taskleiste
+kein `<img>`, kein `<script>`, kein fremdes `<svg>` und an keinem Icon ein `href`- oder
+`on…`-Merkmal steht.
 
-Der Befund ist die andere Hälfte: das Feld **sieht benutzbar aus und ist es nicht.** Ein
-App-Bauer, der `"icon": "icon.svg"` ins Manifest schreibt, bekommt keinen Fehler, kein
-Schweigen im Protokoll, keinen Hinweis — er bekommt ein gepacktes, installiertes,
-funktionierendes Paket, in dem sein Icon nie auftaucht. Dieses Papier war die einzige Stelle,
-an der das stand; ohne sie muss man es messen, um es zu wissen.
+Der Befund ist die andere Hälfte: das Feld **sieht benutzbar aus und ist es nicht.** Wer
+`"icon": "icon.svg"` ins Manifest schreibt, bekommt keinen Fehler, kein Schweigen im
+Protokoll, keinen Hinweis — er bekommt ein gepacktes, installiertes, funktionierendes Paket,
+in dem sein Icon nie auftaucht.
 
-**Vorschlag:** nicht jetzt bauen, sondern an Aufgabe 22 hängen. Wenn das Zeigen kommt, gehört
-dazu — und zwar bevor die erste fremde Datei in die Seite geht:
+**Warum es nicht nebenbei gebaut wurde**, und das ist die Zahl, um die es geht: ein Bild aus
+einem fremden Paket darf erst gezeigt werden, wenn der Beweis des ui-tars stimmt, und der
+Beweis gilt für das **ganze Archiv**, nicht für eine einzelne Datei (`appframe.js`,
+`verifiedUI`). Das Icon im Startmenü zu zeigen hieße also: für **jede** App der Liste das
+vollständige ui-tar holen, **bis zu 64 MiB** (`uitar.js`, `MAX_UI_TOTAL`), bevor das Menü
+überhaupt gezeichnet werden kann. Für ein Schild von 24 Pixeln ist das der falsche Handel.
 
-* Das SVG darf **nur aus dem ui-tar** kommen, dessen Beweis schon geprüft ist, nie aus einer
-  URL und nie aus dem Manifest selbst.
-* Es gehört **nicht** als `innerHTML` in die Seite. Entweder in einem Rahmen (`<img>` aus einem
-  `blob:`-Verweis, der weder Skript noch Verweis nach außen ausführt), oder, wenn es die Farbe
-  erben soll, nur nach einer Prüfung, die alles außer Form verwirft: `<script>`,
-  `<foreignObject>`, `<image>`, `<use>`, jedes `href`/`xlink:href`, jedes `on…`-Merkmal.
-* Scheitert die Prüfung, gilt dieselbe Regel wie bei der App-Liste: **nicht das halbe Bild
-  zeigen, sondern das Buchstabenschild** — das Verhalten von heute ist der sichere Rückfall.
-* Der Platzhalter dafür ist gezeichnet: `apps/web/public/assets/icons/platzhalter.svg`.
+**Vorschlag,** in dieser Reihenfolge:
 
-Solange das nicht da ist, ist der Satz in `apps/web/public/assets/icons/` das, wofür er
-gemacht ist: die Icons der **Oberfläche selbst** und eine Vorlage, die ein App-Bauer in seine
-eigene `ui/` kopiert — innerhalb seiner App wirkt sie sofort.
+1. **Erst die Zustellung.** Was fehlt, ist ein Weg, eine *einzelne* Datei des ui-tars bewiesen
+   zu bekommen — ein Beweis je Datei (ein Merkle-Baum über die Einträge) oder eine eigene,
+   knapp begrenzte Handlung der API, die nur das Icon liefert und für sich unterschrieben ist.
+   Beides ist eine Änderung an **`shared/`** und damit hier **blockiert**, nicht gebaut:
+   `shared/core/results.go:68` (`DesktopApp`) und `shared/store/manifest.go:43` (`Icon`) sind
+   die Zeilen, an denen es hinge.
+2. **Dann das Zeichnen**, und zwar nicht als `innerHTML`. Entweder in einem Rahmen (`<img>`
+   aus einem `blob:`-Verweis, der weder Skript noch Verweis nach außen ausführt), oder — wenn
+   es die Farbe erben soll — nur nach einer Prüfung, die alles außer Form verwirft:
+   `<script>`, `<foreignObject>`, `<image>`, `<use>`, jedes `href`/`xlink:href`, jedes
+   `on…`-Merkmal. Die Liste steht schon in `desktop-icons.spec.js` und misst heute die eigenen
+   Dateien; sie ist dieselbe, die dann eine fremde prüfen müsste.
+3. **Scheitert die Prüfung**, gilt die Regel der App-Liste: nicht das halbe Bild zeigen,
+   sondern den Platzhalter — `icon.js`, `PLACEHOLDER`. Das Verhalten von heute ist der sichere
+   Rückfall, und es ist schon da.
+
+Bis dahin ist der Satz in `docs/icons/` das, wofür er gemacht ist: die Icons der Oberfläche
+selbst, und eine Vorlage, die ein App-Bauer in seine eigene `ui/` kopiert — innerhalb seiner
+App wirkt sie sofort.
 
 ---
 
@@ -836,7 +1159,19 @@ go run ./apps/cli pack apps/uhr/templates /pfad/laden/uhr-1.0.0.ngc
 go run ./apps/cli catalog /pfad/laden /pfad/laden-key.seed uhr-probe 1 https://store.ngc.test/uhr
 go run ./apps/cli check -store uhr-probe /pfad/laden
 
-# 5. einrichten: Paket in der App „App-Store" unter „Hochladen" wählen,
-#    „Installieren", „Aktivieren", persönlich unterschreiben,
-#    dann in „Benutzer & Rechte" das Recht <app>/use verteilen.
+# 5. in einen laufenden Laden: Paket neben die anderen legen und den Katalog
+#    mit EINER höheren Folge neu unterschreiben - alle Apps, nicht nur die neue.
+#    Auf der Laden-Maschine:
+#      cp -n /var/www/store/catalog.json /root/store/catalog-vor-<app>-<datum>.json
+#      ngc-store catalog /var/www/store /root/store/store.key global <folge+1> https://store.<zone>
+#      ngc-store check -store global /var/www/store
+#    Gegenprobe von der API-Maschine aus, gegen den NAMEN und über IPv4:
+#      curl -4 https://store.<zone>/catalog.json -o /dev/null -w "%{http_code} %{ssl_verify_result}
+"
+
+# 6. einrichten: in der App „App-Store" unter „Apps" (aus dem Laden) oder
+#    „Hochladen" (Paket von der Platte), dann „Installieren", „Aktivieren",
+#    persönlich unterschreiben, dann in „Benutzer & Rechte" das Recht
+#    <app>/use verteilen. Der Laden wird von selbst nur stündlich geholt -
+#    unter "Quellen" holt ihn "Jetzt nachsehen" sofort.
 ```

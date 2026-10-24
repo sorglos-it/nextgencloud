@@ -12,11 +12,22 @@ Debian-Userland (Punkt 56). Die Abschnitte, die seit dem 19.10.2026 dazugekommen
 an der laufenden Anlage nachgesehen (Debian 13.7, `ngc-api`/`ngc-controller` **0.2.2**,
 Oberfläche **0.2.0**, Stand 24.10.2026).
 
-**Es gibt zurzeit zwei Anlagen, und diese Anleitung beschreibt die erste.**
+> **Die Maschine, auf der der kleine Fall gemessen wurde, ist aus.** Nachgemessen am
+> 24.10.2026: die Einzel-VM (`ssh ngc`, 10.2.3.208) antwortet auf Port 22 nicht, und auf dem
+> Proxmox-Wirt steht VM 208 auf `stopped`. **Die Messungen in dieser Anleitung bleiben gültig**
+> — sie wurden gemacht, als die Maschine lief, und ein ausgeschalteter Rechner macht eine
+> richtige Messung nicht falsch. Was **nicht** mehr gilt: dass man den kleinen Fall heute
+> nachsehen kann. Wer ihn nachmessen will, braucht zuerst eine Maschine; siehe
+> `docs/alte-vm-verweise.md`. Die laufende Anlage mit sechs Maschinen ist **nicht** der kleine
+> Fall und kann ihn nicht ersetzen (andere Datenbank, anderes Skript, mehrere Namen).
+
+**Es gibt zurzeit zwei Anlagen, und diese Anleitung beschreibt die erste.** Von den zwei läuft
+seit dem 24.10.2026 nur noch die zweite.
 
 | | **eine Maschine** — der Fall dieser Anleitung | **sechs Maschinen** — der andere Fall |
 |---|---|---|
-| Name der Anlage | `ngc.test` | `ngc.mein.lan` |
+| Name der Anlage | `ngc.test` (Beispiel, siehe Schritt 0) | `ngc.mein.lan` |
+| Läuft heute? | **nein** — Maschine aus, 24.10.2026 | ja |
 | Maschinen | eine, alle vier Rollen | sechs, siehe Schritt 0 |
 | Datenbank | SQLite, eine Datei je Programm | eigene Maschine |
 | Skript | `ngc-all` | `ngc-api`, `ngc-db`, `ngc-controller`, `ngc-web` je Maschine |
@@ -107,8 +118,18 @@ Jeder Schritt: **was du tust → was du siehst, wenn es geht → was du siehst, 
 Die Anlage antwortet unter **ihrem Namen**, nicht unter ihrer IP-Adresse. Was du in Schritt 2
 als `hostname` angibst, steht danach überall: in `/etc/ngc/web.json` als `apis[].url` und als
 `rp.id`, in `/etc/ngc/apache-apis.conf` am `BalancerMember`, im TLS-Zertifikat als `CN` und
-`subjectAltName`. Auf der laufenden Anlage heißt der Name `ngc.test`, und `/config.json` gibt
-ihn genau so an den Browser weiter:
+`subjectAltName`.
+
+**`ngc.test` ist in dieser Anleitung ein Beispielname, kein Name, den du übernehmen musst.**
+Du setzt dort **deinen eigenen** ein. `.test` ist für genau das reserviert (RFC 2606): dieser
+Name kann nie einer echten Domain in die Quere kommen, und dieselbe Schreibweise steht in allen
+Prüfdaten des Projekts. Darum bleibt er hier stehen, statt durch einen echten Namen ersetzt zu
+werden — ein echter Name wäre Thomas' Heimnetz und hilft keinem Leser. Wo die Anleitung von
+einer **Messung** spricht, ist `ngc.test` dagegen kein Beispiel, sondern der Name, unter dem
+damals wirklich gemessen wurde.
+
+Auf der Einzel-VM hieß der Name `ngc.test`, und `/config.json` gab
+ihn genau so an den Browser weiter (gemessen, solange die Maschine lief):
 
 ```
 {"version":"0.2.0","anchor":{…},"rp":{"id":"ngc.test","origins":["https://ngc.test"]},
@@ -117,6 +138,13 @@ ihn genau so an den Browser weiter:
 
 **Was du auf deinem Rechner einträgst** — in der Datei `hosts`, eine Zeile, IP-Adresse der
 Anlage und der Name aus Schritt 2:
+
+```
+<IP-Adresse deiner Anlage>   <dein Name>
+```
+
+Nicht abtippen, sondern einsetzen. So sah die Zeile auf der Einzel-VM aus, als sie lief —
+**diese Adresse antwortet seit dem 24.10.2026 nicht mehr**, sie ist hier nur das Muster:
 
 ```
 10.2.3.208   ngc.test
