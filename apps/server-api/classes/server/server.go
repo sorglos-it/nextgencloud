@@ -181,10 +181,14 @@ func Build(ctx context.Context, cfg *config.API, version string) (*Server, error
 	lh := login.New(s)
 	tunnels := controllers.NewRegistry()
 	sessions := browser.NewRegistry()
-	ctl := &controllers.Server{S: s, Tunnels: tunnels}
+	ctl := &controllers.Server{S: s, Tunnels: tunnels, Log: lg}
 	rl := &relay.Relay{S: s, Tunnels: tunnels, Log: lg}
 	st := appstore.New(s)
 	jn := join.New(s)
+	// The two unsigned-in doors of the installation write to the SAME log an
+	// admin reads in "Benutzer & Rechte", and they are the two that wrote
+	// nothing at all until now (docs/messungen-m1-m3.md, M3).
+	jn.Log = lg
 	// The one implementation of appstore.Sender in operation. Task 22 left
 	// Stores.Send nil and every step of it answered E_INTERNAL until here.
 	st.Send = &sender{Tunnels: tunnels, Relay: rl}

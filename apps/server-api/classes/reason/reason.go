@@ -99,6 +99,14 @@ const (
 	NodeAway    Reason = "Der Rechner für diese Aktion ist gerade nicht verbunden."
 	NodeRefused Reason = "Der Rechner hat die Aufgabe abgelehnt."
 
+	// Of a pairing or a join that spent a one-time code. Two sentences and
+	// not one, because the two codes come from two different steps of an
+	// installation and an administrator has to know which of his codes is
+	// gone: a controller that was being paired, or an API server that was
+	// joining.
+	PairProof Reason = "Der Nachweis zum Kopplungscode eines Controllers stimmt nicht."
+	JoinProof Reason = "Der Nachweis zum Beitrittscode eines API-Servers stimmt nicht."
+
 	// The backstops. Each one names the layer, which is the least a line may
 	// say; a refusal that gets one of these is a place this package has not
 	// been taken to yet, and that is visible in the log as such.
@@ -113,7 +121,7 @@ var all = []Reason{Trust, Defect, Link, DB, Result, Deliver, OwnTask, OwnProof,
 	AdminOnly, ShellClosed, NoRight, AppUnknown, NotRoot, NoTask, NoConfirm, BadTask,
 	TaskSpent, WithParams,
 	UserUnknown, RoleUnknown, RowGone, ProofGone, Factor, FactorBusy, TrustRefused,
-	StoreAnswer, Signature, License, NodeAway, NodeRefused,
+	StoreAnswer, Signature, License, NodeAway, NodeRefused, PairProof, JoinProof,
 	InsideAPI, InsideNode}
 
 // All returns the whole list. It is a copy, so no caller can bend the list a
