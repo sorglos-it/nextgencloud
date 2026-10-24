@@ -56,7 +56,23 @@ ueberspringt, um einer fremden offenen Nummer auszuweichen, reisst ein Loch, und
 `tools/check-buch.sh` weist das zu Recht ab („a log has no holes"). Zwei Zweige, die
 gleichzeitig dieselbe naechste freie Nummer nehmen, sind damit unvermeidlich — **wer als
 Zweiter zusammenfuehrt, nummeriert um.** Vorher laesst sich das nicht aufteilen, und die
-Reihenfolge entscheidet nicht die Sitzung, sondern Thomas. Daraus zwei Regeln, die beide
+Reihenfolge entscheidet nicht die Sitzung, sondern Thomas.
+
+**Am Abend des 24.10.2026 waren es drei**, und das ist der Beleg dafuer, dass die Pruefung diese
+Klasse von Fehler nicht sehen kann. Nachgemessen an den Zweigen selbst, nicht aus zweiter Hand:
+
+| | Punkt 83 heisst dort |
+|---|---|
+| `origin/main` | es gibt keinen Punkt 83 |
+| Zweig `ausfall` (PR 140) | „Dreimal am selben Tag haelt die Anlage die Auskunft" — **und 84 dazu** |
+| Zweig `sicherung` (PR 142) | „Der Weg zurueck geht — er bleibt an einem Systembenutzer haengen" |
+| Zweig `terminal-fault-race` (PR 144) | „Ein flatternder Pruffall, der an der Vorrichtung lag" |
+
+`check-buch.sh` liest jede Datei nur **gegen sich selbst**, also sind alle drei Zweige gruen und
+das Zusammenfuehren ergaebe trotzdem drei Punkte 83. Daraus der Zusatz zur Regel, und er ist
+nicht beilaeufig: **wer umnummeriert, holt vorher `origin/main` neu, liest die hoechste Nummer in
+dieser Tafel und nimmt die naechste freie — nicht blind die naechste Zahl.** Mit drei Zweigen ist
+84 schon vergeben, und wer darauf ausweicht, hat die Kollision nur verschoben. Daraus zwei Regeln, die beide
 Arbeit sparen: **in der Tafel nachsehen**, und **Nummern anderer Sitzungen erst zitieren, wenn
 sie auf `main` sind** — `check-buch.sh` fängt einen Verweis auf einen Punkt, den es noch nicht
 gibt, aber erst nach dem Schreiben.
