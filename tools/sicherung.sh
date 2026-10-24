@@ -32,7 +32,17 @@
 #      needed no key at all. Now a key of its own is made for every machine,
 #      it goes in the KEY folder, and the plaintext never touches a disk
 #      anywhere: tar writes into openssl and openssl writes the file.
-#   5. a manifest with a sha256 of every file.
+#   5. /etc/mysql/mariadb.conf.d of a database machine, where there is one.
+#      It goes to the KEYS, because it holds one: wsrep_sst_auth is the
+#      account a joining node copies the whole database with. It is in this
+#      list at all because of the evening of 24.10.2026, when an admin asked
+#      for the old copies of these files to be cleaned off the nodes - and
+#      the question "then what is left if the node dies" had no good answer.
+#      60-ngc.cnf alone carries wsrep_cluster_address, wsrep_node_name,
+#      wsrep_node_address, the SST method and the two paths of the
+#      file_key_management. /etc/ngc has none of it, so a database node could
+#      not be rebuilt from a backup that only had /etc/ngc.
+#   6. a manifest with a sha256 of every file.
 #
 # What it does NOT do is play anything back, and it needs no program for most
 # of that: a controller opens whatever lies at the path in its
@@ -332,6 +342,12 @@ for ziel in "$@"; do
 			printf '  api.json         signKey, storeKey, secretKey, challengeKey, das Datenbank-Kennwort.\n'
 			printf '  db-keys          224 Byte, die 285 MB verschluesselte MariaDB aufschliessen.\n'
 			printf '  tls, db-ca       Zertifikate und ihre Schluessel.\n\n'
+			printf 'mariadb-cnf.tar  DIE MARIADB-KONFIGURATION DIESES RECHNERS (nur auf Datenbankknoten).\n'
+			printf '  60-ngc.cnf allein traegt wsrep_cluster_address, wsrep_node_name,\n'
+			printf '  wsrep_node_address, wsrep_sst_method und wsrep_sst_auth - das Konto, mit dem\n'
+			printf '  ein eintretender Knoten die ganze Datenbank kopiert - und die beiden Pfade\n'
+			printf '  der file_key_management. In /etc/ngc steht davon nichts: ohne diese Datei\n'
+			printf '  laesst sich ein Datenbankknoten nicht wieder aufbauen.\n\n'
 			printf 'app-daten.schluessel  DER SCHLUESSEL DER APP-DATEN DIESES RECHNERS.\n'
 			printf '  In diesem Lauf neu erzeugt, 32 Byte aus openssl rand, nur fuer diesen\n'
 			printf '  Rechner. Ohne ihn geht app-daten.tar.enc im Daten-Ordner nicht mehr auf -\n'
@@ -378,6 +394,18 @@ for ziel in "$@"; do
 		notiz "                     Noch nicht zurueckgespielt, auf keiner Maschine: siehe das Dokument."
 	else
 		notiz "mariadb.tar          keine laufende MariaDB auf diesem Rechner."
+	fi
+
+	# 5. the MariaDB configuration of this node, to the KEYS. It is small
+	#    (a few kilobytes) and it holds wsrep_sst_auth, so it belongs on that
+	#    side by the same rule as everything else over there. Only the
+	#    directory of this installation's own files is taken; what the
+	#    distribution ships is in the distribution.
+	if fern "$ziel" test -d /etc/mysql/mariadb.conf.d; then
+		her "$ziel" /etc/mysql/mariadb.conf.d "$sordner/mariadb-cnf.tar" || fehlt "mariadb-cnf.tar"
+		notiz "mariadb-cnf.tar      NICHT HIER. Die MariaDB-Konfiguration dieses Rechners liegt im"
+		notiz "                     Schluessel-Ordner: 60-ngc.cnf traegt wsrep_sst_auth, das Konto, mit"
+		notiz "                     dem ein eintretender Knoten die ganze Datenbank kopiert."
 	fi
 
 	# 4. the data directories of the apps. THIS PART IS PLAINTEXT, and the

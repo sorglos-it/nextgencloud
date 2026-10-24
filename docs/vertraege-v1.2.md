@@ -6260,11 +6260,16 @@ eines Knotens, ohne dass ein Benutzer es merkt — und sie steht, wenn alle zugl
 häufige Fall ist gelöst, der seltene war es vorher. Das ist kein Vorwurf an den Umbau, sondern
 der Grund, warum mein Lauf rollend ging und niemals zwei Knoten gleichzeitig angefasst hat.
 
-**Was offen bleibt, und es ist eine Entscheidung:** die `.vor-cipher-2111`-Kopien und die
-beiseitegelegten `99-erstlauf-galera.cnf.aus-dem-weg-2111` liegen noch auf den Knoten. Wer sie
-wegräumt, sollte dieselbe Frage für die älteren Stände daneben mitbeantworten (`.vor-zumachen`,
-`.vor-verbund`, `.vor-adresse-2107`) — es sind inzwischen fünf Fassungen derselben Datei je
-Knoten. Und der eigentliche Posten: dass *ulh* diesen Wert überhaupt schreibt und eine 99-Datei
+**Nachtrag: die Kopien sind weg, und das Aufräumen hat zwei Lücken gefunden.** Auf Thomas'
+Anweisung je Knoten die `60-ngc.cnf.vor-*` und die beiden `99-erstlauf-galera.cnf`-Kopien
+gelöscht (db-1 sechs Dateien, db-2 und db-3 je vier), danach auf allen drei `mariadb active`,
+`Verbund 3`, `Synced`. **Vorher** gesichert, und dabei kam heraus: `/etc/mysql/mariadb.conf.d`
+stand in **keiner** Sicherung, obwohl `60-ngc.cnf` allein `wsrep_cluster_address`,
+`wsrep_node_name`, `wsrep_node_address`, `wsrep_sst_auth` und die Pfade der
+`file_key_management` trägt — ein Datenbankknoten hätte sich daraus nicht wieder aufbauen
+lassen. Und der Lauf von 18:21 kannte nur fünf Maschinen, weil ich fünf genannt hatte; db-2 und
+db-3 fehlten ganz. Beides in `docs/sicherung-und-weg-zurueck.md`, Abschnitt 11; das Werkzeug
+nimmt die Datei jetzt mit, zu den Schlüsseln, weil `wsrep_sst_auth` eines ist. Und der eigentliche Posten: dass *ulh* diesen Wert überhaupt schreibt und eine 99-Datei
 darüberlegt, gehört dort behoben, sonst bringt die nächste Neuinstallation ihn zurück. Die
 Release-Sitzung hat ihren Teil daran bereits berichtigt.
 

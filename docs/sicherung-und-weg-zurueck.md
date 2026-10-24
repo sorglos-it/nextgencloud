@@ -784,6 +784,70 @@ Platte lesen kann, hat beide Hälften. Das steht in seinem `LIESMICH.txt`, es st
 
 ---
 
+## 11. Zwei Lücken, die das Aufräumen gefunden hat (gemessen)
+
+Thomas hat angewiesen, die alten Konfigurationskopien von den drei Datenbankknoten wegzuräumen
+(fünf Fassungen derselben Datei je Knoten, aus vier Sitzungen). Beim Nachsehen, was danach
+überhaupt noch da ist, fielen zwei Dinge auf — und das ist der Grund, warum Löschen die Reihenfolge
+„erst sichern, dann wegräumen" braucht und nicht umgekehrt.
+
+### `/etc/mysql` stand in keiner Sicherung
+
+`tools/sicherung.sh` nahm `/etc/ngc` mit und `/etc/mysql/mariadb.conf.d` nicht. Was dort allein
+steht, auf db-1 nachgelesen:
+
+```
+wsrep_cluster_address=gcomm://db-1...,db-2...,db-3...
+wsrep_node_name=db-1
+wsrep_node_address=10.2.3.212
+wsrep_sst_method=mariabackup
+wsrep_sst_auth=sst:<geheim>
+file_key_management_filename=/etc/ngc/db-keys/keys.enc
+file_key_management_filekey=FILE:/etc/ngc/db-keys/keyfile.key
+```
+
+Davon steht in `/etc/ngc` **nichts**. Gegenprobe am `etc-ngc.tar` von db-1 aus dem Lauf von
+18:21: 18 Dateien, `60-ngc.cnf` ist keine davon. **Ein Datenbankknoten hätte sich aus dieser
+Sicherung nicht wieder aufbauen lassen** — die Daten waren da, die Verdrahtung nicht.
+
+Das Werkzeug nimmt die Datei jetzt mit, und zwar **zu den Schlüsseln**: `wsrep_sst_auth` ist das
+Konto, mit dem ein eintretender Knoten die ganze Datenbank kopiert. Es gehört damit auf dieselbe
+Seite wie `db-keys`, nach derselben Regel wie alles andere dort.
+
+### Und die Sicherung hatte zwei Knoten nicht gesehen
+
+Der Lauf von 18:21 ging gegen fünf Maschinen, weil ich fünf genannt hatte. Die Anlage hat
+seit heute **sieben**: db-2 und db-3 sind dazugekommen, von einer anderen Sitzung gebaut. Sie
+standen in keiner Sicherung, und nichts hat es gesagt — das Werkzeug sichert, was man ihm nennt.
+
+Daraus eine Einschränkung, die in den Kopf des Skripts gehört und nicht in meinen Kopf: **eine
+Sicherung, deren Maschinenliste von Hand kommt, ist so aktuell wie die Liste.** Die Liste aus
+der Anlage selbst zu holen wäre besser (die Vertrauensliste kennt die Knoten), ist aber nicht
+gebaut — ein Werkzeug, das sich seine Ziele selbst sucht, sichert eines Tages einen Rechner, von
+dem niemand wusste, dass er dazugehört, und das ist eine Entscheidung und kein Handgriff.
+
+### Der neue Lauf, und dann das Aufräumen
+
+```
+sicherung: ok                 Ausstiegscode 0, Dauer 186 s, sieben Maschinen
+Daten      453 MB   d:\ngc_backup\2026-10-24T2016Z
+Schluessel 227 KB   d:\ngc_schluessel-durchfuhr\2026-10-24T2016Z
+```
+
+Darin je Datenbankknoten ein `mariadb-cnf.tar` (30 bis 41 KB), und die 453 MB gegen 353 MB sind
+die beiden neuen Datenbankknoten mit je 51 MB.
+
+Erst danach gelöscht, je Knoten die `60-ngc.cnf.vor-*` und die beiden
+`99-erstlauf-galera.cnf`-Kopien — auf db-1 sechs Dateien, auf db-2 und db-3 je vier. Geblieben
+sind die zwölf Dateien, die im Lauf stehen. Danach auf allen drei: `mariadb active`, `Verbund 3`,
+`Synced`.
+
+Dass die gelöschten Fassungen in diesem einen Lauf noch mitgesichert sind, ist kein Zufall: das
+`mariadb-cnf.tar` von db-1 trägt sie alle sechs. Wer sie wirklich nie wieder sehen will, nimmt
+den nächsten Lauf.
+
+---
+
 ## Was gemessen und was abgewogen ist
 
 **Gemessen** (Lauf, Zahl, Ausstiegscode):
@@ -801,6 +865,9 @@ Platte lesen kann, hat beide Hälften. Das steht in seinem `LIESMICH.txt`, es st
   das Nichtanlaufen der Uhr samt Gegenprobe mit angehaltenem Nachbarn.
 - Abschnitt 7 ganz, einschließlich des zweiten Laufs mit der Prüfung (180 s) und der
   Gegenprobe, dass sie bei einem einzigen Byte greift.
+- Abschnitt 11 ganz — dass `60-ngc.cnf` in keiner Sicherung stand (am `etc-ngc.tar` von 18:21
+  gegengeprüft), dass zwei Datenbankknoten gefehlt hatten, der neue Lauf über sieben Maschinen
+  (186 s, 453 MB gegen 227 KB) und das Aufräumen danach mit dem Dienst unverändert.
 - Abschnitt 10 ganz — der Lauf an den benannten Ort (307 s, 353 MB gegen 80 KB), alle
   Prüfsummen je Hälfte gegengerechnet, und die zwei Fehler im eigenen Werkzeug: die fehlende
   Warnung bei zwei Geschwisterordnern auf einer Platte und der Hinweis in `summen.txt`, der
