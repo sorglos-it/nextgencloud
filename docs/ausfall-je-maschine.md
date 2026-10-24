@@ -705,6 +705,47 @@ der Schwere des Ausfalls:
    fehlende Maschine. Der schlechteste der sechs, obwohl der harmloseste
    Ausfall.
 
+## Nachtrag vom selben Tag: die Anlage hat sich unter dem Blatt verändert
+
+Noch am 24.10.2026, nach Abschluss der sechs Fälle, hat Thomas drei
+Datenbankknoten in Auftrag gegeben. **Alles oben beschreibt damit die Anlage mit
+einem einzelnen Datenbankknoten**, und besonders der db-1-Fall ist so zu lesen:
+er ist richtig für die Anlage, an der er gemessen wurde, und er ist keine
+Eigenschaft von NGC.
+
+Stand zum Zeitpunkt dieses Nachtrags, von mir gemessen:
+
+```
+qm list        308 ngc-db-2 running,  309 ngc-db-3 running
+db-1           wsrep_cluster_size 1,  wsrep_incoming_addresses 10.2.3.212:0
+db-2, db-3     mariadb INACTIVE  (ein beitretender Knoten wartet auf den Verbund)
+api-1, api-2   /etc/ngc/api.json  ->  db.nodes = ['db-1.ngc.mein.lan:3306']
+```
+
+**Und hier steht eine Erwartung, bevor jemand den Umbau für fertig erklärt:**
+`db.nodes` ist eine Liste, die Bauart ist auf mehrere angelegt — aber beide APIs
+tragen darin genau einen Eintrag. Solange das so bleibt, ändern drei Knoten am
+Ausfall von db-1 **nichts**: beide APIs greifen auf denselben Namen, und der
+zeigt auf die Maschine, die fehlt. Der Verbund hält dann die Daten, und niemand
+fragt die anderen zwei.
+
+Das ist dieselbe Gestalt wie api-2 in diesem Blatt — ein Ersatzteil, an das
+nichts angeschlossen ist. Endet der Umbau hier, hat die Anlage zwei davon, und
+das Ergebnis wäre **schlechter** als der gemessene Zustand von 13:46: derselbe
+Vollausfall, aber mit zwei laufenden Reservemaschinen daneben, die wie
+Redundanz aussehen.
+
+Zwei Dinge, die für die nächste Messung gelten und die ich von der
+Koordinationssitzung habe, **nicht gemessen**: die Firewall-Rolle „Datenbank"
+lässt 3306 nur von den beiden APIs zu, wer also von einem svc-Knoten aus gegen
+die Datenbank misst, misst die Firewall und nicht den Ausfall — und ein
+beitretender Knoten wartet, db-1 muss zuerst stehen. Damit sind es **zwei**
+Fälle und nicht einer: „der Erste fällt" und „ein Beitretender fällt".
+
+Gefahren ist keiner davon. Die neuen Maschinen stehen nicht auf der Liste der
+sechs erlaubten VMIDs, die in `tools/ausfall-*.sh` hart im Code steht, und sie
+kommen dort nicht dazu, ohne dass Thomas es sagt.
+
 ## Was offen bleibt
 
 **Eins, und es ist dasselbe in allen sechs Fällen: (c) Apps sehen, (d) eine App
