@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" role="img">
+  <title>Knoten</title>
+  <circle cx="12" cy="5.25" r="2.75"/>
+  <circle cx="5.75" cy="18.25" r="2.75"/>
+  <circle cx="18.25" cy="18.25" r="2.75"/>
+  <path d="M10.5 7.75 7.25 15.75M13.5 7.75 16.75 15.75M8.5 18.25h7"/>
+</svg>
