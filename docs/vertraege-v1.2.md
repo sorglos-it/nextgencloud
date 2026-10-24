@@ -174,6 +174,7 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
 | 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
 | 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
+| 85 | Ein flatternder Prüffall, der an der Vorrichtung lag – und das Flattern stand in der Zahl | gilt | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5990,3 +5991,108 @@ nicht.** Wer die 3451 als Zahl dieser Prüfrunde liest, schreibt ihr fünfundzwa
 eine andere Sitzung gemessen hat.
 
 Herkunft: Prüfrunde über die Nähte des Fensters 19.–24.10.2026, Zweig `pruefrunde-naehte`.
+
+## Punkt 85: Ein flatternder Prüffall, der an der Vorrichtung lag — und das Flattern stand in der Zahl
+
+Gemessen am 24.10.2026 als root, in WSL (Debian, Go 1.27), Zweig `terminal-fault-race` auf
+`main` (f77143c). Aufgefallen ist es in der CI: Lauf 40105559326, Prüfung „controller cases that
+need root", Zweig `ausfall` — ein Zweig, der **keine Zeile Go anfasst**. Derselbe Satz war im
+`main`-Lauf davor (40102495746) grün.
+
+**Herkunft:** der rote Lauf kommt aus der Sitzung, die den Ausfall je Maschine gemessen hat
+(CI-Lauf 40105559326; ihr eigener Punkt stand bei diesem Zweig noch in einem offenen Vorschlag). Dass die **Vorrichtung** des Falls schuld ist und nicht der
+Produktionscode, hat die Sitzung „Sichern und wiederherstellen" zuerst gesagt. Welche Stelle der
+Vorrichtung es ist, weicht von ihrer Lesart ab, und beides steht unten: sie hielt das endende
+`exit` der Eingabe für den Gewinner des Rennens, gemessen gewinnt es, weil **gar kein Fehler
+entstand**.
+
+```
+terminal_test.go:665: exit 0 although the channel broke, after 2.002541317s, stderr ""
+--- FAIL: TestAFaultEndsTheTerminalAtOnce (2.00s)
+```
+
+**Die Flatterquote, vor jeder Änderung:** 30 Läufe, je `-count=1`, **23 grün, 7 rot — 23 %**.
+Jeder rote Lauf bei 2,003 s.
+
+### Die Zahl sagt schon, dass es nicht die Grenze war
+
+Der Fall hat zwei Riegel: `code == 0` und `took > faultWithin`, und `faultWithin` ist **5 s**.
+Gerissen ist der erste, bei 2,0035 s. **2,0035 s ist `LastWord`**, die zwei Sekunden, die eine
+sauber beendete Eingabe der Shell für ihr letztes Wort lässt — nicht die Grenze des Falls. Der
+Lauf war also kein „zu langsame Maschine" und kein „die Störung wurde verschluckt", sondern ein
+Lauf, in dem **gar nichts kaputtgegangen ist**.
+
+### Was wirklich entschied: eine Lesegrenze des Pseudoterminals
+
+Die Attrappe `errWriter` lässt den **ersten** Schreibvorgang durch und scheitert erst vom zweiten
+an. Die ganze Ausgabe dieses Laufs ist aber das Echo der beiden getippten Zeilen. Ob dieses Echo
+in **einem** oder in **zwei** Lesevorgängen bei `pumpOut` ankommt, ist ein Rennen zwischen
+`pumpIn`, das den zweiten Tastenrahmen schreibt, und `pumpOut`, das das Pseudoterminal liest.
+
+Ein mitzählender Schreibkanal an derselben Stelle, 10 Läufe, sagt es ohne Deutung:
+
+```
+code=1 nach  1,8 ms     Schreibvorgänge=2  Größen=[16 2]
+code=0 nach  2,0035 s   Schreibvorgänge=1  Größen=[18]
+```
+
+16 + 2 = 18. Im roten Lauf kamen beide Echos in **einem** Lesevorgang, der Pumpenlauf schrieb
+**einmal** — und dieser eine Schreibvorgang **gelang**. Danach schläft die Shell 30 s, es kommt
+nichts mehr, die saubere Eingabe bekommt ihre zwei Sekunden `LastWord`, und `0` ist darauf die
+**richtige** Antwort.
+
+### Also: der Fall war falsch, der Code war recht
+
+Nichts in `pumpOut`, `runShell` oder `run` wirft einen Schreibfehler weg. Geändert ist nur die
+Vorrichtung: der Kanal ist jetzt **weg** und nicht wackelig (`brokenChannel` scheitert bei
+**jedem** Schreibvorgang), und der Fall prüft **zuerst**, dass die Shell überhaupt geschrieben hat
+— sonst sähe ein Lauf ohne jede Ausgabe wieder wie ein verschluckter Fehler aus. Die Spanne, die
+der Fall entscheidet, bleibt unberührt: 30 s Schlaf gegen 5 s Grenze.
+
+**Danach:** 30 Läufe, **30 grün, 0 rot.**
+
+### Zwei Kontrollmutanten, wie `messen.md` sie verlangt
+
+| Mutant | Eingriff (per `-overlay`, keine Datei im Baum verbogen) | Erwartung | 30 Läufe |
+|---|---|---|---|
+| muss sterben | in `pumpOut` kann `werr != nil` nie zutreffen (der Schreibfehler wird verschluckt) | rot | **0 grün, 30 rot** |
+| muss leben | der lokale Lesepuffer heißt `raw` statt `buf` | grün | **30 grün, 0 rot** |
+
+Der sterbende Mutant meldet dabei `exit 0 after 2 writes into a channel that was gone` — der Fall
+kann einen verschluckten Fehler jetzt von „es wurde nichts geschrieben" unterscheiden, und das ist
+der Unterschied, der ihm vorher fehlte.
+
+### Was das über solche Fälle sagt
+
+Dieser Fall ist zum **zweiten** Mal an einer Zahl gescheitert, die nicht seine Entscheidung war:
+am 23.10.2026 waren Schlaf und Grenze dieselbe Sekunde, jetzt war die Attrappe auf einen
+**zweiten** Schreibvorgang angewiesen. Beide Male war der Code recht. **Eine Attrappe, die erst
+beim n-ten Mal kaputtgeht, macht die Stückelung eines Datenstroms zum Teil der Zusicherung** — und
+die Stückelung eines Pseudoterminals gehört dem Kern, nicht dem Prüfsatz. Wer „der Kanal ist weg"
+meint, baut einen Kanal, der von Anfang an weg ist, und belegt mit einem Zähler, dass die gemeinte
+Stelle überhaupt erreicht wurde.
+
+### Die naheliegende andere Reparatur flattert ebenfalls — gemessen, nicht vermutet
+
+Vorgeschlagen war, die Eingabe mit `holdOpen` offen zu halten und das `exit` zu streichen, damit
+das saubere Ende von `pumpIn` das Rennen nicht gewinnen kann. Das lässt `errWriter` aber, wie es
+ist — und damit bleibt die Stückelung die Entscheiderin. Dieselbe Sonde, 5 Läufe:
+
+```
+code=1 nach    1,7 – 2,4 ms   Schreibvorgänge=2  Größen=[10 2]     3 von 5
+code=1 nach   30,0 s          Schreibvorgänge=2  Größen=[12 2]     2 von 5
+```
+
+Der zweite Schreibvorgang — und damit der Fehler — kommt in diesen zwei Läufen erst, als `sleep
+30` fertig ist und das Pseudoterminal **ein zweites Mal** etwas herausgibt. Der Fall wäre dort rot,
+jetzt am Zeitriegel (30 s gegen `faultWithin` von 5 s) statt an `code == 0`. Die Datei hält dieses
+Mittel schon seit 18.10.2026 als erfolglos fest; was hier dazukommt, ist die Zahl.
+
+**Also gehört die Reparatur an den Schreibkanal, nicht an die Eingabe:** solange die Attrappe einen
+**zweiten** Schreibvorgang braucht, entscheidet die Stückelung, und man verschiebt nur, welcher
+Riegel reißt. Nur fünf Läufe, und das ist wenig — als Beleg, dass dieses Mittel das Flattern nicht
+beendet, reichen sie, weil es schon zweimal rot war.
+
+**Nicht gemessen und darum offen:** warum der Lauf auf einem GitHub-Runner häufiger oder seltener
+stückelt als hier. Die 23 % gelten für diese Maschine; dass es dieselbe Ursache ist, folgt aus der
+Fehlerzeile (`code == 0` bei 2,003 s), nicht aus einer gemessenen Quote dort.
