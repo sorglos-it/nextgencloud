@@ -782,6 +782,29 @@ Passwortmanager auf dem Stick), nicht in ein Verzeichnis daneben. Ein
 Sicherungsordner ohne die Schlüssel ist Geheimtext; mit ihnen ist er die
 Anlage.
 
+**Nachtrag, und er macht aus der Entscheidung eine Messung** — von der
+Sicherungs-Sitzung gebaut und gemessen, **nicht von mir**: `tools/sicherung.sh`
+nimmt jetzt zwei Ziele und fährt ohne das zweite nicht los (drei Verweigerungen
+je mit Code 2, auch wenn der Schlüsselordner *im* Datenordner liegt — die Pfade
+werden vorher mit `pwd -P` aufgelöst). Der Lauf gegen alle fünf Maschinen
+trennt sich in **348 MB Daten** und **75 KB Schlüssel**. Damit ist das Argument
+nicht nur richtig, sondern billig: 75 KB für fünf Rechner passen als Anhang in
+einen Passwortmanager, und der Datenordner darf liegen, wo Platz ist.
+
+Und sie hat die Trennung **an den Werten geprüft, nicht an den Wörtern**: ein
+`grep` nach Feldnamen findet im Datenordner sieben Treffer, die alle aus
+Zeichenketten in den Programmen des App-Abbilds stammen; die Suche nach den
+achtzehn **echten** Geheimnissen des Schlüsselordners ergibt **0 von 18** im
+Datenordner. Eine Trennung, die nur an Dateinamen geprüft wird, ist nicht
+geprüft.
+
+**Eine Ausnahme bleibt offen und ist keine Nachlässigkeit:** `app-daten.tar` ist
+Klartext, 110–201 MB, zu groß für einen Passwortmanager, und es geht ohne jeden
+Schlüssel auf. Es liegt darum bei den Daten. Nach derselben Rangfolge gehören
+die App-Daten **vor** dem Wegschreiben verschlüsselt — mit einem Schlüssel, der
+nicht mitfährt, sonst ist nichts gewonnen. Das ist eine Entscheidung und kein
+Handgriff; sie steht bei der Sicherungs-Sitzung als offener Punkt.
+
 **Und zu meiner eigenen Datei, nach derselben Rangfolge:** sie bleibt liegen.
 Sie trägt einen argon2id-Abdruck, keinen Klartext, auf dem Rechner ihres
 Besitzers in einem Ordner, den er selbst benannt hat — und sie ist zur Stunde
