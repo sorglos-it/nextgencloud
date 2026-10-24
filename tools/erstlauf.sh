@@ -36,6 +36,17 @@
 # run then ends with exit code 2 and the list - never with "erstlauf: ok".
 # A run that quietly leaves out what it cannot do is worse than no run.
 #
+# THERE IS A PHASE C, and this file does not run it: tools/erstlauf-verteilt.sh
+# asks the same station numbers against an installation whose parts stand on
+# SEPARATE machines. It is not a nicety. Phase B installs api, store and the
+# database on ONE machine, and on one machine three of the questions have no
+# content at all: a store on localhost answers "is the catalog fetched over the
+# network and is its certificate checked" wrongly, there is no second API for a
+# sign-in to land on, and "did the app land on the machine it was sent to" has
+# only one machine to land on. Whoever reads a green phase A and B and stops
+# has not asked those three. docs/erstlauf.md, section 11, says what phase C
+# found on six machines on 24.10.2026.
+#
 # The proof of a complete run is the printed line "erstlauf: ok", never the exit
 # code alone (tools/check.sh is held to the same rule and says why).
 set -euo pipefail
@@ -106,7 +117,7 @@ while [ $# -gt 0 ]; do
 		shift 2
 		;;
 	-h | --help)
-		sed -n '2,38p' "$self"
+		sed -n '2,51p' "$self"
 		exit 0
 		;;
 	*)

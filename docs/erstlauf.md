@@ -283,3 +283,185 @@ sondern eine Vorbereitung, die abbricht.
 
 Phase A allein, `main` (`0bf7201`), gemessen 23.10.2026: **1 rot** (Station 1 — Hürde 1 ist weiter
 offen und liegt im ulh-Repo), **7 unmeasurable**, Ausstiegscode 1. Station 9 und 10 melden `ok`.
+
+## 11. Die verteilte Anlage — was eine einzelne Maschine verdeckt
+
+Stand 24.10.2026. Lauf: `bash tools/erstlauf-verteilt.sh`, gemessen gegen sechs Maschinen
+(`tools/proxmox-sechs.sh`). Maschinen nicht in `~/.ssh/config`:
+`NGC_SSH_OPTS="-i ~/Documents/ssh/keys/id_ed25519_ngc -o IdentitiesOnly=yes"`.
+
+Phase A liest die Quellen, Phase B (`--machine`) eine Maschine, auf der **alles** liegt.
+**Phase C** ist diese Datei: dieselben Stationsnummern, gefragt dort, wo die Teile auseinander
+stehen. Wer nur Phase A und B fährt, erfährt von dem hier gar nichts — nicht weil die Stationen
+grün sind, sondern weil die Fragen auf einer Maschine keinen Inhalt haben.
+
+### Die Rollen lügen, also werden sie gemessen
+
+Die Namen der Maschinen sagen nicht, was auf ihnen läuft. Gemessen am laufenden Dienst,
+24.10.2026:
+
+| Maschine | Name | läuft wirklich |
+|---|---|---|
+| 10.2.3.210 | api-1 | `apache2`, `ngc-api`, `ngc-controller` |
+| 10.2.3.211 | api-2 | `ngc-api` |
+| 10.2.3.212 | db-1 | `mariadb` **und** `ngc-controller` |
+| 10.2.3.213 | svc-1 | `ngc-controller` + podman |
+| 10.2.3.214 | svc-2 | `ngc-controller` + podman |
+| 10.2.3.215 | store | `nginx`, kein NGC |
+
+`db-1` trägt **beides** — die Datenbank und einen Controller. Wer die Rolle aus dem Namen
+abliest, hält `db-1` für reine Datenbank und `api-1` für reine API; beide stimmen nicht.
+
+### Drei Abstürze, die den Lauf stumm beendet haben
+
+Der Lauf hat gegen diese Anlage nach Station D1 **aufgehört** — Ausstiegscode 60, keine weitere
+Zeile, keine Summe. Nichts in der Ausgabe sagte, dass sieben Stationen nie gefragt wurden.
+Dreimal dieselbe Form, und `messen.md` nennt sie: eine Ersetzung, die scheitert, beendet unter
+`set -e` den ganzen Lauf.
+
+| Stelle | was scheitert | Folge |
+|---|---|---|
+| Station D2 | `curl` meldet 60 für ein Zertifikat, das es nicht prüfen kann | Lauf endet nach D1 |
+| Station D4 | `sed` über eine Datei, die es nicht gibt — unter `set -o pipefail` | Lauf endet nach Station 7 |
+| Station 7 (Datenträger) | `findmnt` findet nichts, `[ -n "" ]` ist falsch, der Fernbefehl endet mit 1 | Lauf endet **vor** der Station, die genau das melden wollte |
+
+Dazu: `NGC_SSH_OPTS` fehlte in dieser Datei. `tools/erstlauf.sh` trägt es seit PR 99; hier
+antwortete jeder Aufruf „Permission denied (publickey)" und der Lauf schrieb es den **Maschinen**
+zu („the six have to be up") statt sich selbst.
+
+### Station D0 — die Namen zeigen dorthin, wo die Teile stehen
+
+**Die neue Station, und sie steht zuerst, weil jede Station hinter ihr als NGC-Fehler zu lesen
+ist, solange sie rot ist.** Auf einer Maschine hat die Frage keinen Inhalt: dort ist alles
+`localhost`, und ein Name, der auf die falsche Maschine zeigt, landet trotzdem auf der richtigen.
+
+Gemessen: der DNS dieses Netzes (10.2.3.102) antwortet auf **jeden** `*.ngc.mein.lan`-Namen mit
+einem AAAA-Satz `::` **neben** dem richtigen A-Satz. `getent`, `curl` und alles andere über NSS
+nehmen das `::` zuerst, verbinden sich zur **eigenen** Maschine und treffen dort, was auf 443
+lauscht — auf api-1 ist das `apache`. Darum antwortete „holt api-1 den Katalog vom Laden?" mit
+`self-signed certificate, 404`, während der Laden gesund fünf Meter daneben stand.
+
+**Go geht die Adressen der Reihe nach durch und fällt an der falschen vorbei, darum läuft NGC
+selbst.** Jedes Werkzeug, zu dem ein Mensch greift, läuft nicht. Fünf von sechs Namen sind rot;
+`api-1` ist grün, weil es auf seine **eigenen** echten IPv6-Adressen auflöst.
+
+**Was die Station nicht fängt**, und das steht in ihrem Kopf: ein Name, der die echte
+IPv6-Adresse der **falschen** Maschine liefert, kommt durch. Der Lauf kennt die sechs über ihre
+IPv4-Adressen und hält den A-Satz dagegen; eine IPv6-Adresse hat er von keiner.
+
+### Station D2b — der Laden ist AUS
+
+**Der Satz, der hier stand, war gegen die Quelle falsch**, und das ist mehr wert als die Station:
+er sagte, das sei messbar, „but it costs an hour of wall clock: the store round first beats an
+hour after the start and then hourly (server.go says why)". `server.go` sagt das Gegenteil —
+`FirstCatalog = time.Minute`, mit sechs eigenen Zeilen darüber, warum eine Minute und nicht eine
+Stunde (V1.2 Punkt 66). Die Station kostet **einen Neustart und zwei Minuten** und war für eine
+Stunde als nicht messbar abgelegt, die es nicht gibt.
+
+Gemessen auf **api-2** (nicht auf api-1, und **ohne** den Laden abzuschalten — der Laden ist eine
+Maschine, auf der andere arbeiten). Der Hebel ist eine Blackhole-Route auf der zweiten API:
+
+| Mutation | Zeile des Ladens | Katalog | Journal |
+|---|---|---|---|
+| `ip route add blackhole 10.2.3.215/32` auf api-2, Neustart | `{"checked":1792844524,"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` | 1116 Bytes, **unverändert** | **0 Zeilen** |
+| **Kontrolle:** Route weg, Neustart | `{"checked":1792845105}` — Fehler **weg** | 1116 Bytes | 0 Zeilen |
+
+Zwei Zusagen halten: die Anlage **schreibt den Fehler dorthin, wo ein Admin ihn liest**, und sie
+**behält den letzten guten Katalog** (`appstore.Refresh`: „a store that fails leaves the last good
+catalog in place"). Eine Maschine, die neu startet, kostet die Anlage also nicht ihr Menü.
+
+**Und ein Befund, der in der Stationszeile steht statt verschluckt zu werden: das Journal schreibt
+keine einzige Zeile.** `Server.hour` meldet nur, wenn `Stores.Refresh` einen Fehler liefert — und
+`Refresh` liefert nie einen: es notiert den Grund je Laden und wirft den Fehler der Notiz weg. Ein
+Laden, der eine Woche weg ist, ist nur für den sichtbar, der sich anmeldet und die Zeile anschaut.
+
+Die Station läuft **nicht** im normalen Lauf. Sie braucht `--laden-weg`, weil sie die Anlage für
+vier Minuten verändert, und sie weigert sich, wenn `--api1` und `--api2` dieselbe Maschine sind.
+
+### Station D3b — eine Anmeldung, die auf api-2 landet
+
+Die alte Station D3 fragte, ob api-2 installiert ist und sein Dienst läuft. Das ist eine andere
+Frage als die, die ein Mensch hat: der Browser nimmt für **jeden** Aufruf **eine** API aus
+`/etc/ngc/web.json`, also landet die Hälfte der Anmeldungen auf api-2. Eine zweite API, die oben
+ist und Anmeldungen anders beantwortet, sperrt die Hälfte der Leute aus, während jede Statuszeile
+grün bleibt.
+
+Gemessen: `web.json` nennt beide APIs mit einem TLS-Pin, und der Pin für api-2 **ist** api-2s
+eigener Schlüssel (`t2isQ…`, und api-1s `j7gMS…` wird davon abgelehnt). `POST
+/api/v1/login/start` antwortet auf api-2 über Netz **genau wie** auf api-1
+(`{"status":"error","code":"E_PROTOCOL","message":"Ungültige Nachricht."}` auf denselben
+absichtlich leeren Rumpf — eine Form, kein Ausweis, darum braucht es dafür keinen Schlüssel).
+
+### Station D4 — eine App landet auf dem Rechner, auf den man sie schickt
+
+Mit einer Maschine hat die Frage keinen Inhalt: eine App, die überhaupt eingerichtet wurde, wurde
+an der einzigen Stelle eingerichtet, die es gibt. Mit zwei Dienstrechnern hat sie Inhalt, und es
+ist die Frage, die ein Admin wirklich hat — er hat eine Maschine ausgewählt und will diese.
+
+Vier Dinge je Knoten, und alle vier zusammen, weil jedes einzelne von einer halb fertigen
+Einrichtung erfüllt wird: eigener **Benutzer**, dessen **Heim** die App-Verzeichnis unter
+`config.AppDataDir` ist, das **Bild im Bildspeicher genau dieses Benutzers**, und ein **laufender
+Container** dieses Benutzers.
+
+**Der dritte Punkt ist eine Falle, in die diese Station beim Schreiben selbst getreten ist:**
+`podman images` als `root` antwortete für svc-1 (dort hielt `root` das Bild zufällig auch) und
+nicht für svc-2 — und die erste Lesung dieser Maschinen sagte, die App sei nicht auf svc-2
+gelandet, obwohl sie dort lief. Das Journal (`useradd`, `image loadfromarchive`, `container
+start`) hat es richtiggestellt.
+
+**Die Gegenprobe sind die Maschinen, an die niemand etwas geschickt hat:** api-1 und db-1 müssen
+von allen vier Dingen keines zeigen. Eine Prüfung, die überall eine App findet, würde „es ist dort
+gelandet, wo man es hingeschickt hat" zu „irgendwo ist irgendwas" machen.
+
+### Beweis, dass die neuen Stationen den Fehler FINDEN
+
+`messen.md`: eine Prüfung, die den Fehler nicht nachweislich findet, misst nichts. Alle Läufe
+24.10.2026 im Arbeitsbaum `D:\claude\nextgencloud-erstlauf-verteilt` gegen dieselbe Anlage.
+
+| Mutation | Station | Ergebnis |
+|---|---|---|
+| `--store 10.2.3.214` (Laden auf die falsche Maschine gezeigt) | D0 (store) | **FAIL** — und mit der **anderen** Begründung: „the A record … is '10.2.3.215' and this run was told the machine is 10.2.3.214" statt der `::`-Zeile |
+| Der Pin, den `web.json` für api-2 trägt, durch api-1s Schlüssel ersetzt | D3b | **FAIL** — „web.json pins api-2 at 'j7gMS…' and api-2 really serves 't2isQ…'" |
+| `appdir=/var/lib` (ein Pfad, den **jede** Maschine hat) | D4 (svc-1, svc-2, Gegenprobe) | **3× FAIL** — 24 bzw. 25 „Apps", keine davon vollständig, und die Gegenprobe meldet api-1 und db-1 als belegt |
+| `--svc1 10.2.3.210 --svc2 10.2.3.212` (Dienstrechner auf api-1/db-1 gezeigt) | 7 (Datenträger), 7 (die App selbst) | **3× FAIL**, D4 wird ehrlich UNMEASURABLE statt grün |
+| Blackhole-Route zum Laden auf api-2 | D2b | **Fehler in der Zeile des Ladens**, Katalog unverändert |
+| **Kontrolle:** unverändert | alle davon | **ok** |
+| **Kontrolle:** Route weg, derselbe Neustart | D2b | Fehler **weg**, `checked` weitergerückt |
+
+Die beiden Kontrollen sind der Punkt: ohne die zweite Zeile zu D2b wäre eine Zeile, die aus einem
+anderen Grund „error" sagt, als Beweis durchgegangen.
+
+### Was der Lauf heute meldet
+
+`main` + dieser Zweig, gemessen 24.10.2026, ohne `--laden-weg`: **28 Stationen, 6 rot,
+6 unmeasurable**, Ausstiegscode 1, kein `erstlauf-verteilt: ok`. Mit `--laden-weg`: 6 rot,
+5 unmeasurable.
+
+Die sechs roten sind **fünf Namen** (Station D0) und **Station D2**, die an denselben fünf Namen
+hängt. Es ist **ein** Fehler, und er liegt im DNS dieses Netzes, nicht in NGC.
+
+### Was nur ein Mensch drücken kann
+
+Weder Phase A noch B noch C kann das, und keine Station überspringt es — jede sagt es als
+UNMEASURABLE mit ihrem Namen:
+
+1. **Die erste Einrichtung** einer Anlage. `GET/POST /api/v1/setup`, mit einem MAC über den
+   Einmalcode aus `/var/lib/ngc/setup-code`. Alles dahinter hängt an einem angemeldeten Admin.
+   *(Auf dieser Anlage schon getan — `setup-code` ist weg.)*
+2. **Eine Anmeldung auf api-2.** `https://ngc.mein.lan` öffnen, anmelden, und das **zweimal mit
+   einem Neuladen dazwischen**, weil `web.json` api-1 und api-2 abwechselnd herausgibt.
+3. **Eine App auf einen bestimmten Rechner schicken.** In der Oberfläche eine App einrichten,
+   dabei **svc-2 mit Absicht** auswählen — und hinterher sagen, welche Maschine gewählt wurde.
+   Welcher Knoten gewählt wurde, hält keine Datei auf keiner Maschine fest; der Vergleich ist
+   eine Sache, die nur der machen kann, der geklickt hat.
+4. **Systemrechte vergeben** (Station 5) und **das Recht „benutzen"** (Station 8). Station 8 ist
+   dabei nicht ungemessen, sondern **unerreichbar**: v0.2.1 kann keinen zweiten Benutzer anlegen.
+
+Und zwei Stationen, die ein Mensch nicht drücken muss, aber ein Lauf von sich aus nicht anfassen
+darf:
+
+5. **Der Rückdreh** (`store.ErrRollback`). Dafür müsste eine **niedrigere** Folge vom Laden
+   ausgeliefert werden, also auf die Laden-Maschine geschrieben — abzustimmen mit dem, der dort
+   Apps veröffentlicht.
+6. **`--laden-weg`** selbst: vorher ansagen, mit Maschine und Zeitfenster. An dieser Anlage
+   messen mehrere Sitzungen gleichzeitig.
