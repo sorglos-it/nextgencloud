@@ -164,6 +164,7 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
 | 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
 | 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
+| 83 | Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat – das nächste OPEN darauf verschwindet lautlos | gilt – **Wettrennen im Code, nicht behoben**; der Testfehler daneben ist behoben | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5503,3 +5504,130 @@ unvermessen, bis es das ist.
 
 Verwandt: **Punkt 79** misst denselben stündlichen Takt von der anderen Seite (der Laden ist weg);
 hier geht es nicht um die Erreichbarkeit des Ladens, sondern um den Kanal, der danach kommt.
+
+
+## Punkt 83: Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat — und das nächste OPEN darauf verschwindet lautlos
+
+**Woher das kommt.** Die Linux-Prüfung „-race (Linux goroutines)“ wurde immer wieder rot, ohne
+dass etwas kaputt war, und einmal ist derselbe Commit (`97945b6`) bei der Wiederholung ohne jede
+Änderung grün geworden. Eine Prüfung, die gelegentlich ohne echten Fehler rot wird, ist
+schlimmer als keine Prüfung (`tools/recovery-ci.sh`) — also war zu messen, nicht zu drehen.
+
+**Was gemessen ist.** Die Laufliste der Prüfung, 200 Einträge gelesen, davon **90
+abgeschlossene Läufe** (ohne abgebrochene). In **12** war die Aufgabe `-race` rot. In **9 von 90
+= 10 %** lag das an zwei Fällen des Pakets `apps/server-controller/classes/link`:
+`TestFramesAfterOwnCloseAreDropped` (8×) und `TestChannelNumberFreeOnlyAfterBothCloses` (1×).
+Die drei anderen roten `-race`-Läufe gehören woanders hin: `TestAOneTimeCodeReachesNoLog`
+(`users`), `TestAFaultEndsTheTerminalAtOnce` und `TestNormalCloseGivesTheNumberBackAtOnce`
+(Terminal), und ein Lauf (40114506408), in dessen Protokoll keine `--- FAIL`-Zeile zu finden war
+und der hier **nicht untersucht** ist.
+
+**Auf dieser Maschine ist nichts geflattert.** In WSL (Debian, go1.27.2, `-race`): 3000 Läufe der
+beiden Fälle auf **einem** Prozessorkern, 500 Läufe mit allen Kernen, 20 Läufe des ganzen
+Pakets auf zwei Kernen — **0 Fehlschläge**. Die natürliche Flatterquote hier ist 0 %, und damit
+war der Beweis einer Besserung durch Wiederholen allein nicht zu führen. Gemessen wurde deshalb
+**durch Einspritzen**: eine Verzögerung an genau der Stelle, an der das Wettrennen vermutet wurde,
+und dann der Vergleich der Fehlermeldung mit der aus der CI.
+
+### Es sind zwei Fehler, nicht einer
+
+Die Protokolle zeigen zwei Erscheinungen mit ganz verschiedenen Laufzeiten:
+
+| Erscheinung | Laufzeit | Meldung | Läufe |
+|---|---|---|---|
+| A | 0,03–0,05 s | `the handler was called 2 times and came back 1 times` | 4 |
+| B | 30,04–30,08 s | `waiting for 4 on channel 1: ...`, dazu `Run did not end` | 5 |
+
+**A ist ein Testfehler.** Der Fall liest `opened` und `back` unmittelbar nach `waitFor`, also
+sobald `Run` zurück ist. Das Ende von `Run` ist aber **nicht** das Ende der Handler: die Goroutine
+eines Kanals (`channels.run`) hat hinter dem Handler noch die CLOSE-Buchung zu erledigen, und
+`back.Add(1)` steht im Handler dahinter. Wer die Zähler dort liest, liest zu früh. Der Kommentar
+im Nachbarfall sagte sogar ausdrücklich das Gegenteil („Counted once the tunnel is over, so that
+no handler is still on its way“) — er war falsch.
+
+*Beweis:* 50 ms zwischen `c.send` der CLOSE und der Buchung dahinter, eingespritzt in
+`channels.finish`. Der Fall fällt sofort mit **genau** der CI-Meldung
+(`the handler was called 2 times and came back 1 times`, 0,08 s). Mit der Behebung in diesem
+Commit ist er bei derselben Einspritzung **grün**.
+
+**B ist ein Wettrennen im Code.** `channels.finish` schreibt die CLOSE dieser Seite und setzt
+`ch.closed = true` **erst, nachdem der Schreibvorgang zurück ist**. Die API kann die CLOSE in
+dieser Lücke schon gelesen und beantwortet haben. Trifft ihre CLOSE für dieselbe Nummer in der
+Lücke ein, dann setzt `channels.route` nur `ch.peer` und gibt die Nummer **nicht** frei
+(`if ch.closed { c.drop(ch) }` greift nicht). Das unmittelbar folgende OPEN der API für diese
+Nummer fällt dann in den Zweig „nach der eigenen CLOSE wird alles verworfen“ und wird **lautlos
+weggeworfen** — kein Kanal, keine Antwort, kein Fehler. Die API wartet auf einen Kanal, der nie
+kommt.
+
+*Beweis:* eine **einmalige** Verzögerung von 2 s an derselben Stelle, aber nur für Kanal 1 (damit
+die Antwort auf den Merker nicht mitverzögert wird). Der Fall fällt nach **30,08 s** mit
+`Run did not end`, `waiting for 4 on channel 1: ... opPing: use of closed network connection` und
+`failed to write msg: use of closed network connection` — Zeile für Zeile die Meldung aus der CI.
+Mit der Behebung von A ist er bei dieser Einspritzung **weiter rot**, wie es sein muss: A und B
+sind zwei Fehler, und hier ist nur A behoben.
+
+**Dass die Zahl 30 zweimal vorkommt, hat das Lesen verdeckt.** `answer` im Test (die Schranke
+eines Lesevorgangs der API) und `WriteTimeout` im Code sind beide 30 s. Eine Meldung nach 30,06 s
+sagt darum nicht, welche der beiden Schranken abgelaufen ist, und die erste Lesart („der Test
+dreht den Zeitablauf zu knapp“) war deshalb naheliegend und falsch.
+
+### Was das für den Betrieb heißt
+
+Nicht nur ein Testproblem. Eine API, die eine Kanalnummer wiederverwendet, sobald sie die CLOSE
+dieser Seite gelesen und ihre eigene gesendet hat — und genau das erlaubt der Vertrag, „CLOSE
+gesendet und empfangen“ — kann ihr OPEN verlieren. Kein Absturz, keine Lücke in der Sicherheit:
+ein hängender Kanal, auf den niemand antwortet. Die Buchhaltung des Controllers läuft dem
+Vertrag nach, statt ihm zu folgen.
+
+### Warum B hier nicht behoben ist
+
+Der naheliegende Griff — `ch.closed = true` **vor** den Schreibvorgang setzen — ist falsch.
+`finish` hält beim Setzen noch nicht die Schreibsperre des Tunnels (`t.mu` wird erst in
+`c.send` genommen). Zwischen dem Setzen und dem Nehmen der Sperre könnte `route` die Nummer
+freigeben, ein neuer Kanal entstehen und **dessen** erster Rahmen vor der CLOSE des alten auf die
+Leitung gehen. Dann wäre aus einem verlorenen OPEN eine falsche Reihenfolge auf der Leitung
+geworden, und das ist schlimmer.
+
+Was es wirklich braucht, ist eine dritte Zustandsstufe („meine CLOSE ist dem Tunnel übergeben“),
+die unter derselben Sperre gesetzt wird, die die Reihenfolge auf der Leitung hält — oder die
+Entscheidung, ein OPEN für eine Nummer, deren CLOSE der Gegenseite schon da ist, nicht zu
+verwerfen. Beides rührt den Schließweg an, der an drei Stellen Sperren in festgelegter Reihenfolge
+nimmt, und gehört in eine eigene, geprüfte Änderung. Der Befund ist hier wichtiger als der grüne
+Lauf.
+
+### Die rote Aufgabe auf `main` hatte eine andere Ursache
+
+Geprüft, wie im Auftrag verlangt: Lauf **40097136329** auf `main` war in der Aufgabe
+„check.sh + counted test run“ rot, und das war **nicht** dieses Flattern. Im Protokoll steht
+`buch: these points have a chapter but no row in the Reihe-B table of contents: 75 76 77 78 79 80
+81` — `tools/check-buch.sh` hat fehlende Tabellenzeilen gemeldet, deterministisch und zu Recht.
+Auf dem heutigen `main` (f77143c) ist `bash tools/check-buch.sh` grün
+(64 Punkte, 19–82). Zwei verschiedene Ursachen, zwei verschiedene Aufgaben.
+
+### Flatterquote vorher und nachher
+
+| | vorher | nachher |
+|---|---|---|
+| CI, Aufgabe `-race`, 90 abgeschlossene Läufe | 9 rot (10 %), davon 4 × A und 5 × B | **unvermessen** — braucht neue Läufe |
+| hier, 3000 Läufe auf einem Kern, `-race` | 0 | 0 |
+| hier, 500 Läufe, `-race` | 0 | 0 |
+| hier, Einspritzung A (50 ms) | **rot** (0,08 s) | **grün** |
+| hier, Einspritzung B (2 s, einmalig) | **rot** (30,08 s) | **rot** (unverändert) |
+
+### Was ungemessen bleibt
+
+- **Die CI-Quote nach der Änderung.** Sie ist erst nach genug neuen Läufen zu haben. Erwartet
+  wird, dass die 4 Erscheinungen vom Typ A verschwinden und die 5 vom Typ B bleiben — also etwa
+  die Hälfte des Flatterns, nicht alles. Wer diese Prüfung jetzt für still hält, irrt.
+- **Das natürliche Eintreten von B.** Hier nie gesehen, nur durch Einspritzen erzwungen. Warum
+  es auf einem 4-Kern-Runner unter `-race` mit über zwanzig gleichzeitig laufenden Paketen in
+  etwa jedem zwanzigsten Lauf auftritt und auf dieser Maschine in 3000 Läufen nie, ist nicht
+  gemessen.
+- **Ob B über die Tests hinaus schon einmal zugeschlagen hat.** Keine Spur in einem Protokoll
+  einer echten Anlage gesucht; die API im Betrieb verwendet Nummern vielleicht gar nicht so
+  schnell wieder.
+- **Die drei anderen roten `-race`-Läufe** (`users`, Terminal) und Lauf 40114506408.
+
+Verwandt: **Punkt 69** (die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt) —
+dieselbe Prüfung, dieselbe Frage, diesmal nicht „zählt sie?“, sondern „sagt sie die Wahrheit?“.
+**Punkt 70** ist der andere Fund in diesem Paket, ebenfalls unter Last.
