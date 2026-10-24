@@ -5403,3 +5403,74 @@ Keine der drei ist für sich ein schwerer Fehler. Zusammen sind sie der Grund, w
 dreimal etwas erst beim gezielten Hinsehen aufgefallen ist.
 
 Herkunft: `docs/ausfall-je-maschine.md` für die Fälle 1 und 2, Punkt 78 für Fall 3.
+
+## Punkt 83: Ein fehlendes Mitglied des Lastverteilers wird dem Benutzer als `HTTP 500` zugestellt — und nichts schreibt es auf
+
+Gemessen am 24.10.2026 zwischen 13:57 und 14:07 UTC an der verteilten Anlage, api-2 (VMID 302) mit
+`qm stop` abgeschaltet und wieder angefahren. Der Fall ist der harmloseste der sechs Ausfälle und
+im Verhalten gegenüber dem Benutzer der **schlechteste**.
+
+**Was gemessen ist.** Je vierzig Anfragen, getrennt nach Weg, weil der erste Anlauf an genau
+dieser Trennung gescheitert ist:
+
+| | `POST /api/v1/login/start` (über den Verteiler) | `GET /` (PHP auf api-1, nicht weitergeleitet) |
+|---|---|---|
+| beide APIs oben | 40/40 gut | 40/40 gut |
+| api-2 nachweisbar aus | **31/40 gut, 9 schlecht** — 6× `HTTP 500`, 3× keine Antwort | 40/40 gut |
+
+Der Ausfall ist also auf der **Oberfläche unsichtbar** und auf **jedem API-Weg** spürbar:
+ungefähr jede vierte Anmeldung scheitert, solange das Mitglied fehlt. Für den Benutzer ist das
+genau das „erst scheitert die Anmeldung, dann geht sie", das in der Woche vom 19.10.2026 mehrfach
+berichtet und nie erklärt wurde. Hier ist die Erklärung.
+
+Zwei Dinge daran sind der eigentliche Befund:
+
+1. **Die Zahl ist `500`, nicht `503`.** „Internal server error" ist die Meldung für einen Fehler
+   im Programm. Eine fehlende Maschine ist keiner. Der Benutzer bekommt rund 1600 Byte
+   Apache-Fehlerseite und keinen Hinweis, dass ein Rechner fehlt — und beim nächsten Versuch geht
+   es, was den Eindruck „irgendwas spinnt" festigt.
+2. **Im Fehlerprotokoll steht nichts.** `grep -c` auf `proxy|balancer` in
+   `/var/log/apache2/error.log`: **0**. Die 500er und 502er stehen allein im Zugriffsprotokoll und
+   liegen dort minutengenau in den Messfenstern. Wer nach der Ursache sucht, findet in der Datei,
+   die dafür gedacht ist, keine Zeile.
+
+**Und der `::`-Satz aus Punkt 80 liegt hier im Anfrageweg der Anlage, nicht im Messwerkzeug.**
+Der Verteiler trägt sein Mitglied als Namen (`BalancerMember "https://api-2.ngc.mein.lan:7443"`),
+und auf api-1 gemessen löst dieser Name auf **zwei** Adressen auf:
+
+```
+getent ahosts api-2.ngc.mein.lan   ->   10.2.3.211 STREAM …   und   :: STREAM
+```
+
+Ist die echte Adresse tot, bleibt das `::`, und das führt auf die eigene Maschine. Im Journal von
+`ngc-api` auf api-1 steht dann `http: TLS handshake error from [::1]:34332: EOF` — Apache hat sich
+zu sich selbst verbunden und ist am Namensabgleich gescheitert (`SSLProxyCheckPeerName on`). Ohne
+den `::`-Satz hätte Apache ein totes Mitglied zu überspringen; mit ihm hat es ein zweites, das
+antwortet und dann den Abgleich verweigert.
+
+**Was NICHT gemessen ist:** diese `[::1]`-Zeile kam **einmal** in den neun Fehlschlägen vor. Dass
+das `::` der Weg aller neun ist, steht damit nicht fest. Belegt ist, dass es im Anfrageweg liegt.
+
+**Was zu entscheiden wäre:**
+
+- Ob ein fehlendes Mitglied dem Benutzer überhaupt als Fehler durchgereicht werden darf. Es gibt
+  ein zweites, gesundes Mitglied; `failontimeout=On` und `retry=5` sind gesetzt. Vorschlag zur
+  Entscheidung: eine Anfrage, für die ein gesundes Mitglied bereitsteht, gehört **dorthin
+  weitergeworfen** und nicht beantwortet — `proxy-error-override` oder ein ausdrückliches
+  Übergehen des toten Mitglieds. Die Anlage hat die Reserve, sie benutzt sie nur nicht.
+- Wenn doch ein Fehler herauskommt: ob er `503` sein soll statt `500`, mit `Retry-After`. Für
+  `E_UNREACHABLE` hat die Oberfläche längst einen eigenen Satz („Service unavailable", Punkt 79
+  und der db-1-Fall) — eine fehlende Maschine könnte denselben Weg nehmen, den eine fehlende
+  Datenbank schon nimmt, statt als Programmfehler zu erscheinen.
+- Ob der `::`-Satz aus dem DNS verschwinden soll (Punkt 80) **oder** die Mitglieder des
+  Verteilers als nackte Adressen eingetragen werden sollen. Das Zweite ist in einer Hand und
+  wirkt sofort; das Erste ist richtiger und liegt beim Netz.
+- Ob Apache den Fehlschlag eines Mitglieds ins Fehlerprotokoll schreiben soll (`LogLevel
+  proxy:info` genügt dafür). Heute ist der Ausfall nur aus dem Zugriffsprotokoll zu erschließen,
+  und das ist dieselbe Gestalt wie Punkt 82: die Auskunft ist da, der Anlass fehlt.
+
+Zum Vergleich, weil es im selben Lauf gemessen wurde und die Messlatte setzt: der Ausfall der
+**Datenbank** (db-1) wird mit eigenem Code `E_UNREACHABLE`, eigener Meldung „Dienst nicht
+erreichbar." und einer Journalzeile mit Zähler beantwortet. Dieselbe Anlage kann es also.
+
+Herkunft und die ganze Messreihe aller sechs Maschinen: `docs/ausfall-je-maschine.md`.
