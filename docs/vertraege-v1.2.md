@@ -5073,3 +5073,111 @@ nicht geübt.
 - Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
+## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
+
+Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
+hintereinander:
+
+```
+WARN  tunnel failed err="link: the API broke the contract of the tunnel"
+WARN  Die Verbindung einer App wurde abgebrochen. app=org.sorglos.terminal code=E_PROTOCOL
+      grund="Der Dienst der App endete mit einem Fehler."
+INFO  tunnel up                                            (eine Sekunde später)
+```
+
+Gearbeitet wurde in diesem Moment an einer **Einrichtung** — und abgebrochen wurde
+`org.sorglos.terminal`, also eine **andere, bereits laufende** App. Die Oberfläche sagte dazu
+„Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen." Im Protokoll der API
+steht dazu nichts.
+
+**Das ist von der Ursache des Abbruchs unabhängig, und darum steht es als eigener Punkt.** Ob
+der Tunnel wegen der API-Fassung brach (dazu unten), wegen Last oder aus einem dritten Grund:
+dass die Arbeit an App A eine laufende App B aus der Leitung wirft, ist für sich ein Fehler. Wer
+im Terminal gerade etwas tippte, hat seine Sitzung verloren, weil jemand anders eine App
+einrichtete. Die Trennung, die ein Container leistet, endet offenbar am gemeinsamen Tunnel.
+
+**Was die Fassung damit zu tun hat — gemessen und abgewogen getrennt:**
+
+- **Gemessen:** vor dem Tausch (API bis 12:20) scheiterte das Aktivieren mit `E_PROTOCOL`; nach
+  dem Tausch auf 0.2.2 ist eine Einrichtung auf derselben Maschine `svc-1` **durchgelaufen**
+  (12:25:37 bis 12:28:04, `ngc_app` mit `active 1`, Behälter läuft). In den Protokollen aller
+  fünf NGC-Maschinen gibt es in diesen Stunden **genau einen** Treffer auf `E_PROTOCOL`, und das
+  ist der um 12:14:38. Nach 12:21 keinen.
+- **Abgewogen, nicht bewiesen:** dass die API-Fassung die Ursache war. Sie ist die einfachere
+  Erklärung, weil sie genau zwischen den beiden Versuchen gewechselt hat. Dagegen steht, dass
+  zur selben Zeit eine andere Sitzung Last auf `svc-1` und `svc-2` fuhr — dann wäre es
+  **Punkt 70** unter anderem Namen (ein Paket über eine Fenstergröße kommt unter Last nicht
+  durch, `E_PROTOCOL` statt `ok`). Ob um 12:14 schon Last lief, ist nicht gemessen.
+- **Was den Beweis brächte:** eine Einrichtung gegen 0.2.2 unter **angesagter** Last. Das ist ein
+  eigener Auftrag und nicht Teil dieser Messreihe.
+
+**Zu entscheiden ist zweierlei, und beides ist keine Messung:**
+
+1. Ob ein Fehler auf dem Tunnel überhaupt eine fremde App treffen darf — und wenn nicht, wo die
+   Trennung hingehört.
+2. Ob die Oberfläche beim Abbruch sagen muss, **welche** App es getroffen hat. „Das hat der
+   Rechner nicht angenommen" stand bei der Einrichtung; dass daneben eine Terminal-Sitzung
+   starb, hat niemand erfahren.
+
+Der Abbruch selbst ist von der Koordinationssitzung gemessen worden; die Zeile im Protokoll von
+`svc-1`, die fehlende Wiederholung nach 12:21 und die durchgelaufene Einrichtung um 12:25 sind
+hier nachgemessen. Herkunft: `docs/uhr-in-den-laden.md`, Abschnitt 12.
+
+## Punkt 78: Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat
+
+Gemessen am 24.10.2026 an `org.sorglos.uhr` auf `svc-1`. Die App ist dafür nur der Anlass: sie
+schreibt absichtlich **eine** Zeile in jede Richtung, und darum fällt an ihr auf, was bei einer
+größeren App niemandem auffiele.
+
+**Was der Controller protokolliert**, bei vier Aufrufen der Aktion `zeit`:
+
+```
+12:25:44  a service wrote to stderr  app=org.sorglos.uhr action=zeit bytes=510
+12:25:59  ... bytes=510
+12:26:00  ... bytes=510
+12:29:55  ... bytes=510      <- dieser Lauf zeigte im Fenster die Uhrzeit
+```
+
+**Was der Dienst wirklich schreibt**, im selben Behälter direkt gemessen, beide Ströme getrennt:
+
+```
+Rückgabewert 0
+STDOUT 21 Byte:  2026-10-24T12:31:52Z
+STDERR 33 Byte:  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**33 geschrieben, 510 protokolliert: 477 Byte Fremdtext, der der App zugeschrieben wird.** Bei
+allen vier Aufrufen gleich groß, also deterministisch und keine zufällige Störung.
+
+**Was ausgeschlossen ist, damit das keine Vermutung bleibt:**
+
+- **Keine Obergrenze.** `service.MaxStderr = 64 << 10` (64 KiB). 510 ist kein Anschlag.
+- **Kein falscher Zähler.** `ring.Write` hängt mit `append` an, `ring.bytes` gibt `r.b` zurück,
+  `logStderr` schreibt `len(b)` (`apps/server-controller/classes/serve/call.go`). Die Zahl ist
+  eine echte Byte-Zahl und kein Puffermaß.
+- **Nicht die `sudo`-Warnung des Messwegs.** Derselbe Aufruf ohne `cd /tmp` schreibt
+  `cannot chdir to /root: Permission denied` — 41 Byte — und scheitert dabei ganz. Das erklärt
+  die 477 nicht.
+- **Kein Anzeichen für einen Fehlschlag.** Der erfolgreiche Lauf um 12:29:55 schreibt dieselben
+  510 Byte wie die drei davor. (Hier stand zuerst das Gegenteil: dass 510 auf fehlgeschlagene
+  Läufe deute. Das war falsch und ist durch die vierte Zeile widerlegt.)
+
+**Nicht gemessen: was die 477 Byte sind.** Und das ist der zweite Teil des Befundes, denn es
+lässt sich **nicht nachlesen**: den Text gibt es nur mit `serve.CallInput.LogStderr`, der von
+Haus aus aus ist, und `/etc/ngc/controller.json` hat dafür **keinen Schlüssel** (`anchor`,
+`apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`, `releaseKey`, `roles` — und keinen
+weiteren). Ein Betreiber kann also die Zahl sehen und den Text nicht, ohne neu zu bauen.
+
+**Zu entscheiden ist dreierlei:**
+
+1. Wo die 477 Byte entstehen, und ob sie überhaupt in den Ring der App gehören. Was nicht die
+   App geschrieben hat, sollte ihr das Protokoll nicht zuschreiben.
+2. Ob der Schalter für den Text in die Konfiguration gehört. Solange er nur im Quelltext steht,
+   ist die eine Zeile, für die ein Protokoll da ist, im Ernstfall nicht lesbar.
+3. Ob die Zahl ohne den Text überhaupt etwas wert ist. Sie sollte „die App hat geredet" sagen;
+   gemessen sagt sie „die App und 477 Byte von irgendwem".
+
+Für eine Uhr ist das Kosmetik. Für eine App, die erklären soll, warum sie nicht konnte, ist es
+der Unterschied zwischen einem Protokoll und einem Rätsel.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 16.
