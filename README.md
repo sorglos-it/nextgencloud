@@ -25,6 +25,13 @@ measured it. Anything not measured is listed as not measured.
 | The app store tooling: pack, encrypt, catalog, release, and a store the API really fetched from | 13.10.2026, `store ok`, two packages fetched | 45 |
 | The small case: one database file and one key per program, SQLite with AES-256-XTS | 13.10.2026 | 47 |
 
+**Where this was measured.** Most rows above were measured on a single Debian 13 machine that
+carried all roles at once (`ngc.test`). **That machine has been switched off since 24.10.2026.**
+The measurements stand — they were taken while it ran, and a machine being off does not make a
+past measurement wrong. What is gone is the ability to look again: re-measuring the one-machine
+case needs a machine for it. The installation that runs today has six machines and is a
+different case. See `docs/alte-vm-verweise.md`.
+
 ## What does not work yet, or is not measured
 
 - **There is no official NGC app store.** The store key is still a placeholder, so every
