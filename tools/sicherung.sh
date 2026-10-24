@@ -24,17 +24,22 @@
 #   2. the controller's own database, through the command that already exists,
 #      while the controller keeps running.
 #   3. the MariaDB, with mariabackup, where one runs.
-#   4. the encrypted data directories of the apps, as the ciphertext they are
-#      on the disk. Their key is derived from dbKey of the same machine
-#      (measured: the key identifier the kernel holds for every app directory
-#      on svc-1 is the one HKDF over that dbKey gives), so part 1 of THIS
-#      machine is what opens them, and no part 1 of any other.
+#   4. the data directories of the apps. On the machine they are encrypted
+#      with a key derived from dbKey (measured: the key identifier the kernel
+#      holds for every app directory on svc-1 is the one HKDF over that dbKey
+#      gives) - but the service is running while this reads them, so the
+#      kernel hands them over in the CLEAR and this tar is plaintext. It is
+#      the one part of the backup that needs no key, and therefore the one
+#      that has to be locked away hardest.
 #   5. a manifest with a sha256 of every file.
 #
-# What it does NOT do is play anything back. The way back needs no new
-# program - a controller opens whatever lies at the path in its
-# controller.json, and that was measured too - but it needs an order of steps
-# and a machine to be measured on, and both are in the document named above.
+# What it does NOT do is play anything back, and it needs no program for most
+# of that: a controller opens whatever lies at the path in its
+# controller.json. The one step the product itself does not have is
+# tools/sicherung-zurueck (the system user of an app and its encrypted data
+# directory, which only an activation makes). The order of the steps, and
+# what came back and what did not when they were walked on a fresh machine,
+# is in the document named above.
 #
 # Usage:
 #   sicherung.sh <ziel-ordner> <benutzer@rechner> [<benutzer@rechner> ...]
@@ -83,9 +88,57 @@ fern() {
 # are directories whose modes and owners are part of what they are: db-keys is
 # 0710 root:mysql and keyfile.key is 0400 mysql, and a copy that loses that is
 # a copy a restore cannot put back.
+#
+# The tar is written ON the machine first and fetched afterwards, and not
+# streamed straight out. It costs the room of one more copy under /var/tmp for
+# as long as the fetch takes, and it buys the only thing that makes a transfer
+# checkable at all: a file on both ends with a sha256 of its own. A stream has
+# no sum, and tarring a live directory twice to get one would give two
+# different tars.
 her() {
-	local ziel=$1 pfad=$2 aus=$3
-	fern "$ziel" tar -C / --numeric-owner -cf - "${pfad#/}" >"$aus"
+	local ziel=$1 pfad=$2 aus=$3 name
+	name=$(basename -- "$aus")
+	fern "$ziel" "tar -C / --numeric-owner -cf $PROBE/$name '${pfad#/}' 2>&1 | grep -v 'socket ignored' || true"
+	fern "$ziel" cat "$PROBE/$name" >"$aus"
+	gleich "$ziel" "$PROBE/$name" "$aus" || return 1
+	fern "$ziel" rm -f "$PROBE/$name"
+}
+
+# gleich holds the file that just arrived against the machine it came from, and
+# it is not decoration.
+#
+# EVERYTHING here comes over ssh's stdout as binary, and that is a path with a
+# known way of going wrong: a session of 24.10.2026 took a logical dump of the
+# MariaDB the same way and got a 47 KB file that looked like a backup and held
+# no table and no user - the bytes were bent on the way into a file on Windows.
+# It only showed because somebody OPENED the dump instead of looking at its
+# size.
+#
+# So this script does not trust its own transfer. The sha256 is taken ON the
+# machine, before the bytes travel, and held against the file that arrived. A
+# mismatch is not a warning: the file is deleted, because a backup that is
+# quietly wrong is worse than one that is missing, and the run ends with a
+# gap it names.
+gleich() {
+	local ziel=$1 pfad=$2 aus=$3 dort hier
+	dort=$(fern "$ziel" sha256sum "$pfad" | cut -d' ' -f1)
+	hier=$(sha256sum "$aus" | cut -d' ' -f1)
+	if [ "$dort" != "$hier" ]; then
+		rm -f "$aus"
+		echo "sicherung: $(basename -- "$aus") kam verbogen an und wurde geloescht" >&2
+		echo "sicherung:   auf der Maschine $dort, hier $hier" >&2
+		return 1
+	fi
+	return 0
+}
+
+# fehlt records a part that did not make it, in the manifest and in the exit
+# code. Nothing here stops the run: the other parts of this machine and the
+# other machines are worth having, and a backup with one named gap is a
+# different thing from a backup that is silently short.
+fehlt() {
+	notiz "$1  FEHLT - kam verbogen an, siehe die Zeilen auf dem Schirm."
+	fehler=1
 }
 
 # notiz appends one line to the manifest of a machine.
@@ -119,6 +172,10 @@ for ziel in "$@"; do
 	ordner="$ZIEL/$name"
 	mkdir -p "$ordner"
 	MANIFEST="$ordner/inhalt.txt"
+	# The one directory this makes on the machine, before anything is read:
+	# every part is written there first so it has a sha256 on both ends
+	# (gleich). It is removed again at the end of this machine.
+	fern "$ziel" mkdir -p "$PROBE"
 	notiz "Sicherung von $name ($ziel), $STEMPEL"
 	notiz ""
 
@@ -126,7 +183,7 @@ for ziel in "$@"; do
 	#    is bytes nobody opens again - and because a machine that has none is
 	#    no NGC machine and the rest would be a quiet empty folder.
 	if fern "$ziel" test -d /etc/ngc; then
-		her "$ziel" /etc/ngc "$ordner/etc-ngc.tar"
+		her "$ziel" /etc/ngc "$ordner/etc-ngc.tar" || fehlt "etc-ngc.tar"
 		notiz "etc-ngc.tar          DIE SCHLUESSEL. Ohne diese Datei ist alles andere hier wertlos."
 		notiz "                     controller.json: dbKey (oeffnet state.db UND die App-Datenordner),"
 		notiz "                     noiseKey (die Kennung dieses Rechners), anchor (Stand der Vertrauensliste)."
@@ -143,8 +200,9 @@ for ziel in "$@"; do
 	#    controller keeps running; that is the one sentence its help gives and
 	#    it was measured again on all three controllers of the installation.
 	if fern "$ziel" test -x /usr/lib/ngc/ngc-controller; then
-		fern "$ziel" "mkdir -p $PROBE && /usr/lib/ngc/ngc-controller backup $PROBE/state.db >/dev/null"
+		fern "$ziel" "/usr/lib/ngc/ngc-controller backup $PROBE/state.db >/dev/null"
 		fern "$ziel" cat "$PROBE/state.db" >"$ordner/state.db"
+		gleich "$ziel" "$PROBE/state.db" "$ordner/state.db" || fehlt "state.db"
 		notiz "state.db             die eigene Datenbank des Controllers: Vertrauensliste, die Zeilen der"
 		notiz "                     Apps mit ihren Manifesten, die Lizenzen, gelegte Aktualisierungen."
 		notiz "                     Verschluesselt mit dbKey aus controller.json - nur damit zu oeffnen."
@@ -157,7 +215,7 @@ for ziel in "$@"; do
 	#    says so at the place that refuses to make one).
 	if fern "$ziel" 'command -v mariabackup >/dev/null && systemctl is-active --quiet mariadb'; then
 		fern "$ziel" "rm -rf $PROBE/mariadb && mkdir -p $PROBE/mariadb && mariabackup --backup --target-dir=$PROBE/mariadb >$PROBE/mariabackup.log 2>&1"
-		her "$ziel" "$PROBE/mariadb" "$ordner/mariadb.tar"
+		her "$ziel" "$PROBE/mariadb" "$ordner/mariadb.tar" || fehlt "mariadb.tar"
 		fern "$ziel" cat "$PROBE/mariabackup.log" >"$ordner/mariabackup.log"
 		notiz "mariadb.tar          die Benutzerdaten der Anlage (ngc_user, ngc_blob, ngc_session, ngc_log)."
 		notiz "                     Die Tabellen sind verschluesselt; der Schluessel liegt in etc-ngc.tar"
@@ -168,18 +226,30 @@ for ziel in "$@"; do
 		notiz "mariadb.tar          keine laufende MariaDB auf diesem Rechner."
 	fi
 
-	# 4. the data directories of the apps, as ciphertext. The service is
-	#    running while this is read, so root sees the plaintext NAMES through
-	#    the kernel's keyring - tar therefore carries the readable names and
-	#    the encrypted contents. That is the honest limit of this part and the
-	#    manifest says it: it is a copy that only this machine's dbKey opens,
-	#    and whether an fscrypt directory can be put back from a tar at all is
-	#    the open question of the document, not a claim of this script.
+	# 4. the data directories of the apps. THIS PART IS PLAINTEXT, and the
+	#    first version of this script said the opposite - measured and
+	#    corrected: the service is running while this is read, so the key of
+	#    every app is in the kernel's keyring and root reads the directories
+	#    THROUGH it. tar therefore carries readable names AND readable
+	#    contents. Counted in the tar of svc-1: 1419 ELF headers and the
+	#    dpkg lists of the container, plain to read.
+	#
+	#    So this one file is the most sensitive thing in the whole backup: it
+	#    is the only part that opens without any key at all. The manifest says
+	#    it in those words, because the opposite belief is the dangerous one.
+	#
+	#    The other side of the same fact is the good news of the restore: the
+	#    app data are NOT lost with the dbKey as long as this tar exists, and
+	#    putting them back needs no key either - measured, both apps' data came
+	#    back onto a fresh machine out of this tar.
 	if fern "$ziel" test -d /var/lib/ngc/apps; then
-		her "$ziel" /var/lib/ngc/apps "$ordner/app-daten.tar"
-		notiz "app-daten.tar        die Datenordner der Apps. Ihr Schluessel wird aus dbKey dieses"
-		notiz "                     Rechners abgeleitet (HKDF, App-Kennung als Salz) - der dbKey eines"
-		notiz "                     anderen Rechners oeffnet sie nicht."
+		her "$ziel" /var/lib/ngc/apps "$ordner/app-daten.tar" || fehlt "app-daten.tar"
+		notiz "app-daten.tar        die Datenordner der Apps - UNVERSCHLUESSELT, im Klartext."
+		notiz "                     Auf der Maschine sind sie verschluesselt (fscrypt, Schluessel aus"
+		notiz "                     dbKey), aber der Dienst lief beim Sichern, also hat der Kern sie"
+		notiz "                     entschluesselt vorgelegt. Diese Datei oeffnet JEDER, ohne Schluessel."
+		notiz "                     Sie ist das Empfindlichste in dieser Sicherung - und zugleich der"
+		notiz "                     Grund, dass die App-Daten einen Verlust des dbKey ueberleben."
 	else
 		notiz "app-daten.tar        keine App-Datenordner auf diesem Rechner."
 	fi
@@ -202,16 +272,25 @@ Sicherung einer NextGenCloud-Anlage, $STEMPEL
 Je Rechner ein Ordner, darin inhalt.txt mit der Liste und den Pruefsummen.
 
 DAS WICHTIGSTE IN EINEM SATZ: etc-ngc.tar ist der Schluessel zu allem anderen
-in diesem Ordner. Ohne ihn oeffnet weder state.db noch die MariaDB noch ein
-App-Datenordner, von niemandem, auch nicht von NextGenCloud.
+in diesem Ordner. Ohne ihn oeffnet weder state.db noch die MariaDB, von
+niemandem, auch nicht von NextGenCloud.
+
+DIE EINE AUSNAHME, UND SIE IST WICHTIG: app-daten.tar ist KEIN Geheimtext. Auf
+der Maschine sind die Datenordner der Apps verschluesselt, aber beim Sichern
+lief der Dienst, also hat der Kern sie entschluesselt vorgelegt. Diese Datei
+oeffnet jeder, ohne Schluessel. Sie gehoert damit genauso weggeschlossen wie
+etc-ngc.tar - und sie ist der Grund, dass die Daten der Apps einen Verlust des
+dbKey ueberleben.
 
 DARAUS FOLGT FUER DIE AUFBEWAHRUNG: etc-ngc.tar gehoert an einen anderen Ort
 als der Rest - wer beides zusammen hat, hat die Anlage. Und jeder Rechner hat
 seinen EIGENEN dbKey (vier verschiedene auf dieser Anlage, gemessen): es gibt
 keinen einen Schluessel der Anlage, den man einmal wegschliesst.
 
-Der Weg zurueck ist in docs/sicherung-und-weg-zurueck.md beschrieben und dort
-steht auch, welcher Schritt davon noch auf keiner Maschine gelaufen ist.
+Der Weg zurueck ist in docs/sicherung-und-weg-zurueck.md beschrieben, Schritt
+fuer Schritt, und er ist einmal gegangen: auf einer frischen Maschine, die
+dieser Anlage nie gehoert hat, lief eine App aus dieser Sicherung wieder.
+Dort steht auch, was dabei NICHT zurueckkam.
 EOF
 
 if [ "$fehler" -ne 0 ]; then
