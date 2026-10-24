@@ -4958,6 +4958,17 @@ zwei Datenstände, von denen die Oberfläche einen nicht kennt.
 Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
 Anlage sagt einmal.
 
+**Unabhängig bestätigt:** die Erstlauf-Sitzung sieht dasselbe von ihrer Seite und ohne von
+diesem Punkt zu wissen — ihre Station D4 zählt **zwei** vollständig eingerichtete Apps auf
+`svc-1` und eine auf `svc-2`, gemessen an `useradd`, `image loadfromarchive` und
+`container start` im Journal sowie am laufenden `conmon` des jeweiligen App-Benutzers. Zwei
+Messwege, dasselbe Ergebnis.
+
+**Eine Folge, die über die Buchhaltung hinausgeht** und die beim Abschalten einer Maschine
+auffallen wird: wer `svc-2` ausschaltet und feststellt, dass das Terminal weiter antwortet,
+hat **keinen** Ausfallschutz gemessen, sondern diesen Befund. Die Anlage nennt `svc-2`, laufen
+tut es auch auf `svc-1`.
+
 Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
 ---
 
