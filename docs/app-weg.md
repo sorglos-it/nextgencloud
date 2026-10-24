@@ -15,6 +15,39 @@ Fremder erraten kann.
 
 ---
 
+## Die zwei Prüfstände
+
+Es gibt zwei NGC-Anlagen, und dieses Papier nennt sie auseinander, weil fast jeder Befund
+unten an der einen hängt und nicht an der anderen:
+
+- **Die Einzel-VM** (`ngc`, 10.2.3.208, Fassung 0.2.0): alles auf einer Maschine — API,
+  Controller, Shell und der Laden daneben. Dort steht die eine App, die es bisher gab, und
+  dort sind die Befunde 2 bis 4 gemessen. Sie ist über Monate von Hand gewachsen.
+- **Die verteilte Anlage** (`ngc.mein.lan`, Fassung 0.2.1): sechs Maschinen.
+
+```
+10.2.3.210  ngc.mein.lan, api-1.ngc.mein.lan    Shell und erste API
+10.2.3.211  api-2.ngc.mein.lan                  zweite API
+10.2.3.212  db-1.ngc.mein.lan                   Datenbank
+10.2.3.213  svc-1.ngc.mein.lan                  Dienstknoten - hier laufen Apps
+10.2.3.214  svc-2.ngc.mein.lan                  Dienstknoten - hier laufen Apps
+10.2.3.215  store.ngc.mein.lan                  der Laden, eigene Maschine
+```
+
+Gemessen wird **gegen die Namen**, nie gegen die IP: die Shell besteht auf ihrem Namen
+(`config.json`, `rp.id` und `origins`), und mit einer nackten Adresse scheitert schon die
+Anmeldung.
+
+Die Namen sind **keine Rollenverteilung, auf die man sich verlassen darf.** Es gab einen Stand,
+auf dem `db-1` einen Controller trug und `store` gar kein NGC. Wo eine App wirklich liegt, liest
+man nach dem Einrichten nach, statt es aus einem Namen zu schließen.
+
+Für diesen Weg sind zwei Unterschiede die wichtigen: der Laden ist dort eine **eigene**
+Maschine, das Paket muss also wirklich über Netz geholt werden können — und es gibt **zwei**
+Dienstknoten, womit erstmals prüfbar ist, dass eine App dort landet, wo man sie hinschickt.
+
+---
+
 ## 0. Was eine App ist
 
 Ein Paket (`*.ngc`) ist ein tar mit drei Dingen:
@@ -365,10 +398,17 @@ go run ./apps/cli check -store uhr-probe /pfad/laden
 ### Den Laden ausliefern
 
 Apache braucht dafür nichts als ein Verzeichnis (`DocumentRoot`), TLS und
-`Options -Indexes -FollowSymLinks`. Auf der Prüfmaschine steht der Laden unter
-`/srv/ngc-store` an `https://store.ngc.test`, mit einer eigenen CA, deren Wurzel im
+`Options -Indexes -FollowSymLinks`. Auf der **Einzel-VM** (`ngc`, 10.2.3.208) steht der Laden
+unter `/srv/ngc-store` an `https://store.ngc.test`, mit einer eigenen CA, deren Wurzel im
 System-Vertrauensspeicher liegt — die API baut ihren Client ohne eigene Wurzeln und prüft die
 Kette darum wirklich. Die beiden Skripte dafür liegen **nicht** im Repo; siehe Befund 3.
+
+**Und genau da verdeckt dieser Prüfstand etwas.** Auf der Einzel-VM liegt der Laden auf
+derselben Maschine wie die API. Damit ist nie geprüft worden, was der Weg eigentlich verlangt:
+dass das Paket **über Netz** geholt werden kann. Die verteilte Anlage (`ngc.mein.lan`, Fassung
+0.2.1) hat dafür eine **eigene** Maschine, `store.ngc.mein.lan` — der ehrlichere Prüfstand.
+**Nicht gemessen:** ob dort heute schon etwas ausliefert; der Name löst auf (10.2.3.215), aber
+ein TLS-Handschlag von außen kam nicht zustande.
 
 ### Wie der Laden vertraut wird
 
@@ -398,7 +438,7 @@ Solche Apps tragen als Laden `local` (`trust.StoreLocal`), und `local` ist **nie
 der Liste. Der Preis steht in der Oberfläche: eine App, die nicht aus einem Laden kam, bekommt
 ihre nächste Fassung auch nicht von dort — „Bitte die neue Fassung unter ‚Hochladen' einrichten."
 
-Das ist der kürzere Weg und für die zweite App auf der Prüfmaschine der richtige: er rührt
+Das ist der kürzere Weg und für die zweite App der richtige: er rührt
 keinen Laden an, der schon läuft, und braucht keinen geheimen Schlüssel (Befund 2).
 
 ---
@@ -424,9 +464,9 @@ darf, entscheidet niemand automatisch.
 Abbild, Paket, unterschriebener Katalog, `check -store`. Dazu vier Fälle in
 `apps/uhr/classes/uhr_test.go`.
 
-**Nicht gemessen:** dass die Uhr sich auf der Prüfmaschine einrichten und öffnen lässt, und
-dass ihr Fenster die Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters an der
-Prüfmaschine, und die hatte diese Sitzung nicht. Bis das gelaufen ist, sind Schritt 2 und
+**Nicht gemessen:** dass die Uhr sich auf einer Anlage einrichten und öffnen lässt, und dass
+ihr Fenster die Zeit zeigt. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese
+Sitzung nicht. Bis das gelaufen ist, sind Schritt 2 und
 Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft — und dieses Papier sagt es hier,
 statt es wie Erledigtes aussehen zu lassen.
 
@@ -468,7 +508,7 @@ jeder eingerichteten App **von allein** (`rights.adminApps`), damit das erste Re
 App überhaupt jemandem gegeben werden kann. Es steht in keiner Zeile und kann darum auch nicht
 weggespeichert werden. Wer also als Verwalter prüft, sieht die App **immer** — und hat damit
 über jeden anderen Nutzer nichts gemessen. Dafür braucht es einen zweiten Benutzer, und der ist
-auf der Prüfmaschine bis heute nicht gemessen.
+auf der Einzel-VM bis heute nicht gemessen.
 
 ### 4. Die Ausgabe muss wirklich ankommen — beide Richtungen prüfen
 
@@ -550,7 +590,7 @@ direkt, nicht über diesen Befehl. **Der Befehl ist weiterhin nie gelaufen.**
 
 ### Befund 2: Der geheime Schlüssel des globalen Ladens ist nicht da
 
-Der Laden der Prüfmaschine (`"store": "global"`, Folge 1, eine App) ist mit dem Schlüssel
+Der Laden der Einzel-VM (`"store": "global"`, Folge 1, eine App) ist mit dem Schlüssel
 unterschrieben, dessen öffentlicher Teil in `/etc/ngc/api.json` als `storeKey` steht
 (Kennung `WM0yymuJtd9UxaUONGIXow`). Der **geheime** Teil liegt nicht auf der Maschine: was
 dort unter `/home/berry/ngcapp/store/store-key.pem` liegt, ist der **öffentliche** Teil —
@@ -573,18 +613,18 @@ den globalen Laden.
    echte Release-Schlüssel auf einem Hardware-Stick liegt (Entwurf 4.8). Für Ladenschlüssel
    gibt es beides nicht. Ein Laden, dessen Schlüssel weg ist, ist ein Laden, der nie wieder
    eine App bekommt — und das merkt man erst bei der zweiten.
-2. Für die Prüfmaschine: entweder einen neuen Ladenschlüssel ziehen und `storeKey` in
+2. Für die Einzel-VM: entweder einen neuen Ladenschlüssel ziehen und `storeKey` in
    `/etc/ngc/api.json` tauschen (Root, API neu starten), oder den globalen Laden lassen, wie er
    ist, und weitere Läden über die Vertrauensliste aufnehmen. Das Zweite rührt nichts an, was
    läuft, und ist darum das, was ich vorschlage.
 
-### Befund 3: Der Laden der Prüfmaschine steht in einem Heimatverzeichnis
+### Befund 3: Der Laden der Einzel-VM steht in einem Heimatverzeichnis
 
-Was den Laden der Prüfmaschine ausliefert, liegt in `/home/berry/ngcapp/`: ein Skript, das eine
+Was den Laden der Einzel-VM ausliefert, liegt in `/home/berry/ngcapp/`: ein Skript, das eine
 eigene CA und ein Zertifikat für `store.ngc.test` baut, und eines, das die CA in den
 System-Vertrauensspeicher legt, den Namen in `/etc/hosts` schreibt, die Dateien nach
 `/srv/ngc-store` kopiert und einen Apache-vhost auf 443 anlegt. Beide sind sauber geschrieben
-und beide prüfen sich selbst. **Keines von beiden ist im Repo.** Wer die Prüfmaschine neu
+und beide prüfen sich selbst. **Keines von beiden ist im Repo.** Wer die Einzel-VM neu
 aufsetzt, baut das noch einmal aus dem Kopf — oder gar nicht.
 
 **Vorschlag:** die beiden Skripte nach `tools/` holen (etwa `tools/pruefladen-tls.sh` und
@@ -595,17 +635,17 @@ kein Release — sie bauen einen **Prüf**laden —, aber sie gehören dorthin, 
 
 `ngc-store` soll mit der API ausgeliefert werden: das Release-Archiv `ngc-api-amd64.tar` trägt
 „genau die Dateien `ngc-api` und `ngc-store`", und `ngc-store contents` prüft das. Auf der
-Prüfmaschine liegt in `/usr/lib/ngc/` nur `ngc-api` und `ngc-controller` — `ngc-store` ist
+Einzel-VM liegt in `/usr/lib/ngc/` nur `ngc-api` und `ngc-controller` — `ngc-store` ist
 nicht da und steht in keinem `PATH`. Für diesen Weg habe ich es selbst übersetzt und in einen
 eigenen Ordner gelegt (`~/uhr-bau/`).
 
-Ob das Release es wirklich nicht mitbringt oder ob die Prüfmaschine von Hand bestückt wurde,
+Ob das Release es wirklich nicht mitbringt oder ob die Einzel-VM von Hand bestückt wurde,
 ist **nicht gemessen** — die Maschine ist über Monate von Hand gewachsen. Gemessen ist nur:
 heute ist es nicht da.
 
 **Vorschlag:** einmal messen, ob ein Release nach `ngc-api.sh` wirklich beide Programme ablegt.
 Wenn nicht, ist das ein Fehler der Auslieferung; wenn doch, ist es ein Beleg mehr dafür, dass
-die Prüfmaschine ein Handbau ist.
+die Einzel-VM ein Handbau ist.
 
 ### Befund 5: Die Architektur steht an drei Stellen
 
