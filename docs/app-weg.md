@@ -551,6 +551,64 @@ Und die Gegenproben dazu, weil ein Satz auf dem Schirm noch kein Beleg ist:
   der Dienst auf `stdout` schreibt, steht im Fenster. Die andere Zeile, die er gleichzeitig auf
   `stderr` schreibt, steht dort **nicht** — die sieht nur das Protokoll des Controllers.
 
+### Was das Protokoll des Controllers dazu sagt
+
+Die Gegenprobe von der anderen Seite, auf `svc-1` mitgelesen. Sie belegt vier Dinge, die man
+der Oberfläche nicht ansieht:
+
+```
+12:28:03  image loadfromarchive 2c2b5074cb6b… /var/lib/ngc/staged/accept-…/files/services/amd64.tar
+12:28:04  container remove ngc-uhr-ad8c00e2      (die alte Fassung weicht)
+12:28:04  image pull 2c2b5074cb6b… localhost/ngc/uhr:1.0.0
+12:29:55  container exec ngc-uhr-ad8c00e2 (image=localhost/ngc/uhr:1.0.0)
+12:29:55  INFO a service wrote to stderr app=org.sorglos.uhr service=uhr action=zeit bytes=510
+```
+
+1. **Das Abbild kommt aus dem Paket.** `loadfromarchive … /files/services/amd64.tar` — genau
+   die Datei, die `podman save` auf dem Baurechner geschrieben hat. Der Server baut nichts.
+2. **Der Name des Abbilds ist der aus dem Manifest.** `localhost/ngc/uhr:1.0.0` — das `tag` ist
+   die Fassung. Die Regel aus Schritt 3 ist damit am laufenden Server bestätigt und nicht nur
+   abgeschrieben.
+3. **Der Dienst wird mit `exec` in den stehenden Behälter gefahren.** Darum braucht das Abbild
+   ein `CMD`, das wartet — ohne `hold` gäbe es nichts, in das man fahren könnte.
+4. **`stderr` steht als BYTEZAHL im Protokoll, nicht als Text:** `bytes=510`, und kein Wort
+   davon. Das ist die Vorgabe (`serve.CallInput.LogStderr`), hier am laufenden System zu sehen —
+   und zugleich der Beleg, dass die Zeile wirklich nach `stderr` ging und nicht ins Fenster.
+
+**Und der Tunnel blieb stehen.** Im ganzen Fenster von 12:26 bis 12:31 steht auf `svc-1` kein
+`tunnel ended` und kein `tunnel failed` — anders als um 12:14:38 (Befund 9).
+
+**Und eine Ehrlichkeit zum Schluss, die den Beleg stärker macht:** die Uhr lief auf `svc-1`
+schon um **12:25:40**, zwei Minuten vor meinem Lauf — Behälter gestartet, Aktion `zeit` um
+12:25:44, 12:25:59 und 12:26:00 beantwortet. **Das war nicht dieser Lauf**, und das ist nicht
+geschätzt, sondern belegt:
+
+- **Von meinen Läufen hat genau zweimal einer „Aktivieren" gedrückt:** um `12:14:34` (der, der
+  am Tunnel riss) und um `12:27:57` (der, der durchlief). Der Lauf dazwischen, `12:22:29`, kam
+  gar nicht so weit — der Dialog sagte „Kein Rechner für Dienste da", er fand keine Rechnerwahl
+  und stieg aus.
+- **Zwischen 12:22:35 und 12:26:58 habe ich nichts gegen die Oberfläche laufen lassen.** Die
+  Zeitstempel meiner Mitschnitte lassen keine Lücke: 12:14, 12:18, 12:20, 12:22 — dann erst
+  wieder 12:27.
+- **Meine Skripte rufen `zeit` nie von selbst auf.** Nur das Öffnen-Skript öffnet ein Fenster,
+  einmal, um 12:29:53; die App fragt dann einmal beim Laden. Drei Aufrufe in 16 Sekunden sind
+  nicht meine.
+- Aus der Datenbank (von einer anderen Sitzung gelesen) kommen acht Anmeldungen des Verwalters
+  in diesen zehn Minuten. **Sechs davon ordne ich meinen Läufen zu**, die beiden um `12:25:18`
+  und `12:25:22` **nicht** — und genau 15 bzw. 19 Sekunden danach entstand der Systembenutzer
+  der App.
+
+Es hat also **jemand anderes** in diesem Fenster eingerichtet. Wer, ist **nicht gemessen** —
+eine andere Sitzung oder ein Mensch am Browser. Für den Weg heißt es: **zwei voneinander
+unabhängige Einrichtungen** auf 0.2.2 sind gelungen, und die erste ist nicht meine.
+
+**Eine Beobachtung, die dabei offen blieb:** der Controller meldet für jeden `zeit`-Aufruf über
+NGC `bytes=510` auf `stderr`. Der Dienst schreibt dort aber nur eine Zeile von **33 Byte** —
+gemessen von einer anderen Sitzung mit einem `podman exec` von Hand. Woher die übrigen rund 477
+Byte kommen, ist **nicht gemessen**; der Verdacht fällt auf Meldungen der Behälter-Laufzeit, die
+dem Dienst zugeschlagen werden. Es betrifft beide Einrichtungen gleich und sagt darum nichts
+darüber, wer eingerichtet hat.
+
 **Damit ist die Lücke zu, die diesen Auftrag ausgelöst hat:** NGC hat nicht mehr eine App,
 sondern zwei, und der Weg dahin ist nicht mehr unaufgeschrieben. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
 das gelaufen ist, sind Schritt 2 und Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft —
@@ -656,86 +714,92 @@ auseinandergehalten.
 
 Das Manifest kennt ein Feld `icon`: ein Pfad **unterhalb von `ui/`**, genau wie `ui.entry`
 (`shared/store/manifest.go:43`). Es ist freiwillig — beide heutigen Apps, Terminal und Uhr,
-lassen es weg.
+lassen es weg. **Gezeigt wird es nicht**, und das hat einen Grund, der weiter unten als
+Befund 11 steht.
 
-### Was heute wirklich damit passiert
+### Was die Oberfläche zeichnet
 
-Der Weg des Feldes ist kurz und endet früher, als man denkt:
+Seit heute trägt jedes Schild auf dem Schreibtisch, im Startmenü, im Titelbalken und in der
+Taskleiste ein **Icon der Oberfläche selbst**, nicht mehr den ersten Buchstaben des Namens.
+Welches, entscheidet `apps/web/public/assets/js/shell/icon.js` an der Kennung der App:
 
-1. **Paket.** `pack` verlangt, dass die Datei im ui-tar wirklich liegt: ein `icon`, zu dem
-   `ui/<pfad>` fehlt, lässt das Packen scheitern (`shared/store/pack.go:131`). Der Pfad muss
-   `ValidPath` sein — relativ, keine versteckte Datei, kein `..`
-   (`shared/store/manifest.go:137`).
-2. **API.** Der Schreibtisch reicht den Wert unverändert an die Oberfläche weiter, als
-   `core.DesktopApp.Icon` (`apps/server-api/classes/coreapp/desktop.go:171`).
-3. **Oberfläche.** Und dort hört es auf. **Die Oberfläche liest `icon` nirgends.** Jede App
-   bekommt im Startmenü und auf dem Schreibtisch dasselbe Schild mit dem **ersten Buchstaben
-   ihres Namens** — `Desktop.glyph()`, `apps/web/public/assets/js/shell/desktop.js:479-483`;
-   der Fenstertitel nimmt denselben Buchstaben
-   (`apps/web/public/assets/js/shell/desktop.js:562`).
-
-Für einen App-Bauer heißt das heute: **ein `icon` im Manifest ändert am Bild nichts.** Ob das
-Feld leer ist oder gefüllt — gezeigt wird der Buchstabe. Das ist kein Versehen, sondern so
-beschlossen, und der Kommentar an Ort und Stelle sagt warum: das Icon ist eine Datei aus dem
-ui-tar und darf erst gezeigt werden, wenn dessen Beweis stimmt (Aufgabe 22) — „ein Bild, das
-nicht bewiesen ist, ist ein Bild, das jemand anderes ausgesucht hat".
-
-### Der Satz, den es gibt
-
-`apps/web/public/assets/icons/` — zwölf SVGs, alle nach derselben Regel gezeichnet:
-
-| Datei | wofür |
+| Kennung | Icon |
 | --- | --- |
-| `terminal.svg` | Terminal |
-| `uhr.svg` | Uhr |
-| `laden.svg` | App-Store |
-| `benutzer.svg` | Benutzer und Rechte |
-| `platzhalter.svg` | App ohne eigenes Icon |
-| `rechte.svg` | Rechte, Freigaben, Bestätigungen |
-| `einstellungen.svg` | Einstellungen |
-| `dateien.svg` | Dateien |
-| `knoten.svg` | Knoten einer Anlage |
-| `rechner.svg` | Rechner (`fake-link.js`) |
-| `nicht-erreichbar.svg` | Zustand `unreachable` |
-| `keine-lizenz.svg` | Zustand `unlicensed` |
+| `ngc.store` | `laden` |
+| `ngc.users` | `benutzer` |
+| `org.sorglos.terminal` | `terminal` |
+| `org.sorglos.uhr` | `uhr` |
+| `org.sorglos.calculator` | `rechner` |
+| alles andere | `platzhalter` |
 
-Die letzten beiden sind da, weil der Schreibtisch diese zwei Zustände schon kennt und heute
-nur blass zeichnet (`.dicon.off`, `shell.css:84`); die mittleren vier, weil jede dieser Stellen
-in NGC bereits existiert und sonst beim nächsten Mal wieder einzeln gezeichnet würde.
+Zwei Zustände gehen vor: eine App im Zustand `unreachable` bekommt `nicht-erreichbar`, eine
+im Zustand `unlicensed` bekommt `keine-lizenz` — das blasse Schild allein sagt nicht, welcher
+von beiden es ist.
+
+Eine App, die die Oberfläche nicht kennt, bekommt also den Platzhalter und **nie** ein Bild
+aus ihrem eigenen Paket. Der Name steht unter dem Schild; er ist es, der zwei Platzhalter
+auseinanderhält.
+
+### Wo die Formen liegen, und warum dort
+
+Die Formen stehen **im Code**, als Tabelle in `icon.js`, und werden mit dem DOM zu einem
+`<svg>` zusammengebaut — Element für Element, Merkmal für Merkmal, nie über `innerHTML` und
+nie über eine Adresse.
+
+Das ist keine Vorliebe, sondern eine Regel, die es im Repo schon gab: unter `public/` darf
+nichts liegen, was ein Browser als **Dokument dieser Herkunft** ausführen würde, und ein
+`.svg` ist genau das — ein Dokument mit eigenen Skripten, auf das man einen Menschen direkt
+schicken kann. `apps/web/tests/shell/csp.spec.js:698` hält den Web-Stamm darauf fest und hat
+den ersten Versuch dieses Auftrags abgefangen, der die Dateien als CSS-Maske einbinden wollte.
+Der Weg, den die Regel offenlässt, ist genau der hier gewählte.
+
+Dieselben Formen liegen zusätzlich als Dateien in **`docs/icons/`** — zum Kopieren in die
+eigene `ui/` und für die Übersichtsseite. Die sind **erzeugt, nicht gepflegt**:
+
+```sh
+node apps/web/tests/icons-build.mjs   # schreibt docs/icons/*.svg und uebersicht.html
+```
+
+Dass die zwei Hälften nicht auseinanderlaufen, ist gemessen und nicht geglaubt:
+`apps/web/tests/shell/desktop-icons.spec.js` liest beide und fällt um, wenn sie sich
+unterscheiden.
+
+### Der Satz
+
+Zwölf Icons: `terminal`, `uhr`, `laden` (App-Store), `benutzer`, `rechte`, `platzhalter`,
+`einstellungen`, `dateien`, `knoten`, `rechner`, `nicht-erreichbar`, `keine-lizenz`.
 
 **Die Regel des Satzes** — wer ein dreizehntes zeichnet, hält sie ein:
 
 * Zeichenfläche `viewBox="0 0 24 24"`, nichts innerhalb von 2 Einheiten am Rand.
 * Strichstärke `1.75`, runde Enden und Ecken, `fill="none"`.
-* `stroke="currentColor"` am Wurzel-Element, keine festen Farben.
-* Zwei nebeneinander laufende Striche mindestens 2,5 Einheiten auseinander — alles
-  Engere verschwindet bei 24 px.
+* `stroke="currentColor"`, keine festen Farben.
+* Zwei nebeneinander laufende Striche mindestens 2,5 Einheiten auseinander — alles Engere
+  verschwindet bei 24 px.
 * Keine Schrift, keine Verläufe, keine Filter.
 
-Geprüft wurde das nicht nach Gefühl: **`apps/web/public/assets/icons/uebersicht.html`** stellt
-alle zwölf nebeneinander, hell und dunkel, in 24, 32 und 48 px, dazu eine Zeile, wie sie im
-Startmenü stünden. Die Datei im Browser öffnen, mehr braucht es nicht. Drei Icons
-(Einstellungen, Rechner, Keine Lizenz) sind nach dem ersten Blick auf diese Seite neu
-gezeichnet worden, weil sie bei 24 px zugelaufen sind.
+Geprüft wurde das nicht nach Gefühl: **`docs/icons/uebersicht.html`** stellt alle zwölf
+nebeneinander, hell und dunkel, in 24, 32 und 48 px. Im Browser öffnen, mehr braucht es
+nicht. Drei Icons (Einstellungen, Rechner, Keine Lizenz) sind nach dem ersten Blick auf diese
+Seite neu gezeichnet worden, weil sie bei 24 px zugelaufen sind.
 
 ### Hell und dunkel
 
 Der Schreibtisch hat ein dunkles Thema (`data-theme`). Ein Icon mit fester Farbe ist auf einem
 der beiden Gründe falsch. Deshalb `currentColor`: das Icon nimmt die Textfarbe der Stelle an,
-an der es steht, und ist damit in beiden Themen richtig, ohne zweite Datei.
+an der es steht, und ist in beiden Themen richtig, ohne zweite Datei.
 
-Das gilt aber **nur, wenn das SVG in der Seite steht**. Ein `<img src="icon.svg">` ist ein
-eigenes Dokument und erbt nichts — `currentColor` wird dort schwarz. Wer ein Icon als `<img>`
-oder als CSS-Hintergrund lädt, braucht entweder zwei Dateien oder eine feste Farbe, die auf
-beiden Gründen trägt. Innerhalb der eigenen App-Oberfläche ist das die Entscheidung des
-App-Bauers.
+Das gilt **nur, wenn das SVG in der Seite steht**. Ein `<img src="icon.svg">` ist ein eigenes
+Dokument und erbt nichts — `currentColor` wird dort schwarz. Wer ein Icon als `<img>` oder als
+CSS-Hintergrund lädt, braucht zwei Dateien oder eine feste Farbe, die auf beiden Gründen
+trägt. Innerhalb der eigenen App-Oberfläche ist das die Entscheidung des App-Bauers.
 
 ### Wie ein App-Bauer eins benutzt
 
-Innerhalb der eigenen Oberfläche sofort und ohne Bedingung: Datei nach `ui/` kopieren und in
-`index.html` einsetzen.
+**In der eigenen Oberfläche**, sofort und ohne Bedingung: Datei aus `docs/icons/` nach `ui/`
+kopieren und in `index.html` einsetzen. Innerhalb des eigenen Fensters wirkt sie.
 
-Als **App-Icon** im Manifest:
+**Als App-Icon im Manifest** — eingepackt wird es, gezeigt heute nicht (Befund 11):
 
 ```
 <app-ordner>/
@@ -752,15 +816,17 @@ Als **App-Icon** im Manifest:
 Grenzen, die heute wirklich gelten:
 
 * **Pfad:** relativ, unterhalb `ui/`, kein führender `/`, kein `..`, keine versteckte Datei
-  (`ValidPath`). Die Datei muss im Paket liegen, sonst packt `pack` nicht.
-* **Größe:** für `icon` selbst steht keine Zahl im Code. Die Grenze ist die des ui-tars, und
-  eine eigene Zahl erfände dieses Papier. Praktisch: die zwölf Dateien hier sind zwischen
-  290 und 620 Bytes groß. **Mehr als 4 KB ist für ein Strich-Icon kein Icon mehr**, das ist
-  die Hausregel dieses Satzes, keine Prüfung des Systems.
+  (`ValidPath`). Die Datei muss im Paket liegen, sonst packt `pack` nicht
+  (`shared/store/pack.go:131`).
+* **Größe:** für `icon` selbst steht keine Zahl im Code; die Grenze ist die des ui-tars. Die
+  zwölf Dateien hier sind zwischen 290 und 620 Bytes groß. **Mehr als 4 KB ist für ein
+  Strich-Icon kein Icon mehr** — Hausregel dieses Satzes, keine Prüfung des Systems.
 * **Inhalt:** nur Form — Pfade, Kreise, Rechtecke. **Kein `<script>`, kein `<foreignObject>`,
-  kein `<image>`, kein `xlink:href` oder `href` nach außen, keine Schriftart von außen.** Ein
-  SVG ist ein Dokument und kann all das. Ob jemand es prüft, steht gleich darunter.
-* **Wirkung:** heute keine. Siehe Befund 11.
+  kein `<image>`, kein `<use>`, kein `href` oder `xlink:href`, keine Schrift von außen.** Ein
+  SVG ist ein Dokument und kann all das. Wer es prüft, steht in Befund 11.
+* **Wirkung:** heute keine. Wer sein eigenes Bild im Startmenü sehen will, braucht eine
+  Zeile in `icon.js` — und das ist kein Dauerzustand, sondern der Punkt, an dem Befund 11
+  hängt.
 
 ---
 
@@ -1048,9 +1114,12 @@ die neue Fassung — um 12:28:08 sagte die Oberfläche:
 
 > Die App ist eingerichtet.
 
-Der Abbruch ist also **auf 0.2.1 gemessen und auf 0.2.2 nicht mehr aufgetreten**. Je eine
-Messung auf jeder Seite, nicht mehr: dass 0.2.2 es behebt, ist damit **nicht** belegt — belegt
-ist, dass es dort einmal durchlief, wo es vorher einmal riss. Warum die alte Fassung den Vertrag
+Der Abbruch ist also **auf 0.2.1 gemessen und auf 0.2.2 nicht mehr aufgetreten**, und das ist
+nicht nur die Oberfläche: im Protokoll von `svc-1` steht zwischen 12:26 und 12:31 **kein**
+`tunnel ended` und **kein** `tunnel failed`. Dazu kommt, dass eine andere Sitzung dieselbe App
+aus demselben Katalog um 12:25:40 eingerichtet hat, ebenfalls ohne Abbruch — zwei unabhängige
+Einrichtungen auf 0.2.2, eine Messung auf 0.2.1. Dass 0.2.2 es behebt, ist damit immer noch
+**nicht** belegt (niemand hat die Ursache gefunden), aber es ist mehr als ein glücklicher Lauf. Warum die alte Fassung den Vertrag
 brach, ist nicht gemessen und wird es wohl auch nicht mehr.
 
 **Was bleibt, auch ohne Erklärung:** das war die Station, die vorher niemand erreichen konnte,
@@ -1079,38 +1148,49 @@ Architektur einmal und schreibt den tar-Namen selbst.
 Das Manifest-Feld `icon` geht den ganzen Weg — `pack` prüft, dass die Datei im ui-tar liegt
 (`shared/store/pack.go:131`), der Schreibtisch reicht es als `core.DesktopApp.Icon` an die
 Oberfläche (`apps/server-api/classes/coreapp/desktop.go:171`) — und **kommt nirgends an**. In
-`apps/web/public/assets/js/` liest kein einziger Zugriff dieses Feld. Gezeichnet wird in jedem
-Fall ein Buchstabenschild: `Desktop.glyph()`,
-`apps/web/public/assets/js/shell/desktop.js:479-483`.
+`apps/web/public/assets/js/` liest kein einziger Zugriff dieses Feld.
 
-Die gute Nachricht zuerst, weil sie die wichtigere ist: **es wird heute kein fremdes SVG in die
+Die gute Nachricht zuerst, weil sie die wichtigere ist: **es wird kein fremdes SVG in die
 Oberfläche eingebettet.** Die Stelle, an der ein ungeprüftes Bild aus einem fremden Paket in
-die Seite des Schreibtischs geraten könnte, existiert nicht. Das ist kein Zufall — der
-Kommentar über `glyph()` sagt genau das und hängt das Zeigen an den Beweis des ui-tars
-(Aufgabe 22).
+die Seite des Schreibtischs geraten könnte, existiert nicht. Die Schilder tragen seit
+Kapitel 9 Icons, aber alle zwölf sind Formen der Oberfläche selbst, in `icon.js`, mit dem DOM
+gebaut; `shell/desktop-hostile.spec.js` misst, dass in Schreibtisch, Startmenü und Taskleiste
+kein `<img>`, kein `<script>`, kein fremdes `<svg>` und an keinem Icon ein `href`- oder
+`on…`-Merkmal steht.
 
-Der Befund ist die andere Hälfte: das Feld **sieht benutzbar aus und ist es nicht.** Ein
-App-Bauer, der `"icon": "icon.svg"` ins Manifest schreibt, bekommt keinen Fehler, kein
-Schweigen im Protokoll, keinen Hinweis — er bekommt ein gepacktes, installiertes,
-funktionierendes Paket, in dem sein Icon nie auftaucht. Dieses Papier war die einzige Stelle,
-an der das stand; ohne sie muss man es messen, um es zu wissen.
+Der Befund ist die andere Hälfte: das Feld **sieht benutzbar aus und ist es nicht.** Wer
+`"icon": "icon.svg"` ins Manifest schreibt, bekommt keinen Fehler, kein Schweigen im
+Protokoll, keinen Hinweis — er bekommt ein gepacktes, installiertes, funktionierendes Paket,
+in dem sein Icon nie auftaucht.
 
-**Vorschlag:** nicht jetzt bauen, sondern an Aufgabe 22 hängen. Wenn das Zeigen kommt, gehört
-dazu — und zwar bevor die erste fremde Datei in die Seite geht:
+**Warum es nicht nebenbei gebaut wurde**, und das ist die Zahl, um die es geht: ein Bild aus
+einem fremden Paket darf erst gezeigt werden, wenn der Beweis des ui-tars stimmt, und der
+Beweis gilt für das **ganze Archiv**, nicht für eine einzelne Datei (`appframe.js`,
+`verifiedUI`). Das Icon im Startmenü zu zeigen hieße also: für **jede** App der Liste das
+vollständige ui-tar holen, **bis zu 64 MiB** (`uitar.js`, `MAX_UI_TOTAL`), bevor das Menü
+überhaupt gezeichnet werden kann. Für ein Schild von 24 Pixeln ist das der falsche Handel.
 
-* Das SVG darf **nur aus dem ui-tar** kommen, dessen Beweis schon geprüft ist, nie aus einer
-  URL und nie aus dem Manifest selbst.
-* Es gehört **nicht** als `innerHTML` in die Seite. Entweder in einem Rahmen (`<img>` aus einem
-  `blob:`-Verweis, der weder Skript noch Verweis nach außen ausführt), oder, wenn es die Farbe
-  erben soll, nur nach einer Prüfung, die alles außer Form verwirft: `<script>`,
-  `<foreignObject>`, `<image>`, `<use>`, jedes `href`/`xlink:href`, jedes `on…`-Merkmal.
-* Scheitert die Prüfung, gilt dieselbe Regel wie bei der App-Liste: **nicht das halbe Bild
-  zeigen, sondern das Buchstabenschild** — das Verhalten von heute ist der sichere Rückfall.
-* Der Platzhalter dafür ist gezeichnet: `apps/web/public/assets/icons/platzhalter.svg`.
+**Vorschlag,** in dieser Reihenfolge:
 
-Solange das nicht da ist, ist der Satz in `apps/web/public/assets/icons/` das, wofür er
-gemacht ist: die Icons der **Oberfläche selbst** und eine Vorlage, die ein App-Bauer in seine
-eigene `ui/` kopiert — innerhalb seiner App wirkt sie sofort.
+1. **Erst die Zustellung.** Was fehlt, ist ein Weg, eine *einzelne* Datei des ui-tars bewiesen
+   zu bekommen — ein Beweis je Datei (ein Merkle-Baum über die Einträge) oder eine eigene,
+   knapp begrenzte Handlung der API, die nur das Icon liefert und für sich unterschrieben ist.
+   Beides ist eine Änderung an **`shared/`** und damit hier **blockiert**, nicht gebaut:
+   `shared/core/results.go:68` (`DesktopApp`) und `shared/store/manifest.go:43` (`Icon`) sind
+   die Zeilen, an denen es hinge.
+2. **Dann das Zeichnen**, und zwar nicht als `innerHTML`. Entweder in einem Rahmen (`<img>`
+   aus einem `blob:`-Verweis, der weder Skript noch Verweis nach außen ausführt), oder — wenn
+   es die Farbe erben soll — nur nach einer Prüfung, die alles außer Form verwirft:
+   `<script>`, `<foreignObject>`, `<image>`, `<use>`, jedes `href`/`xlink:href`, jedes
+   `on…`-Merkmal. Die Liste steht schon in `desktop-icons.spec.js` und misst heute die eigenen
+   Dateien; sie ist dieselbe, die dann eine fremde prüfen müsste.
+3. **Scheitert die Prüfung**, gilt die Regel der App-Liste: nicht das halbe Bild zeigen,
+   sondern den Platzhalter — `icon.js`, `PLACEHOLDER`. Das Verhalten von heute ist der sichere
+   Rückfall, und es ist schon da.
+
+Bis dahin ist der Satz in `docs/icons/` das, wofür er gemacht ist: die Icons der Oberfläche
+selbst, und eine Vorlage, die ein App-Bauer in seine eigene `ui/` kopiert — innerhalb seiner
+App wirkt sie sofort.
 
 ---
 

@@ -9,14 +9,14 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 ---
 
-## Inhaltsverzeichnis (Stand 18.10.2026)
+## Inhaltsverzeichnis (Stand 24.10.2026)
 
 **Achtung, zwei Nummernreihen in einer Datei.** Die Nummern 19 bis 35 sind
 **doppelt vergeben**:
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 62"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 74"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -24,18 +24,23 @@ sofern nicht „dieser Liste" oder „des Vertrags" dabeisteht – dann Reihe A.
 **Darum die Überschrift zitieren, nicht die Nummer** (so steht es auch in
 `STAND.md`).
 
-Lücken gibt es in keiner der beiden Reihen.
+Lücken gibt es in keiner der beiden Reihen. **Nachgemessen am 24.10.2026** und
+seitdem bei jedem `tools/check.sh` wieder: `tools/check-buch.sh` liest diese
+Datei gegen sich selbst – keine Nummer zweimal, keine Lücke, kein Verweis auf
+einen Punkt, den es nicht gibt. **Wer einen Punkt anhängt, trägt ihn in die
+Tabelle der Reihe B ein** – sonst wird die Prüfung rot, und das ist Absicht:
+die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 ### Stand in Zahlen
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 34 | 69 |
+| gilt | 35 | 46 | 81 |
 | überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
 | offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **45** | **81** |
+| **Einträge** | **36** | **57** | **93** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -139,6 +144,18 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
 | 60 | Der Controller lässt sich nicht koppeln | **ÜBERHOLT durch Punkt 61 – in der Kernaussage falsch** | Messung |
 | 61 | Gekoppelt – Punkt 60 war falsch | gilt – **berichtigt Punkt 60** | Messung |
 | 62 | Die Anlage entsteht allein aus den Skripten | gilt – bestätigt **Punkt 61** an frischer Anlage | Umgebung |
+| 63 | Die Oberfläche ist auf `main` – 136 Dateien statt 2 | gilt – der Fund lag außerhalb des Umzugs | Umgebung |
+| 64 | Der erste Release auf einer echten Debian-VM, Terminal-Abbild gebaut | gilt | Umgebung |
+| 65 | „Noch nicht geholt" wird dem Verwalter als „nicht echt" gezeigt | gilt | Messung |
+| 66 | Eine frische Anlage hat eine Stunde lang keinen Laden | gilt – kein Abruf beim Start, keine Handauslösung | Messung |
+| 67 | Rust für NGC – bitgleich nachgebaut, und genau das spricht dagegen | gilt – Entscheidungspapier, Vorschlag ist eine Abwägung | Entscheidung |
+| 68 | Fremde Programme portieren – das Programm ja, die Oberfläche nie | gilt – **nicht** dieselbe Frage wie Punkt 67 | Entscheidung |
+| 69 | Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt | gilt – behoben, die CI sagt jetzt **warum** | Messung |
+| 70 | Ein Paket über eine Fenstergröße kommt unter Last nicht durch | gilt – Befund auf `main`, `E_PROTOCOL` statt `ok` | Messung |
+| 71 | Sechs Wände vom Release bis zur laufenden App | gilt – vier davon in keinem Prüfsatz; Wand 1 offen in `ulh` | Umgebung |
+| 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
+| 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
+| 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -4958,6 +4975,17 @@ zwei Datenstände, von denen die Oberfläche einen nicht kennt.
 Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
 Anlage sagt einmal.
 
+**Unabhängig bestätigt:** die Erstlauf-Sitzung sieht dasselbe von ihrer Seite und ohne von
+diesem Punkt zu wissen — ihre Station D4 zählt **zwei** vollständig eingerichtete Apps auf
+`svc-1` und eine auf `svc-2`, gemessen an `useradd`, `image loadfromarchive` und
+`container start` im Journal sowie am laufenden `conmon` des jeweiligen App-Benutzers. Zwei
+Messwege, dasselbe Ergebnis.
+
+**Eine Folge, die über die Buchhaltung hinausgeht** und die beim Abschalten einer Maschine
+auffallen wird: wer `svc-2` ausschaltet und feststellt, dass das Terminal weiter antwortet,
+hat **keinen** Ausfallschutz gemessen, sondern diesen Befund. Die Anlage nennt `svc-2`, laufen
+tut es auch auf `svc-1`.
+
 Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
 ---
 
@@ -5026,3 +5054,298 @@ Vorschlag **neue dazu**, weil die alte ein über Monate gewachsener Handbau ist 
 ein zweites Mal aufbauen kann, eine neue aus Release und Anleitung dagegen den kleinen Fall
 **und** die Anleitung zugleich prüft; (c) was mit der alten — Vorschlag **einmal starten**, die
 vier Dinge bergen, dann weg. **Nicht vorher löschen.**
+
+## Punkt 76: diese Nummer ist leer — und das ist kein Versehen, sondern eine Spur
+
+Am 24.10.2026 haengten mehrere Sitzungen gleichzeitig Punkte hinten an. Zweimal trugen
+zwei verschiedene Punkte dieselbe Nummer; beim Zusammenfuehren habe ich (die
+Koordinationssitzung) den jeweils zweiten weitergezaehlt. Dabei ist die 76 uebersprungen
+worden.
+
+Sie bleibt leer. Umnummerieren waere der schlechtere Weg: auf die 77 bis 80 wird in
+anderen Dateien und in den Berichten der Sitzungen bereits verwiesen, und eine Nummer,
+die ihre Bedeutung wechselt, ist schlimmer als eine, die fehlt.
+
+Was daraus zu lernen ist, steht schon im Buch: **ein Buch, das nur hinten waechst,
+braucht einen Riegel gegen doppelte Nummern.** Daran arbeitet ein eigener Strang.
+## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
+
+Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
+hintereinander:
+
+```
+WARN  tunnel failed err="link: the API broke the contract of the tunnel"
+WARN  Die Verbindung einer App wurde abgebrochen. app=org.sorglos.terminal code=E_PROTOCOL
+      grund="Der Dienst der App endete mit einem Fehler."
+INFO  tunnel up                                            (eine Sekunde später)
+```
+
+Gearbeitet wurde in diesem Moment an einer **Einrichtung** — und abgebrochen wurde
+`org.sorglos.terminal`, also eine **andere, bereits laufende** App. Die Oberfläche sagte dazu
+„Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen." Im Protokoll der API
+steht dazu nichts.
+
+**Das ist von der Ursache des Abbruchs unabhängig, und darum steht es als eigener Punkt.** Ob
+der Tunnel wegen der API-Fassung brach (dazu unten), wegen Last oder aus einem dritten Grund:
+dass die Arbeit an App A eine laufende App B aus der Leitung wirft, ist für sich ein Fehler. Wer
+im Terminal gerade etwas tippte, hat seine Sitzung verloren, weil jemand anders eine App
+einrichtete. Die Trennung, die ein Container leistet, endet offenbar am gemeinsamen Tunnel.
+
+**Was die Fassung damit zu tun hat — gemessen und abgewogen getrennt:**
+
+- **Gemessen:** vor dem Tausch (API bis 12:20) scheiterte das Aktivieren mit `E_PROTOCOL`; nach
+  dem Tausch auf 0.2.2 ist eine Einrichtung auf derselben Maschine `svc-1` **durchgelaufen**
+  (12:25:37 bis 12:28:04, `ngc_app` mit `active 1`, Behälter läuft). In den Protokollen aller
+  fünf NGC-Maschinen gibt es in diesen Stunden **genau einen** Treffer auf `E_PROTOCOL`, und das
+  ist der um 12:14:38. Nach 12:21 keinen.
+- **Abgewogen, nicht bewiesen:** dass die API-Fassung die Ursache war. Sie ist die einfachere
+  Erklärung, weil sie genau zwischen den beiden Versuchen gewechselt hat. Dagegen steht, dass
+  zur selben Zeit eine andere Sitzung Last auf `svc-1` und `svc-2` fuhr — dann wäre es
+  **Punkt 70** unter anderem Namen (ein Paket über eine Fenstergröße kommt unter Last nicht
+  durch, `E_PROTOCOL` statt `ok`). Ob um 12:14 schon Last lief, ist nicht gemessen.
+- **Was den Beweis brächte:** eine Einrichtung gegen 0.2.2 unter **angesagter** Last. Das ist ein
+  eigener Auftrag und nicht Teil dieser Messreihe.
+
+**Zu entscheiden ist zweierlei, und beides ist keine Messung:**
+
+1. Ob ein Fehler auf dem Tunnel überhaupt eine fremde App treffen darf — und wenn nicht, wo die
+   Trennung hingehört.
+2. Ob die Oberfläche beim Abbruch sagen muss, **welche** App es getroffen hat. „Das hat der
+   Rechner nicht angenommen" stand bei der Einrichtung; dass daneben eine Terminal-Sitzung
+   starb, hat niemand erfahren.
+
+Der Abbruch selbst ist von der Koordinationssitzung gemessen worden; die Zeile im Protokoll von
+`svc-1`, die fehlende Wiederholung nach 12:21 und die durchgelaufene Einrichtung um 12:25 sind
+hier nachgemessen. Herkunft: `docs/uhr-in-den-laden.md`, Abschnitt 12.
+
+## Punkt 78: Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat
+
+Gemessen am 24.10.2026 an `org.sorglos.uhr` auf `svc-1`. Die App ist dafür nur der Anlass: sie
+schreibt absichtlich **eine** Zeile in jede Richtung, und darum fällt an ihr auf, was bei einer
+größeren App niemandem auffiele.
+
+**Was der Controller protokolliert**, bei vier Aufrufen der Aktion `zeit`:
+
+```
+12:25:44  a service wrote to stderr  app=org.sorglos.uhr action=zeit bytes=510
+12:25:59  ... bytes=510
+12:26:00  ... bytes=510
+12:29:55  ... bytes=510      <- dieser Lauf zeigte im Fenster die Uhrzeit
+```
+
+**Was der Dienst wirklich schreibt**, im selben Behälter direkt gemessen, beide Ströme getrennt:
+
+```
+Rückgabewert 0
+STDOUT 21 Byte:  2026-10-24T12:31:52Z
+STDERR 33 Byte:  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**33 geschrieben, 510 protokolliert: 477 Byte Fremdtext, der der App zugeschrieben wird.** Bei
+allen vier Aufrufen gleich groß, also deterministisch und keine zufällige Störung.
+
+**Was ausgeschlossen ist, damit das keine Vermutung bleibt:**
+
+- **Keine Obergrenze.** `service.MaxStderr = 64 << 10` (64 KiB). 510 ist kein Anschlag.
+- **Kein falscher Zähler.** `ring.Write` hängt mit `append` an, `ring.bytes` gibt `r.b` zurück,
+  `logStderr` schreibt `len(b)` (`apps/server-controller/classes/serve/call.go`). Die Zahl ist
+  eine echte Byte-Zahl und kein Puffermaß.
+- **Nicht die `sudo`-Warnung des Messwegs.** Derselbe Aufruf ohne `cd /tmp` schreibt
+  `cannot chdir to /root: Permission denied` — 41 Byte — und scheitert dabei ganz. Das erklärt
+  die 477 nicht.
+- **Kein Anzeichen für einen Fehlschlag.** Der erfolgreiche Lauf um 12:29:55 schreibt dieselben
+  510 Byte wie die drei davor. (Hier stand zuerst das Gegenteil: dass 510 auf fehlgeschlagene
+  Läufe deute. Das war falsch und ist durch die vierte Zeile widerlegt.)
+
+**Nicht gemessen: was die 477 Byte sind.** Und das ist der zweite Teil des Befundes, denn es
+lässt sich **nicht nachlesen**: den Text gibt es nur mit `serve.CallInput.LogStderr`, der von
+Haus aus aus ist, und `/etc/ngc/controller.json` hat dafür **keinen Schlüssel** (`anchor`,
+`apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`, `releaseKey`, `roles` — und keinen
+weiteren). Ein Betreiber kann also die Zahl sehen und den Text nicht, ohne neu zu bauen.
+
+**Zu entscheiden ist dreierlei:**
+
+1. Wo die 477 Byte entstehen, und ob sie überhaupt in den Ring der App gehören. Was nicht die
+   App geschrieben hat, sollte ihr das Protokoll nicht zuschreiben.
+2. Ob der Schalter für den Text in die Konfiguration gehört. Solange er nur im Quelltext steht,
+   ist die eine Zeile, für die ein Protokoll da ist, im Ernstfall nicht lesbar.
+3. Ob die Zahl ohne den Text überhaupt etwas wert ist. Sie sollte „die App hat geredet" sagen;
+   gemessen sagt sie „die App und 477 Byte von irgendwem".
+
+Für eine Uhr ist das Kosmetik. Für eine App, die erklären soll, warum sie nicht konnte, ist es
+der Unterschied zwischen einem Protokoll und einem Rätsel.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 16.
+## Punkt 79: Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem
+
+Der Laden (`store`, eine eigene Maschine, die ausdrücklich **nicht** zur Anlage gehört) wurde am
+24.10.2026 um 14:42 auf dem Proxmox-Wirt mit `qm stop 306` abgeschaltet und nach rund 40 Sekunden
+wieder angefahren. Die Anlage hat das vollständig weggesteckt: die Oberfläche antwortete
+unverändert (10 von 10 Anfragen `200`, 19–28 ms wie vorher), und `nginx` auf dem Laden lief nach
+`qm start` von selbst wieder. **Das ist das gute Ergebnis** und der befürchtete schwere Befund —
+eine Anlage, die ohne ihren Laden nicht mehr arbeitet — ist nicht eingetreten.
+
+**Was gemessen ist, und was nur gelesen:** im Journal von api-1 und api-2 steht über den ganzen
+Ausfall `-- No entries --`. Diese Messung **beweist nichts**: das Fenster war 40 Sekunden lang,
+und in dieser Zeit war kein Takt fällig. Der Beleg steht im Code, nicht im Journal.
+
+`apps/server-api/classes/server/server.go`, `Server.rounds`, hat `hour := time.NewTicker(Hour)`
+(`Hour = time.Hour`) und daneben `first := time.NewTimer(FirstCatalog)` mit
+`FirstCatalog = time.Minute`. Die Katalogrunde läuft also eine Minute nach dem Start und danach
+stündlich. Dass `systemctl list-timers` auf api-1 keinen NGC-Timer zeigt, ist darum der erwartete
+Zustand und kein Befund.
+
+Die Runde selbst **hat** eine Meldung:
+
+```go
+func (s *Server) hour(ctx context.Context) {
+	if err := s.st.Refresh(ctx); err != nil {
+		slog.Warn("catalogs could not be fetched", "error", err)
+	}
+}
+```
+
+Erreichbar ist sie für diesen Fall nicht. `Stores.Refresh` (`fetch.go:175`) gibt einen Fehler nur
+zurück, wenn die **Vertrauensliste** nicht zu lesen war; der Fehler des einzelnen Ladens geht in
+`_ = st.note(ctx, s.ID, err)` und wird verworfen, am Ende steht `return nil`. Ein unerreichbarer
+Laden liefert also `nil`, und `slog.Warn` darüber feuert nie. Der Grund landet still in der Zeile
+des Ladens und ist nur in `ngc.store/sources` zu sehen — für den, der sich anmeldet und dorthin
+klickt. Über die Befehlszeile gibt es gar kein Nachsehen: `ngc-store --help` kennt nur Packen,
+Unterschreiben und Prüfen, `ngc-api --help` und `ngc-controller --help` keinen Katalogbefehl.
+
+Ein Laden, der eine Woche weg ist, hat damit **168 Mal erfolglos geklopft**, ohne eine Zeile zu
+hinterlassen, die ein Mensch findet, ohne sie zu suchen.
+
+**Nachgemessen am 24.10.2026, 13:01-13:05 UTC, mit einer Runde, die wirklich auf den toten Laden
+trifft** (Laden aus, `ngc-api` auf api-2 neu gestartet, Runde erzwungen - `FirstCatalog` erlaubt
+das in einer Minute statt in einer Stunde). Damit ist auch die gute Haelfte belegt, die der erste
+Lauf nicht zeigen konnte: die Runde kostet genau sich selbst. Der Katalog bleibt Byte fuer Byte
+auf Folge 7 (1116 B), die Vertrauensliste auf Folge 6, beide Apps aktiv. Und die Anlage faengt
+sich von selbst: Laden wieder an, naechste Runde, Fehlertext weg und `checked` neu, ohne eine
+Hand. Im Journal von api-2 stehen dazu **null Zeilen**, die Katalog, Store oder Laden erwaehnen -
+das ist jetzt gemessen und nicht mehr nur aus dem Code geschlossen.
+
+Dazu eine Einzelheit, die beim Lesen der Zeile wichtig ist: **`checked` rueckt beim Fehlschlag
+nicht vor.** Die Zeile ging von `{"checked":1792845105}` auf
+`{"checked":1792845105,"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` - der
+Wert bleibt auf dem letzten *erfolgreichen* Blick stehen, der Fehler wird nur angehaengt. Die
+Zeile traegt damit das Alter des letzten guten Blicks, und wer hinsieht, kann erkennen, dass der
+Laden seit einer Woche nicht geantwortet hat. Es fehlt nicht die Auskunft, sondern der Anlass,
+sie zu holen. Das `_ =` ist kein Versehen: der
+Kommentar darüber sagt, dass das Aufschreiben den nächsten Laden nicht verschlucken darf. Die
+Absicht ist richtig, die Folge ist Stille.
+
+**Was zu entscheiden wäre:**
+
+- Ob eine Katalogrunde, die einen Laden nicht erreicht, **ins Journal** gehört. Vorschlag:
+  ja, aber nicht jede Stunde dieselbe Zeile — beim ersten Fehlschlag eine `WARN`, danach erst
+  wieder, wenn sich etwas ändert (wieder erreichbar, oder ein anderer Grund). Sonst tauscht man
+  Stille gegen Rauschen, und 168 gleiche Zeilen findet auch niemand.
+- Ob `Stores.Refresh` den Fehler **zurückgeben** soll, statt ihn nur in die Zeile zu schreiben.
+  Die heutige Form verschluckt ihn zweimal: `_ =` am `note`, und `return nil` am Ende. Ein
+  gesammelter Fehler („k von n Läden nicht erreicht") würde die Warnzeile erreichbar machen, ohne
+  dass ein kaputter Laden den nächsten kostet.
+- Ob es einen Weg über die **Befehlszeile** geben soll, nach dem Laden zu sehen. Heute kann man
+  den Zustand der Läden nur über eine Anmeldung in der Oberfläche erfahren. Für jeden, der eine
+  Anlage aus der Ferne betreut, ist das eine Tür, die fehlt.
+
+Alle drei sind Entscheidungen und keine Messungen. Die Messung ist: sie fragt, sie scheitert, und
+es steht nirgends, wo man es sieht.
+
+Herkunft und die ganze Messreihe, samt zweier Messfallen, die den Lauf fast entwertet haben:
+`docs/ausfall-je-maschine.md`.
+
+## Punkt 80: Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen
+
+Gemessen am 24.10.2026. Der DNS des Netzes (10.2.3.102) liefert für **jeden** Namen
+`*.ngc.mein.lan` neben dem richtigen A-Satz auch einen AAAA-Satz `::`. Alles, was über NSS
+geht — `getent`, `curl`, `ping`, jedes Werkzeug, zu dem ein Mensch greift — nimmt das `::`
+zuerst und landet damit auf der **eigenen** Maschine, wo auf 443 der Apache von api-1 antwortet.
+
+Was das kostet, ist an zwei Zeilen zu sehen, beide von api-1 aus, bei **laufendem** und bei
+**abgeschaltetem** Laden:
+
+```
+curl -sk https://store.ngc.mein.lan/catalog.json                       Laden an  -> 404 von=::
+dieselbe Zeile                                                         Laden aus -> 404 von=::
+curl --resolve store.ngc.mein.lan:443:10.2.3.215 … /catalog.json       Laden an  -> 200 von=10.2.3.215
+dieselbe Zeile                                                         Laden aus -> 000
+```
+
+**Die naive Frage kann einen toten Laden nicht von einem lebenden unterscheiden.** Sie gibt beide
+Mal dieselbe Zahl, und die kommt von der falschen Maschine. `getent ahosts store.ngc.mein.lan`
+auf api-1 zeigt es direkt: erst `10.2.3.215`, dann `::`.
+
+Dass NGC selbst davon nicht stirbt, liegt daran, dass Go die Adressen einer Antwort der Reihe
+nach durchgeht und am `::` vorbeifällt. Die Anlage läuft also, **weil die Software die kaputte
+Adresse überspringt** — und der Mensch, der danach mit einem Werkzeug nachsieht, bekommt ein
+anderes Ergebnis als die Software und glaubt dem Werkzeug. Von einem Windows-PC aus beißt die
+Falle nicht: dessen `curl` überspringt das `::` ebenfalls und landet auf 10.2.3.210. Das ist der
+Grund, warum sie so lange unentdeckt blieb — sie zeigt sich nur dort, wo gemessen wird, nämlich
+auf den Knoten.
+
+Dazu eine zweite, kleinere Falle derselben Messung: `store.crt` ist mit **ED25519**
+unterschrieben. Beide `curl` unter Windows (`/mingw64/bin/curl` und `C:\WINDOWS\system32\curl`)
+brechen den Handshake mit `schannel: SEC_E_ILLEGAL_MESSAGE` ab, und `-k` hilft nicht, weil nicht
+die Prüfung scheitert, sondern der Handshake. Der Laden ist von einem Windows-PC aus gar nicht
+erreichbar.
+
+**Was zu entscheiden wäre:**
+
+- Ob der AAAA-Satz `::` aus dem DNS **weg** soll. Das ist keine Frage an NGC, sondern an das
+  Netz — aber solange er dort steht, ist jede Messung auf einem Knoten, die einen Namen auflöst,
+  verdächtig, und das betrifft jede Sitzung, die an dieser Anlage misst.
+- Ob NGC sich darauf **verlassen** darf, dass Go am `::` vorbeifällt. Heute hängt die
+  Erreichbarkeit der Läden daran. Ein Client, der anders auswählt, trifft den eigenen Apache.
+
+Die Messregel, die daraus folgt und die in jedem Blatt dieser Anlage gelten sollte: **auf einem
+Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gemessen wurde.**
+
+Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".
+
+---
+
+## Punkt 81: Gesichert wird genau der Teil, den die Anlage ohnehin wiederbekäme — und „ngc-db backup" gibt es nicht
+
+Gemessen am 24.10.2026 an der verteilten Anlage, Stand `17b9895`.
+
+**Was gemessen ist.** Die Anlage hat genau ein Sicherungskommando: `ngc-controller backup
+<Datei>`. Es schreibt die eigene SQLite-Datei des Controllers — Zeilen der Apps mit ihren
+Manifesten, Lizenzen, Vertrauenslisten-Versionen, gelegte Aktualisierungen. Das läuft, der
+Controller läuft dabei und danach weiter (auf api-1, db-1 und svc-1 je `active` vor und nach dem
+Lauf, Ausstiegscode 0).
+
+Zwei Stellen im Code schicken einen Admin für die Benutzerdaten an ein zweites Programm:
+`state/backup.go:60` und `register/register.go:127` nennen beide `"ngc-db backup"`. **Dieses
+Programm existiert nicht.** `apps/server-db/` hat kein `main.go`, und auf keiner der fünf
+Maschinen liegt ein `ngc-db` (`ls /usr/lib/ngc/`: `ngc-api`, `ngc-controller`, `ngc-store` und
+Vorgängerstände). Für `ngc_user` (1 Zeile), `ngc_blob` (15), `ngc_session` (27) und `ngc_log`
+(470) auf db-1 gibt es damit heute kein Sicherungskommando — nur `mariabackup` 11.8.6 aus der
+Distribution, das zur Probe in 1 s eine 49-MB-Sicherung schrieb, bei weiterlaufender Datenbank.
+
+**Und die Sicherung hängt allein am Schlüssel, nicht an der Maschine.** Die Kopie von svc-1 auf
+einem fremden Rechner geöffnet (Windows, nie gekoppelt): mit dem dbKey aus `controller.json`
+**offen**, zwei App-Zeilen. Ein Bit des Schlüssels gekippt: `sqlite3: file is not a database`.
+Mit dem dbKey von api-1: dasselbe. Jeder Rechner hat seinen eigenen dbKey, vier verschiedene auf
+dieser Anlage. Dasselbe gilt für die App-Datenordner: die fscrypt-Schlüsselkennung, die der Kern
+von svc-1 für `org.sorglos.terminal` und `org.sorglos.uhr` hält, ist bitgleich mit der, die HKDF
+über den dbKey dieses Rechners liefert. Und für die MariaDB ein drittes Mal: die Tabellen sind
+`FORCE`-verschlüsselt, der Schlüssel liegt in `/etc/ngc/db-keys/` und nicht in der Sicherung —
+der Benutzername `weiricth` steht in keiner der neun `.ibd` der Probe-Sicherung.
+
+**Was nicht gemessen ist.** Zurückgespielt wurde nichts, auf keiner Maschine: weder `state.db`
+noch die MariaDB noch ein App-Datenordner, und kein neuer Rechner wurde mit einem alten
+`controller.json` gekoppelt. Dafür fehlt eine Wegwerf-Maschine; an der laufenden Anlage wird es
+nicht geübt.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob die dbKeys bei einer Neuinstallation **vorgegeben** werden dürfen. Ohne das kann „dieselbe
+  Maschine wiederherstellen" nicht funktionieren — der neue Rechner bekommt einen neuen
+  Schlüssel und öffnet die alte Sicherung nicht. Wer sie vorgeben darf, kann sie falsch vorgeben.
+- Ob die beiden Code-Stellen auf `ngc-db backup` zeigen dürfen, solange es das nicht gibt. Eine
+  Fehlermeldung, die einen Admin an ein Programm schickt, das nicht existiert, kostet ihn den
+  Abend, an dem er sie braucht.
+- Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.

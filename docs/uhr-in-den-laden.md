@@ -26,6 +26,13 @@ Sitzung.
 Die letzte Zeile ist **nicht** ein Rest, den man noch schnell abarbeitet: sie
 ist gesperrt, und der Riegel ist in Abschnitt 9 gemessen.
 
+> **Nachtrag vom selben Tag, etwa 12:30 (Uhr der Anlage): die Uhr ist
+> eingerichtet und sie antwortet mit einer Uhrzeit.** Das ist nach dieser
+> Tabelle passiert und steht in **Abschnitt 12 bis 14**. Die Tabelle oben
+> bleibt stehen, wie sie gemessen wurde — und eine Zeile fehlt dort immer
+> noch: **wer** eingerichtet hat, ist nicht gemessen. Solange das offen ist,
+> steht hier **nicht**, dass „der Weg geht".
+
 ---
 
 ## 1. Die Sicherung — wohin der alte Katalog gelegt ist
@@ -166,9 +173,25 @@ kind     id      Länge   updated
 catalog  global  1116    1792842288   (24.10.2026, etwa 11:58)
 ```
 
-1116 Byte, Folge **7**, **beide** Apps, dieselbe Schlüsselkennung. Die
-stündliche Abholung hat also stattgefunden. Zwischen „App im Laden" (11:33)
-und „Katalog in der Anlage" (etwa 11:58) lagen etwa 25 Minuten.
+1116 Byte, Folge **7**, **beide** Apps, dieselbe Schlüsselkennung. Zwischen
+„App im Laden" (11:33) und „Katalog in der Anlage" (etwa 11:58) lagen etwa
+25 Minuten.
+
+**Dass es die stündliche Runde war, ist nachgemessen und nicht angenommen** —
+hier stand zuerst nur die Behauptung. In den fünf Stunden vor 12:07 wurde auf
+keinem der beiden API-Server `ngc-api` neu gestartet; die ersten Einträge sind
+api-2 um 12:07:36 und api-1 um 12:20:03. Ein Neustart hätte die Runde nämlich
+vorgezogen: `FirstCatalog = time.Minute` in
+`apps/server-api/classes/server/server.go` lässt die **erste** Runde eine
+Minute nach dem Start laufen und erst danach stündlich. Es gab keinen
+Neustart, also war es der Stundenschlag.
+
+Für die Praxis heißt das zweierlei, und das zweite ist der nützlichere Teil:
+**ohne Zutun dauert es bis zu einer Stunde**, bis eine App aus dem Laden in
+der Anlage sichtbar wird — aber **wer nicht warten will, startet `ngc-api` neu
+und hat die Runde nach einer Minute**. (Den Fund mit `FirstCatalog` hat die
+Erstlauf-Sitzung gemacht; er steht hier, weil er die 25 Minuten oben erst
+einordnet.)
 
 **Und gleichzeitig:**
 
@@ -333,3 +356,298 @@ Speicher auf der gewählten Maschine, und beide Ströme der Aktion `zeit`.
   Bildschirm gesehen.
 - **Die Lücke M1 bleibt offen.** Sie schließt, wenn Schritt 6 eine Uhrzeit
   zeigt — nicht vorher.
+
+Was von diesem Abschnitt eine halbe Stunde später nicht mehr stimmte, steht in
+Abschnitt 12. Er bleibt stehen, damit man sieht, was wann gewusst war.
+
+---
+
+## 12. Nachtrag: die Uhr ist eingerichtet — und sie antwortet
+
+Zwischen der Messung oben und dieser hier ist die Uhr auf der Anlage
+eingerichtet worden. Gemessen, nicht erzählt:
+
+```
+ngc_app:  org.sorglos.uhr  1.0.0  store global  node svc-1  active 1  grants (leer)
+svc-1:    ngc-uhr-ad8c00e2 | localhost/ngc/uhr:1.0.0 | Up
+```
+
+Der Ablauf aus dem Protokoll von `svc-1`:
+
+```
+12:20/12:21  api-1 getauscht -> 0.2.2   (nicht von dieser Sitzung)
+12:25:37     useradd ngc-uhr-ad8c00e2
+12:25:44     Aktion zeit   -> 510 Byte auf stderr
+12:25:59     Aktion zeit   -> 510 Byte auf stderr
+12:26:00     Aktion zeit   -> 510 Byte auf stderr
+12:28:03     container died   (Behälter 3800792d…)
+12:28:04     cleanup, remove, image pull, create, init, start  (Behälter 741d600b…)
+```
+
+Die Uhr liegt auf **svc-1**, also auf der anderen Maschine als das Terminal
+(`svc-2`). Damit liegen zum ersten Mal zwei Apps auf zwei Maschinen. `grants`
+ist leer — die Uhr fordert keine Rechte, und sie hat auch keine bekommen.
+
+**Was nicht gemessen ist und was deshalb hier nicht steht:** wer diese
+Einrichtung ausgelöst hat. Eine Einrichtung ist eine Aufgabe mit vollen
+Rechten und soll ohne einen Menschen nicht gehen (Abschnitt 9). Ob Thomas sie
+ausgelöst hat oder eine andere Sitzung, klärt die Koordinationssitzung. **Bis
+das geklärt ist, ist dies kein Beleg, dass der Weg geht** — es ist ein Beleg,
+dass er gegangen worden ist.
+
+## 13. Beide Ströme der Aktion `zeit` — gemessen, getrennt
+
+Ein einzelner Aufruf im eigenen Behälter der Uhr auf `svc-1`, die beiden
+Ströme getrennt aufgefangen (`podman exec … /usr/lib/ngc/ngc-uhr` mit
+`NGC_ACTION=zeit`):
+
+```
+Rückgabewert: 0
+
+STDOUT  (21 Byte):  2026-10-24T12:31:52Z
+STDERR  (33 Byte):  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**Beide Ströme kommen an, und zwar jeder dort, wo er hingehört.** Auf stdout
+steht eine echte Uhrzeit — das ist die Zeile, die das Fenster zeigt. Auf
+stderr steht die Meldung, die nur das Protokoll des Controllers je sieht. Das
+ist genau die Messung, für die diese App gebaut wurde, und beim Terminal war
+sie einmal schiefgegangen.
+
+**Die App tut also, was sie soll.** Was damit **nicht** gemessen ist: dass das
+Fenster die Zeile auch anzeigt. Zwischen stdout des Dienstes und dem Text im
+Fenster liegen der Controller, der Tunnel, die API und die Schale. Dafür muss
+ein Mensch einmal hinsehen.
+
+## 14. Die 510 Byte — ein Befund, der sich nicht mehr aufklären lässt
+
+Dreimal hat die Aktion `zeit` **genau 510 Byte** auf stderr geschrieben. Das
+passt zu **keiner** Meldung, die der Dienst überhaupt schreiben kann. Die
+Längen sind nachgerechnet, nicht geschätzt:
+
+| was der Dienst schreiben kann | Byte |
+|---|---|
+| Erfolgsmeldung `ngc-uhr 1.0.0 beantwortet "zeit"` | **33** |
+| Hilfe (`usage`) | 61 |
+| `NGC_ACTION ist leer …` | 86 |
+| **beobachtet** | **510** |
+
+Und im heutigen Behälter sind es gemessen **33 Byte**, nicht 510.
+
+Der Unterschied: die 510 Byte kamen aus Behälter `3800792d…`, der um 12:28:03
+**gestorben** und um 12:28:04 entfernt und neu gebaut wurde. Er existiert
+nicht mehr:
+
+```
+podman ps -a  ->  741d600b37b5 | ngc-uhr-ad8c00e2 | Up   (nur dieser eine)
+```
+
+**Damit ist der Inhalt dieser 510 Byte endgültig verloren**, und das ist der
+eigentliche Befund:
+
+- Der Controller schreibt ins Protokoll **nur die Anzahl** der Byte
+  („a service wrote to stderr … bytes=510"), nie den Text.
+- Den Text gibt es nur, wenn `serve.CallInput.LogStderr` an ist, und das ist
+  von Haus aus aus.
+- In `/etc/ngc/controller.json` gibt es **keinen Schalter** dafür. Die Schlüssel
+  dort sind `anchor`, `apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`,
+  `releaseKey`, `roles` — und sonst keiner.
+
+Der einzige Lauf, bei dem etwas schieflief, hat also eine Zahl hinterlassen und
+keinen Satz. Genau in dem Fall, für den ein Protokoll da ist, steht nichts
+drin.
+
+**Gemessen:** 510 Byte, dreimal, aus einem Behälter, der nicht mehr da ist;
+im laufenden Behälter 33 Byte und eine Uhrzeit auf stdout; keine Möglichkeit,
+den Text nachzulesen.
+
+> **Berichtigung, eine halbe Stunde später gemessen — und sie dreht diesen
+> Abschnitt um.** Hier stand, die drei Läufe seien wahrscheinlich
+> **fehlgeschlagen**, weil 510 zu keiner vorgesehenen Meldung passt und der
+> Behälter danach starb. **Das ist widerlegt.** Es gibt eine **vierte** Zeile,
+> um `12:29:55`, und das ist genau der Lauf, bei dem im Fenster die Uhrzeit
+> stand (Abschnitt 15) — auch er mit `bytes=510`. Ein erfolgreicher Lauf
+> schreibt also dieselben 510 Byte. **510 ist kein Anzeichen für einen
+> Fehlschlag**, und der gestorbene Behälter war nicht die Erklärung. Was
+> wirklich dahintersteckt, steht in Abschnitt 16.
+
+**Die saubere Gegenprobe kostet einen Knopfdruck:** einmal „Noch einmal
+lesen" im Fenster der Uhr. Steht danach im Protokoll von `svc-1`
+`bytes=33`, dann war 510 eine Eigenheit des gestorbenen Behälters und ist
+erledigt. Steht dort wieder `bytes=510`, ist es ein laufender Fehler und
+wiegt schwerer als alles andere an dieser App.
+
+---
+
+## 15. Aufgelöst: das Fenster zeigt die Zeit, und die Einrichtung hatte eine Anmeldung
+
+Die zwei offenen Punkte aus Abschnitt 12 und 13 sind beantwortet. Die
+Abschnitte oben bleiben stehen, wie sie gemessen wurden; hier steht, was sie
+auflöst und **wer** es gemessen hat.
+
+### Das Fenster zeigt die Zeit — gemessen von der App-Weg-Sitzung, im Browser
+
+Nicht von mir gemessen, sondern von der Sitzung, die `docs/app-weg.md`
+schreibt (Commit `201de73`). Sie hat den Weg im Browser zu Ende gegangen und
+**im Rahmen der App** gelesen, nicht auf der Seite des Schreibtischs:
+
+```
+12:27:49  "Installieren" an der Uhr-Karte
+12:27:55  Dialog: nur "Rechner | svc-1 | svc-2 | Aktivieren" — keine Rechte
+12:27:56  Rechner gewählt: svc-1
+12:28:08  "Die App ist eingerichtet."
+12:29:53  Fenster geöffnet
+12:29:55  im Rahmen der App:  "2026-10-24T12:29:55Z"
+                              "Die Zeit kommt vom Server."
+```
+
+Und der Punkt, der diese App überhaupt rechtfertigt: **die Zeile kam über
+`stdout` an, die `stderr`-Zeile stand nicht im Fenster.** Die beiden
+Richtungen sind damit nicht nur im Behälter auseinandergehalten (Abschnitt
+13), sondern über den ganzen Weg.
+
+Das passt auf die Sekunde zu meiner eigenen Messung: `12:28:04 container
+create` auf `svc-1` gegen `12:28:08 "Die App ist eingerichtet."`, und ein
+Zeitstempel im Fenster, dessen Form (`RFC 3339`) die ist, die der Dienst
+schreibt.
+
+**Damit ist die Lücke M1 zu.** NGC hat zwei echte Apps, und der Weg der
+zweiten ist gegangen und aufgeschrieben. Das ist der eine Satz, den ich in
+Abschnitt 11 noch nicht schreiben durfte.
+
+### Die Einrichtung hatte eine Anmeldung — kein Sicherheitsbefund
+
+Die Frage war ernst: eine Einrichtung ist eine Aufgabe mit vollen Rechten, und
+wenn eine App **ohne** Anmeldung eines Menschen eingerichtet werden kann, wäre
+das schwerer als alles andere an diesem Tag. Sie ist beantwortet, und zwar
+nein. Von mir an der Datenbank nachgemessen:
+
+```
+Sitzungen von weiricth:  12:19:23  12:19:42  12:21:37  12:25:18  12:25:22
+                         12:26:58  12:29:16  12:29:36
+ngc_app org.sorglos.uhr  updated   12:28:04
+ngc_user weiricth        failures 0   locked 0   last_login 12:29:36
+```
+
+Die Einrichtung um **12:28:04** liegt zwischen den Anmeldungen um **12:26:58**
+und **12:29:16**. Es gab also eine gültige Verwalter-Sitzung, und `failures 0`
+heißt: keine fehlgeschlagenen Versuche, nichts Erzwungenes. Der Vertrag ist
+eingehalten — der Auftrag war mit dem Sitzungsschlüssel einer echten Anmeldung
+unterschrieben, so wie Abschnitt 9 es verlangt.
+
+**Genau unterschieden, weil das zwei Dinge sind:** gemessen ist, dass eine
+Anmeldung mit dem Passwort des Verwalters vorlag und der Weg darüber ging.
+**Nicht** gemessen ist, ob Thomas das Passwort selbst getippt hat oder ob eine
+Sitzung es aus einer Datei gelesen hat — die App-Weg-Sitzung beschreibt
+Anmeldeläufe mit Argon2id im Browser, was beides sein kann. Für den Vertrag
+macht es keinen Unterschied; für die Frage „wer hat hier gehandelt" macht es
+einen, und die kann nur Thomas beantworten.
+
+### Es waren zwei Einrichtungen, und die erste war niemand von uns beiden
+
+Die Einrichtung um **12:25:37** ist eine andere als die um **12:28:04**, und
+wer die erste ausgelöst hat, ist bis jetzt **nicht gemessen**. Ausgeschlossen
+sind zwei:
+
+- **Ich nicht.** Ich habe keine Anmeldung — kein Passwort, keine Sitzung,
+  keinen Token; den Sitzungsschlüssel kann ich nicht haben (Abschnitt 9). Mein
+  einziger ausführender Aufruf war der `podman exec` um 12:31:52, und der
+  läuft nicht über den Controller und steht darum in dessen Protokoll auch
+  nicht.
+- **Die App-Weg-Sitzung nicht** (Commit `04627d2`). Sie hat „Aktivieren"
+  genau zweimal gedrückt, um `12:14:34` (der Lauf, der am Tunnel riss) und um
+  `12:27:57` (der durchlief); ihr Lauf um `12:22:29` kam nicht so weit, weil
+  der Dialog „Kein Rechner für Dienste da" sagte. Zwischen 12:22:35 und
+  12:26:58 lief bei ihr nichts, und ihre Skripte rufen `zeit` nie von selbst
+  auf. Von den acht Anmeldungen ordnet sie sich sechs zu — die beiden um
+  12:25:18 und 12:25:22 **nicht**.
+
+Bleibt: **eine dritte Sitzung oder ein Mensch am Browser**, mit einer gültigen
+Verwalter-Anmeldung. Das ist offen und wird hier nicht zugeraten.
+
+**Was es für den Weg bedeutet, und das ist der stärkere Satz:** es sind
+**zwei voneinander unabhängige Einrichtungen** gegen API 0.2.2 gelungen, auf
+derselben Maschine, von verschiedenen Auslösern. Ein einzelner glücklicher
+Lauf wäre schwach gewesen; zwei sind es nicht.
+
+### Was von den 510 Byte bleibt
+
+Mit den Zeiten der App-Weg-Sitzung wird der Befund aus Abschnitt 14 schärfer,
+nicht schwächer. Es gab **zwei** Einrichtungen:
+
+```
+12:25:37  useradd, Behälter 3800792d…   <- erster Versuch
+12:25:44 / 12:25:59 / 12:26:00          <- "zeit", je 510 Byte auf stderr
+12:28:03  3800792d… stirbt
+12:28:04  741d600b… neu gebaut          <- zweiter Versuch, der getragen hat
+12:29:55  Zeit im Fenster
+```
+
+Der Knopfdruck-Gegenprobe oben braucht es nicht mehr: der laufende Behälter
+ist gemessen, und zwar auf beiden Strömen. Die 510 Byte aber gehören **nicht**
+zum gescheiterten Versuch — siehe den nächsten Abschnitt. Das war mein
+Trugschluss, und er hat genau so lange gehalten, bis ich alle Zeilen gezählt
+habe statt der drei, die ich erwartet hatte.
+
+---
+
+## 16. Die 510 Byte, richtig gemessen: der Dienst schreibt 33, das Protokoll sagt 510
+
+Das ist der Befund, der von Abschnitt 14 übrig bleibt, nachdem meine erste
+Erklärung widerlegt war. Er ist schärfer als die erste und betrifft **jede**
+App, nicht die Uhr.
+
+**Alle Zeilen, nicht nur die ersten drei:**
+
+```
+12:25:44  action=zeit  bytes=510     erster Versuch
+12:25:59  action=zeit  bytes=510     erster Versuch
+12:26:00  action=zeit  bytes=510     erster Versuch
+12:29:55  action=zeit  bytes=510     <- DER LAUF, DER IM FENSTER DIE ZEIT ZEIGTE
+```
+
+Der vierte Lauf ist der erfolgreiche. Also schreibt ein **gelungener** Aufruf
+dieselben 510 Byte wie die drei davor. Damit ist 510 kein Fehlerzeichen, und
+der gestorbene Behälter erklärt nichts.
+
+**Dagegen, im selben Behälter direkt gemessen** (`podman exec`, beide Ströme
+getrennt):
+
+```
+Rückgabewert 0
+STDOUT 21 Byte:  2026-10-24T12:31:52Z
+STDERR 33 Byte:  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**Der Dienst schreibt 33 Byte. Das Protokoll des Controllers sagt 510.** Die
+Differenz sind **477 Byte, die der Dienst nicht geschrieben hat** und die ihm
+trotzdem zugeschrieben werden.
+
+Drei Dinge, die ich ausgeschlossen habe, damit das nicht als Vermutung
+dasteht:
+
+- **Es ist keine Obergrenze.** `service.MaxStderr` ist `64 << 10`, also
+  64 KiB. 510 ist kein Anschlag.
+- **Es ist kein falscher Zähler.** Der Ring hängt mit `append` an und gibt
+  `len(r.b)` zurück (`apps/server-controller/classes/serve/call.go`, `ring`
+  und `logStderr`). Die Zahl ist eine echte Byte-Zahl, kein Puffermaß.
+- **Es ist nicht die `sudo`-Warnung meines eigenen Aufrufs.** Dieselbe
+  Ausführung ohne `cd /tmp` schreibt `cannot chdir to /root: Permission
+  denied` — **41** Byte, und der Aufruf scheitert dann ganz (Rückgabewert 1,
+  nichts auf stdout). Das ist eine Eigenheit meines Messwegs, nicht der 477.
+
+**Nicht gemessen: was die 477 Byte sind.** Sie sind bei allen vier Aufrufen
+gleich groß, also deterministisch und keine zufällige Störung. Woher sie im
+Aufrufweg des Controllers kommen, ist offen — und genau das lässt sich **nicht
+nachlesen**, weil der Text nur mit `serve.CallInput.LogStderr` ins Protokoll
+kommt und `/etc/ngc/controller.json` dafür keinen Schlüssel hat (`anchor`,
+`apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`, `releaseKey`, `roles` —
+und keinen weiteren).
+
+**Warum das zählt, auch wenn die Uhr tadellos läuft:** eine App, die ihre
+Fehlermeldung auf stderr schreibt, bekommt sie im Protokoll mit 477 Byte
+Fremdtext vermischt, und ein Betreiber, der den Schalter anwirft, liest
+Fremdtext als Aussage der App. Für eine Uhr ist das Kosmetik. Für eine App,
+die erklären soll, warum sie nicht konnte, ist es der Unterschied zwischen
+einem Protokoll und einem Rätsel. Es steht als **Punkt 76** in
+`docs/vertraege-v1.2.md`.
