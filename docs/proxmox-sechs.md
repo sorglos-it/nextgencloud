@@ -351,14 +351,44 @@ die es tragen müssten:
 2. **Die HTTP-Pfade der API** (`shared/session/session.go`): `/api/v1/setup`,
    `/login/start`, `/login/finish`, `/logout`, `/trust`, `/ws`. Kein Weg, sich
    anzumelden oder jemanden einzuladen.
-3. **Die Oberfläche**: der Reiter „Benutzer" in `apps/web/.../users.js` **listet
-   nur** (Name, Rollen, zwei Schritte, gesperrt, zuletzt angemeldet). Es gibt
-   keine Maske zum Anlegen.
+3. **Die Oberfläche**: der Reiter „Benutzer" in
+   `apps/web/public/assets/js/apps/users.js` (`buildUsers`) **listet nur**
+   (Name, Rollen, zwei Schritte, gesperrt, zuletzt angemeldet).
 
-Der eine Admin aus der Ersteinrichtung ist also das einzige Konto, das eine
-Anlage je bekommt. Station 8 ist damit nicht „noch nicht gemessen", sondern
-**nicht erreichbar** — und das ist ein Satz über das Produkt, nicht über
-diesen Prüflauf.
+**Punkt 3 stand hier zuerst zu scharf, und die Sitzung `zweiter-benutzer` hat
+das berichtigt** — nachgeprüft in diesem Arbeitsbaum, Zeile für Zeile. Es fehlt
+nur die **Maske**; die Maschinerie dahinter steht vollständig:
+
+- `users.js:188` `buildNextVersion(version, change, {now, signer})` baut aus
+  der geprüften Fassung die nächste, setzt `seq+1` und `prev`, sortiert
+  (`sortAll`, Zeile 173), prüft mit `trust.validateList`, lässt unterschreiben
+  und prüft mit `trust.advance` gegen.
+- `users.js:215` `encodeSigned`, `users.js:395` `userOf`, Versand über
+  `core.ACT_TRUST` in `users.js:1358`.
+
+Richtig ist also: **der Reiter listet nur, und es fehlt die Maske vor einer
+Maschinerie, die schon steht.** Der eine Admin aus der Ersteinrichtung bleibt
+trotzdem das einzige Konto, das eine Anlage je bekommt, und Station 8 ist
+damit nicht „noch nicht gemessen", sondern **nicht erreichbar** — ein Satz
+über das Produkt, nicht über diesen Prüflauf.
+
+### Und eine Rolle muss sein
+
+Thomas' Vorgabe war „gar keine Rolle und keine Rechte". Das erste lässt der
+Vertrag nicht zu, das zweite schon — nachgeprüft:
+
+- `shared/trust/trust.go:578`: `len(u.Roles) == 0 || len(u.Keys) == 0 || …`
+  → `ErrInvalid`. Ein Benutzer **ohne** Rolle ist keine gültige
+  Vertrauensliste, und `buildNextVersion` würde die Fassung gar nicht
+  unterschreiben. Dieselbe Zeile verlangt auch mindestens einen Schlüssel.
+- **Rechte stehen nicht in der Liste.** `trust.Role` (Zeile 78) trägt `name`,
+  `level`, `black`, `white` und die beiden Passkey-Schalter — keine Rechte.
+  Die hält die API je Rolle in `dbapi.BlobRights` („ID: role, Data:
+  core.RoleRights as JSON").
+
+Also: **Rolle ohne Rechte.** Das Konto sieht genauso nichts wie eines ohne
+Rolle, und der Kreis von Station 8 ist genauso offen — die Messung, die Thomas
+will, geht damit unverändert.
 
 ## Was der Erstlauf verteilt NICHT durchläuft, und warum
 
