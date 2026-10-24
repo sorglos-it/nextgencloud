@@ -802,8 +802,22 @@ geprüft.
 Klartext, 110–201 MB, zu groß für einen Passwortmanager, und es geht ohne jeden
 Schlüssel auf. Es liegt darum bei den Daten. Nach derselben Rangfolge gehören
 die App-Daten **vor** dem Wegschreiben verschlüsselt — mit einem Schlüssel, der
-nicht mitfährt, sonst ist nichts gewonnen. Das ist eine Entscheidung und kein
-Handgriff; sie steht bei der Sicherungs-Sitzung als offener Punkt.
+in den Schlüssel-Ordner geht und nicht mitfährt.
+
+Das ist **entschieden und ausdrücklich nicht gebaut**, und der Grund ist die
+dritte Bedingung der Entscheidung selbst: ein verschlüsseltes `app-daten.tar`,
+das niemand mehr aufmacht, ist schlechter als ein Klartext-Tar, also muss der
+Weg zurück mit getrenntem Schlüssel **einmal gegangen** sein — sonst tauscht man
+ein Leseproblem gegen ein Totalverlustproblem und hat einen grünen Lauf als
+Beleg. Die Maschine dafür fehlt: die Wegwerf-VM ist abgeräumt. Bis dahin ist der
+Klartext der schlechtere von zwei Zuständen und der ehrlichere von zwei
+Zeitpunkten.
+
+Was dabei hilft und aus der Vermessung dieses Wirts kommt: die **Vorlage VMID
+300 (`ngc-vorlage`) steht noch**, 308 und 309 sind frei, und der Speicher
+`ssd_2TB` hat 1 TB von 1,9 TB frei (`qm list` und `pvesm status` auf 10.2.3.2,
+24.10.2026). Eine Wegwerf-Maschine ist also ein Klon und keine
+Neuinstallation — `tools/proxmox-sechs.sh` kennt den Weg.
 
 **Und zu meiner eigenen Datei, nach derselben Rangfolge:** sie bleibt liegen.
 Sie trägt einen argon2id-Abdruck, keinen Klartext, auf dem Rechner ihres
