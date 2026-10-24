@@ -744,14 +744,22 @@ Länge. Mein Einwand war für das logische Werkzeug richtig und für das
 physische falsch.
 
 Und eine Warnung zu den Sicherungssätzen oben, damit niemand sie
-missversteht: **zur Stunde existiert von dieser Anlage keine Sicherung** — die
-Wegwerf-Maschine, auf der der Rückweg geprobt wurde, ist abgeräumt, und die
-Kopien auf dem PC sind mitgelöscht worden (von der Sicherungs-Sitzung berichtet,
-24.10.2026, **nicht von mir gemessen**, und ein Zustand dieser Stunde, kein
-Dauerzustand). Das Werkzeug ist da und zweimal gefahren; wo die Sicherungen
-liegen sollen, muss Thomas nennen. Die Sicherung, die ich vor dem db-1-Fall
-gezogen habe, war mein Rückweg für diese eine Messung und liegt in meinem
-Sitzungsordner — sie ist keine Sicherung der Anlage und soll keine sein.
+missversteht. Am 24.10.2026 existierte von dieser Anlage **keine Sicherung**:
+die Wegwerf-Maschine, auf der der Rückweg geprobt wurde, war abgeräumt und die
+Kopien mitgelöscht (von der Sicherungs-Sitzung berichtet, **nicht von mir
+gemessen**). Gefehlt hat dem fertigen Werkzeug nur ein Ort, und Thomas hat ihn
+am selben Tag genannt: **`d:\ngc_backup`**.
+
+Dort liegt seit 17:05 die logische Sicherung, die ich vor dem db-1-Fall gezogen
+habe, mit einer Datei `WAS-HIER-LIEGT.txt` daneben, die sagt, was sie ist und
+was nicht. Sie ist **kein** Rückweg dieser Anlage — nur die Datenbank, ein Stand
+von 13:36 UTC, und ein zurückgespielter Dump kann Code ausführen, weshalb die
+Anlage selbst keinen macht. Sie liegt dort, weil sie zu diesem Zeitpunkt die
+einzige Sicherung der Datenbank war, die überhaupt existierte, und sonst mit
+meinem Sitzungsordner verschwunden wäre. Dass sie den Kennwort-Abdruck des
+einzigen Benutzers enthält, steht in der Datei daneben; ins Repository gehört
+sie nicht. Der richtige Rückweg bleibt `mariabackup` mit den Schlüsseln unter
+`/etc/ngc/db-keys`, und das Werkzeug dafür gehört der Sicherungs-Sitzung.
 
 Zwei Zahlen aus den Nachbarsitzungen, die beim Wiederanlauf zählen und hier
 stehen, damit sie nicht in Nachrichten verschwinden — **von dort gemessen,
