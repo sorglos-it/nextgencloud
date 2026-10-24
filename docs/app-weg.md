@@ -551,6 +551,41 @@ Und die Gegenproben dazu, weil ein Satz auf dem Schirm noch kein Beleg ist:
   der Dienst auf `stdout` schreibt, steht im Fenster. Die andere Zeile, die er gleichzeitig auf
   `stderr` schreibt, steht dort **nicht** — die sieht nur das Protokoll des Controllers.
 
+### Was das Protokoll des Controllers dazu sagt
+
+Die Gegenprobe von der anderen Seite, auf `svc-1` mitgelesen. Sie belegt vier Dinge, die man
+der Oberfläche nicht ansieht:
+
+```
+12:28:03  image loadfromarchive 2c2b5074cb6b… /var/lib/ngc/staged/accept-…/files/services/amd64.tar
+12:28:04  container remove ngc-uhr-ad8c00e2      (die alte Fassung weicht)
+12:28:04  image pull 2c2b5074cb6b… localhost/ngc/uhr:1.0.0
+12:29:55  container exec ngc-uhr-ad8c00e2 (image=localhost/ngc/uhr:1.0.0)
+12:29:55  INFO a service wrote to stderr app=org.sorglos.uhr service=uhr action=zeit bytes=510
+```
+
+1. **Das Abbild kommt aus dem Paket.** `loadfromarchive … /files/services/amd64.tar` — genau
+   die Datei, die `podman save` auf dem Baurechner geschrieben hat. Der Server baut nichts.
+2. **Der Name des Abbilds ist der aus dem Manifest.** `localhost/ngc/uhr:1.0.0` — das `tag` ist
+   die Fassung. Die Regel aus Schritt 3 ist damit am laufenden Server bestätigt und nicht nur
+   abgeschrieben.
+3. **Der Dienst wird mit `exec` in den stehenden Behälter gefahren.** Darum braucht das Abbild
+   ein `CMD`, das wartet — ohne `hold` gäbe es nichts, in das man fahren könnte.
+4. **`stderr` steht als BYTEZAHL im Protokoll, nicht als Text:** `bytes=510`, und kein Wort
+   davon. Das ist die Vorgabe (`serve.CallInput.LogStderr`), hier am laufenden System zu sehen —
+   und zugleich der Beleg, dass die Zeile wirklich nach `stderr` ging und nicht ins Fenster.
+
+**Und der Tunnel blieb stehen.** Im ganzen Fenster von 12:26 bis 12:31 steht auf `svc-1` kein
+`tunnel ended` und kein `tunnel failed` — anders als um 12:14:38 (Befund 9).
+
+**Und eine Ehrlichkeit zum Schluss, die den Beleg eher stärker macht:** die Uhr lief auf
+`svc-1` schon um **12:25:40**, zwei Minuten vor meinem Lauf — Behälter gestartet, Aktion `zeit`
+um 12:25:44, 12:25:59 und 12:26:00 beantwortet. Das war **nicht dieser Lauf**; offenbar hat eine
+andere Sitzung sie aus demselben Katalog eingerichtet, kurz bevor ich es tat. Mein Lauf um
+12:28:03 hat das Abbild erneut aus dem Paket geladen und den Behälter ersetzt. Es sind also
+**zwei voneinander unabhängige Einrichtungen** auf 0.2.2 gelungen, nicht eine — nur ist die
+erste nicht meine, und das gehört dazugesagt.
+
 **Damit ist die Lücke zu, die diesen Auftrag ausgelöst hat:** NGC hat nicht mehr eine App,
 sondern zwei, und der Weg dahin ist nicht mehr unaufgeschrieben. Dazu gehört die Anmeldung eines Verwalters, und die hatte diese Sitzung nicht. Bis
 das gelaufen ist, sind Schritt 2 und Schritt 7 aus dem Code gelesen und nicht am Gerät geprüft —
@@ -1048,9 +1083,12 @@ die neue Fassung — um 12:28:08 sagte die Oberfläche:
 
 > Die App ist eingerichtet.
 
-Der Abbruch ist also **auf 0.2.1 gemessen und auf 0.2.2 nicht mehr aufgetreten**. Je eine
-Messung auf jeder Seite, nicht mehr: dass 0.2.2 es behebt, ist damit **nicht** belegt — belegt
-ist, dass es dort einmal durchlief, wo es vorher einmal riss. Warum die alte Fassung den Vertrag
+Der Abbruch ist also **auf 0.2.1 gemessen und auf 0.2.2 nicht mehr aufgetreten**, und das ist
+nicht nur die Oberfläche: im Protokoll von `svc-1` steht zwischen 12:26 und 12:31 **kein**
+`tunnel ended` und **kein** `tunnel failed`. Dazu kommt, dass eine andere Sitzung dieselbe App
+aus demselben Katalog um 12:25:40 eingerichtet hat, ebenfalls ohne Abbruch — zwei unabhängige
+Einrichtungen auf 0.2.2, eine Messung auf 0.2.1. Dass 0.2.2 es behebt, ist damit immer noch
+**nicht** belegt (niemand hat die Ursache gefunden), aber es ist mehr als ein glücklicher Lauf. Warum die alte Fassung den Vertrag
 brach, ist nicht gemessen und wird es wohl auch nicht mehr.
 
 **Was bleibt, auch ohne Erklärung:** das war die Station, die vorher niemand erreichen konnte,
