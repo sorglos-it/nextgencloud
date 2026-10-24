@@ -655,6 +655,63 @@ im Betrieb ist für die Daten eine Sicherung und für das Container-Objekt eine 
 
 ---
 
+### Die Prüfsummen gehören zu den Schlüsseln (gemessen)
+
+Der letzte Satz des vorigen Abschnitts — „was ein verändertes Byte fängt, ist die sha256 im
+Verzeichnis" — war nur halb richtig, und die andere Sitzung hat die Hälfte benannt: er gilt
+für einen **Unfall**, eine kaputte Platte, eine abgebrochene Übertragung. Er gilt nicht für
+jemanden, der im Daten-Ordner schreiben darf — der ändert die Datei **und** die Zeile darüber.
+Dann beweist die Liste, was der letzte Schreiber wollte.
+
+Dieselbe Rechnung wie bei den 224 Byte: die Liste ist ein paar Kilobyte, also gehört sie dorthin,
+wo die Schlüssel liegen. `tools/sicherung.sh` schreibt sie jetzt als `summen.txt` in den
+Schlüssel-Ordner je Rechner; im Daten-Ordner bleibt die **Beschreibung** jeder Datei und der
+Satz, wo die Summen stehen. Eine Beschreibung ohne Prüfsumme ist etwas wert, eine Prüfsumme ohne
+Vertrauen nicht. Laufzeit kostet es nichts — anders als eine zweite Krypto-Schicht, gegen die
+auch die andere Sitzung ausdrücklich ist.
+
+Gemessen, mit einem angehängten Byte in `app-daten.tar.enc`:
+
+| | Antwort |
+|---|---|
+| Daten-Ordner allein | **0 Prüfsummen darin** — es gibt nichts zu vergleichen |
+| mit `summen.txt` aus dem Schlüssel-Ordner | `app-daten.tar.enc: FAILED`, `state.db: OK` |
+
+Damit gilt für beide Hälften derselbe Satz: **wer nur die Daten hat, kann sie weder lesen noch
+unbemerkt ändern.**
+
+Eine Kleinigkeit, die beim ersten Lauf auffiel und gleich mit eingebaut ist: `summen.txt` hat
+zwei Abschnitte (Daten-Ordner und Schlüssel-Ordner), und ein `sha256sum -c` über die ganze
+Liste in einem der beiden Ordner meldet die jeweils andere Hälfte als fehlend. Das ist kein
+Befund, und die Datei sagt es jetzt selbst.
+
+### Der Beweis zur Uhr geht so nicht (gemessen, und das ist das Ergebnis)
+
+Die andere Sitzung hat vorgeschlagen, die Erklärung aus Abschnitt 6 zu beweisen, solange VM 311
+steht: einen Container anlegen und eine Minute später sichern. Versucht, auf 311, mit demselben
+Abbild und demselben App-Benutzer wie die laufende Uhr. Das frische Objekt kam schon vor jeder
+Sicherung nicht hoch:
+
+```
+Error: unable to start container "e6ab1486...": pasta failed with exit code 1:
+  Couldn't open network namespace /run/ngc/ngc-uhr-ad8c00e2/netns/netns-cf6e0642-...:
+  Permission denied
+```
+
+Das ist **nicht** der Fehler, um den es geht (`crun: mount devpts`), sondern eine Grenze meiner
+eigenen Vorrichtung: ein Container, den ich mit `setpriv` von Hand anlege, hat nicht das Netz,
+das der Controller als root einrichtet. Ein Scheitern meines Containers sagt damit nichts über
+den des Produkts — das wäre wieder eine Messung der eigenen Vorrichtung, und diesmal hätte sie
+sogar rot ausgesehen.
+
+**Also bleibt es bei „gestützt und nicht bewiesen", und jetzt ist auch gemessen, warum der
+Beweis nicht billig ist:** er braucht einen Container, der so entsteht, wie das Produkt ihn
+macht — über die Einrichtung, mit dem Controller als root. Das heißt: eine Anlage, in der man
+eine App einrichten darf, und das ist die laufende. Die Probe-Container sind wieder weg; beide
+Apps auf 311 liefen danach unverändert weiter (`Up 18 minutes`).
+
+---
+
 ## Was gemessen und was abgewogen ist
 
 **Gemessen** (Lauf, Zahl, Ausstiegscode):
@@ -676,7 +733,10 @@ im Betrieb ist für die Daten eine Sicherung und für das Container-Objekt eine 
   gegen 75 KB), die Suche nach den 18 Werten im Daten-Ordner, der Lauf mit Verschlüsselung
   (473 s, 106 KB Schlüssel), die vier Entschlüsselungsversuche auf VM 311 und **beide Apps,
   die danach dort liefen**. Die 224 Byte gegen 285 MB sind die Messung der Sitzung „Was
-  passiert, wenn ein Rechner ausfällt".
+  passiert, wenn ein Rechner ausfällt". Dazu die Prüfsummen-Liste im Schlüssel-Ordner: dass
+  der Daten-Ordner allein keine einzige Prüfsumme mehr trägt und dass die Liste aus dem
+  Schlüssel-Ordner ein angehängtes Byte als `FAILED` fängt, ist gemessen; der Gedanke dazu
+  ist der der anderen Sitzung.
 - Abschnitt 8 ganz — die beiden Fälle der Transportprüfung sind meine Messung; der
   47-KB-Dump und die Wiederkehr von db-1 in vier Sekunden sind die Messung der Sitzung „Was
   passiert, wenn ein Rechner ausfällt" und stehen hier mit ihr als Herkunft. Ebenso in
@@ -695,7 +755,8 @@ im Betrieb ist für die Daten eine Sicherung und für das Container-Objekt eine 
   brauchen einen angemeldeten Admin in der Oberfläche; Schritt 1, 4 und 5 sind gefahren.
 - Abschnitt 9 die Erklärung, **warum** die Uhr beim ersten Lauf fehlte und beim zweiten
   mitkam: zwei Läufe mit entgegengesetztem Ende sind gemessen, das Alter des Container-Objekts
-  als Ursache ist gestützt und nicht bewiesen.
+  als Ursache ist gestützt und nicht bewiesen — und der Versuch, es zu beweisen, ist an der
+  eigenen Vorrichtung gescheitert, was dort als Ergebnis steht und nicht als Panne.
 - Abschnitt 8 der Unterschied zwischen `safe_to_bootstrap: 1` und `0` — **nicht einmal
   abgewogen, sondern offen**: den zweiten Fall hat niemand erzeugt, und es stehen bewusst keine
   Zeilen dafür hier.

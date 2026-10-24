@@ -5657,8 +5657,20 @@ Was AES-256-CTR **nicht** gibt, und das steht dabei statt vorausgesetzt zu werde
 Beglaubigung. Es ist Vertraulichkeit; was ein verändertes Byte fängt, ist die sha256 im
 Verzeichnis, auf der Maschine genommen und hier gegengerechnet.
 
+**Und die Prüfsummen liegen jetzt bei den Schlüsseln**, nicht neben den Daten — wieder ein
+Gedanke derselben Sitzung: eine Liste neben ihren Dateien fängt einen Unfall, aber wer im
+Daten-Ordner schreiben darf, ändert die Datei und die Zeile darüber. Gemessen mit einem
+angehängten Byte: der Daten-Ordner allein trägt **keine einzige** Prüfsumme mehr, mit
+`summen.txt` aus dem Schlüssel-Ordner fällt es als `FAILED` auf. Damit gilt für beide Hälften
+derselbe Satz: wer nur die Daten hat, kann sie weder lesen noch unbemerkt ändern.
+
 Nebenbefund: die Uhr, die beim ersten Weg zurück **nicht** mitkam, lief diesmal. Einziger
 Unterschied zwischen den Läufen ist das Alter ihres Container-Objekts beim Sichern (sieben
-Minuten gegen Stunden). Das stützt die Erklärung aus Punkt 83 oben und beweist sie nicht.
+Minuten gegen Stunden). Das stützt die Erklärung aus Punkt 83 oben und beweist sie nicht — und
+der Beweisversuch ist an der eigenen Vorrichtung gescheitert: ein von Hand mit `setpriv`
+angelegter Container bekommt nicht das Netz, das der Controller als root einrichtet
+(`pasta failed ... Permission denied`), also sagt sein Scheitern nichts über den des Produkts.
+Der Beweis braucht einen Container, der über die **Einrichtung** entsteht, und damit eine Anlage,
+in der man eine App einrichten darf.
 
 Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.

@@ -392,14 +392,52 @@ for ziel in "$@"; do
 
 	fern "$ziel" rm -rf "$PROBE"
 
-	# 5. the sha256 of everything, so a later run can be held against this
-	#    one and a half-written file is visible as one.
+	# 5. the sha256 of everything - AND IT GOES TO THE KEYS, not next to the
+	#    data. The first version of this script wrote the list into the data
+	#    folder beside the files it names, and the session that decided the
+	#    shape of this backup took that apart: a list beside its files catches
+	#    an ACCIDENT - a bad disk, a transfer that broke off - and nothing
+	#    else. Whoever may write in the data folder changes the tar AND the
+	#    line about it, and then the list proves what the last writer wanted.
+	#
+	#    So the same calculation as the 224 bytes of db-keys: the list is a few
+	#    kilobytes, so it belongs where the keys are. Then one sentence holds
+	#    for both halves - whoever has only the data can neither read them nor
+	#    change them unnoticed - and it costs no running time, unlike a second
+	#    layer of crypto (openssl enc has nothing authenticated that streams
+	#    cleanly, and AES-GCM over 310 MB in one piece would be more risk than
+	#    gain).
+	#
+	#    What the data folder keeps is the DESCRIPTION of every file, which is
+	#    what an admin reads, plus the sentence that the sums are with the
+	#    keys. A description nobody can check is still worth having; a sum
+	#    nobody can trust is not.
 	notiz ""
-	notiz "sha256:"
-	(cd "$ordner" && for f in *; do
-		[ "$f" = inhalt.txt ] && continue
-		printf '  %s\n' "$(sha256sum "$f")"
-	done) >>"$MANIFEST"
+	notiz "Die Pruefsummen dieser Dateien stehen NICHT hier, sondern bei den Schluesseln"
+	notiz "(summen.txt im Schluessel-Ordner dieses Rechners). Wer nur diesen Ordner hat,"
+	notiz "kann die Dateien weder lesen noch unbemerkt aendern - das ist der Grund."
+	{
+		printf 'sha256 der Dateien im Daten-Ordner von %s, %s\n\n' "$name" "$STEMPEL"
+		# Two sections in one file, and the hint belongs here: a reader who
+		# runs "sha256sum -c" over the whole list in one directory gets a
+		# false alarm for the other half - measured on the first list this
+		# wrote. The list is for people AND for that command, so it says
+		# which half to check where.
+		printf 'Pruefen, je Haelfte in ihrem eigenen Ordner:\n'
+		printf '  grep "[*]" summen.txt | sha256sum -c - 2>/dev/null | grep -v "No such"\n'
+		printf 'Eine Liste ueber beide Ordner auf einmal meldet die jeweils andere\n'
+		printf 'Haelfte als fehlend - das ist kein Befund.\n\n'
+		(cd "$ordner" && for f in *; do
+			[ "$f" = inhalt.txt ] && continue
+			printf '  %s\n' "$(sha256sum "$f")"
+		done)
+		printf '\nUnd der Schluessel-Ordner selbst:\n'
+		(cd "$sordner" && for f in *; do
+			case $f in inhalt.txt | summen.txt) continue ;;
+			esac
+			printf '  %s\n' "$(sha256sum "$f")"
+		done)
+	} >"$sordner/summen.txt"
 done
 
 cat >"$ZIEL/LIESMICH.txt" <<EOF
@@ -413,6 +451,12 @@ Datenbank auf, und der dbKey aus controller.json oeffnet die eigene Datenbank
 jedes Controllers und die Datenordner aller Apps. Ohne diese Dateien ist alles
 in diesem Ordner Geheimtext - von niemandem zu oeffnen, auch nicht von
 NextGenCloud.
+
+DIE PRUEFSUMMEN STEHEN AUCH NICHT HIER, sondern als summen.txt im
+Schluessel-Ordner je Rechner. Eine Liste neben ihren Dateien faengt nur einen
+Unfall; wer hier schreiben darf, aendert beides. Was hier steht, ist die
+Beschreibung jeder Datei - die ist auch ohne Pruefsumme etwas wert, eine
+Pruefsumme ohne Vertrauen nicht.
 
 DAS GILT AUCH FUER DIE APP-DATEN, und das war einmal anders: app-daten.tar.enc
 ist mit einem Schluessel verschluesselt, der in diesem Lauf neu erzeugt wurde
@@ -439,8 +483,15 @@ Sicherung einer NextGenCloud-Anlage - DIE SCHLUESSEL, $STEMPEL
 DIESER ORDNER IST NUR DIE DURCHFUHR, KEIN AUFBEWAHRUNGSORT.
 
 Was hier liegt, gehoert in den Passwortmanager dieses Hauses und danach von
-dieser Platte geloescht. Je Rechner ein etc-ngc.tar (10 bis 20 KB) und, wo der
-Rechner Apps traegt, ein app-daten.schluessel von 45 Byte.
+dieser Platte geloescht. Je Rechner ein etc-ngc.tar (10 bis 20 KB), wo der
+Rechner Apps traegt ein app-daten.schluessel von 45 Byte, und eine summen.txt
+mit den Pruefsummen des Daten-Ordners.
+
+WARUM DIE PRUEFSUMMEN HIER LIEGEN UND NICHT BEI DEN DATEN: eine Liste neben
+ihren Dateien faengt einen Unfall - eine kaputte Platte, eine abgebrochene
+Uebertragung. Wer im Daten-Ordner schreiben darf, aendert die Datei UND die
+Zeile darueber. Hier getrennt gilt fuer beide Haelften derselbe Satz: wer nur
+die Daten hat, kann sie weder lesen noch unbemerkt aendern.
 
 Solange dieser Ordner hier steht, ist dieser Rechner so empfindlich wie die
 Anlage selbst: wer ihn und den Daten-Ordner hat, hat die Anlage - die
