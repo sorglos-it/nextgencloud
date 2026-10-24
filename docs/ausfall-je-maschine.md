@@ -467,6 +467,98 @@ Zeit. Gemessen wird darum von root aus an den `conmon`-Prozessen, die den Namen
 des Behälters hinter `-n` tragen. Eine Sonde, die „nichts" sagt, weil sie selbst
 nicht darf, ist die gefährlichste Sorte.
 
+### db-1 aus — gemessen am 24.10.2026, 13:46–13:51 UTC
+
+Der Fall, bei dem ich mit dem schwersten Befund gerechnet habe. **Zwei von drei
+Erwartungen waren falsch, und beide in die gute Richtung.**
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | ja | **ja**, `200`, unverändert — Apache und PHP liegen auf api-1 |
+| (b) anmelden | nein | **nein** — und zwar so: |
+| | | `{"status":"error","code":"E_UNREACHABLE","message":"Dienst nicht erreichbar."}` mit **HTTP 503**, gleichlautend über den Lastverteiler *und* direkt auf api-2:7443 |
+| (c)–(e) | nein | **nein**, alles hängt an dieser Datenbank |
+| laufende Apps | — | **laufen weiter**, beide Container auf svc-1, einer auf svc-2, unverändert |
+| sagt die Anlage es ehrlich? | **nein erwartet** | **ja, sie sagt es ehrlich** |
+| Selbstfang | **nein erwartet** | **ja, ganz allein** |
+
+**Die erste falsche Erwartung: die Anlage schiebt dem Benutzer nichts unter.**
+Ich hatte erwartet, dass eine Anmeldung ohne Datenbank denselben Ausgang nimmt
+wie eine mit falschem Kennwort — der leere Zustand, der wie ein eigener Fehler
+aussieht. Das ist nicht so, und es ist nicht Zufall, sondern gebaut. Im Code
+ist der erste Zugriff in `login/start` ein `lock.Check` gegen die Datenbank,
+und sein Fehler wird ausdrücklich als `E_UNREACHABLE` beantwortet. Die
+Oberfläche hat dafür einen **eigenen Satz**, getrennt vom Satz für eine
+gescheiterte Anmeldung:
+
+| Fall | Text, den der Benutzer sieht |
+|---|---|
+| Datenbank weg | `err.unreachable` — „Service unavailable. Please try again later." |
+| falsches Kennwort | `login.failed` — „Login failed." |
+
+Die API liefert dazu „Dienst nicht erreichbar." auf Deutsch. Der Benutzer
+erfährt also, dass es nicht an ihm liegt. Das ist genau das Gegenteil des
+Befunds, den der Auftrag gesucht hat, und gehört aufgeschrieben, weil die drei
+leeren Zustände dieser Woche den Verdacht in die andere Richtung gelegt hatten.
+
+Dazu kommt ein **Gegensatz zum Ladenfall, der ins Auge springt.** Die
+unerreichbare Datenbank bekommt eine Journalzeile, mit Zähler:
+
+```
+api-2  WARN the database could not be reached reason=db-unreachable count=1 since=1
+```
+
+Der unerreichbare Laden bekommt **keine**. Dieselbe Anlage, zwei fehlende
+Nachbarn, zweimal eine andere Lautstärke. Das ist der Beleg dafür, dass das
+Schweigen im Ladenfall kein Hausstil ist, sondern eine Lücke an einer Stelle.
+
+**Die zweite falsche Erwartung: db-1 kommt von selbst zurück.** Ich hatte
+erwartet, dass ein einzelner Galera-Knoten kein Quorum findet und
+`galera_new_cluster` von Hand braucht — heute früh lag die Datenbank aus genau
+diesem Grund von 02:45 bis 09:30 tot. **Ich habe nicht von Hand geholfen, und
+es war nicht nötig.** Gemessen im halbminütigen Takt über drei Minuten: schon
+beim ersten Blick `active`, `wsrep_cluster_size 1`, `wsrep_cluster_status
+Primary`. Aus dem Journal:
+
+```
+13:47:16  Starting mariadb.service - MariaDB 11.8.6 database server...
+13:47:20  WSREP: Recovered cluster id dc0a900c-cf30-11f1-8342-b316e8ae0db8
+13:47:20  WSREP: Server db-1 synced with group
+13:47:20  WSREP: Synchronized with group, ready for connections
+```
+
+**Vier Sekunden** vom Start des Dienstes bis „ready for connections". Der Grund
+steht in `grastate.dat`: `safe_to_bootstrap: 1`. Ein Knoten, der weiß, dass er
+der letzte war, darf sich selbst hochziehen.
+
+**Und das war ein harter Schnitt, kein sauberes Herunterfahren.** `qm stop` ist
+in Proxmox der Stecker, nicht das ACPI-Signal, und zwei Spuren belegen, dass es
+auch so ankam: im vorigen Start steht **keine Herunterfahr-Folge** zur Uhrzeit
+des Abschaltens, und die Journalspitze fehlt — der letzte Eintrag ist 13:37:00,
+obwohl die Maschine um 13:45:51 nachweislich geantwortet hat. Alles dazwischen
+war noch nicht auf die Platte geschrieben und ist mit dem Strom weg.
+
+**Was damit NICHT gemessen ist, und das ist die wichtige Einschränkung.** Dass
+dieser harte Schnitt heil überstanden wurde, heißt nicht, dass der Fall von
+heute früh nicht existiert. `grastate.dat` trug hier `safe_to_bootstrap: 1`;
+der bekannte Stillstand tritt ein, wenn dort `0` steht, weil der Knoten nicht
+weiß, ob er der letzte war. Die Startliste von db-1 zeigt, dass der
+Vorfall von heute früh an einem anderen Neustart hing (Start endet 02:44:50,
+nächster beginnt 02:45:03). **Was den Unterschied macht, ist offen** — und das
+ist der nächste Fall, der gemessen werden müsste, nicht der, den ich gefahren
+habe. Ein Satz wie „db-1 fängt sich immer selbst" wäre aus dieser Messung
+nicht gedeckt.
+
+Vor dem Lauf lag eine **logische Sicherung** der Datenbank bereit
+(`mariadb-dump --single-transaction`, 155 KB, 9 Tabellen, Abschlusszeile
+geprüft), außerhalb von db-1. Sie war nicht nötig. Zwei Dinge daran sind
+trotzdem festzuhalten: der Dump braucht die Schlüsseldateien unter
+`/etc/ngc/db-keys` **nicht**, weil er entschlüsselt ausliest — und mein erster
+Versuch erzeugte eine 47-KB-Datei, die wie eine Sicherung aussah und keine war
+(0 Tabellen, kein Benutzer): Binärdaten über `ssh`-stdout in eine Windows-Datei
+werden verbogen, mit `scp` geht es. Wer einen Rückweg baut, **macht die
+Sicherung auf**, statt ihre Größe anzusehen.
+
 ## Was offen ist, und warum
 
 Vier der sechs Fälle sind nicht gefahren, und die Spalte „was der Benutzer
