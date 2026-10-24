@@ -5135,3 +5135,112 @@ Für eine Uhr ist das Kosmetik. Für eine App, die erklären soll, warum sie nic
 der Unterschied zwischen einem Protokoll und einem Rätsel.
 
 Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 16.
+## Punkt 79: Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem
+
+Der Laden (`store`, eine eigene Maschine, die ausdrücklich **nicht** zur Anlage gehört) wurde am
+24.10.2026 um 14:42 auf dem Proxmox-Wirt mit `qm stop 306` abgeschaltet und nach rund 40 Sekunden
+wieder angefahren. Die Anlage hat das vollständig weggesteckt: die Oberfläche antwortete
+unverändert (10 von 10 Anfragen `200`, 19–28 ms wie vorher), und `nginx` auf dem Laden lief nach
+`qm start` von selbst wieder. **Das ist das gute Ergebnis** und der befürchtete schwere Befund —
+eine Anlage, die ohne ihren Laden nicht mehr arbeitet — ist nicht eingetreten.
+
+**Was gemessen ist, und was nur gelesen:** im Journal von api-1 und api-2 steht über den ganzen
+Ausfall `-- No entries --`. Diese Messung **beweist nichts**: das Fenster war 40 Sekunden lang,
+und in dieser Zeit war kein Takt fällig. Der Beleg steht im Code, nicht im Journal.
+
+`apps/server-api/classes/server/server.go`, `Server.rounds`, hat `hour := time.NewTicker(Hour)`
+(`Hour = time.Hour`) und daneben `first := time.NewTimer(FirstCatalog)` mit
+`FirstCatalog = time.Minute`. Die Katalogrunde läuft also eine Minute nach dem Start und danach
+stündlich. Dass `systemctl list-timers` auf api-1 keinen NGC-Timer zeigt, ist darum der erwartete
+Zustand und kein Befund.
+
+Die Runde selbst **hat** eine Meldung:
+
+```go
+func (s *Server) hour(ctx context.Context) {
+	if err := s.st.Refresh(ctx); err != nil {
+		slog.Warn("catalogs could not be fetched", "error", err)
+	}
+}
+```
+
+Erreichbar ist sie für diesen Fall nicht. `Stores.Refresh` (`fetch.go:175`) gibt einen Fehler nur
+zurück, wenn die **Vertrauensliste** nicht zu lesen war; der Fehler des einzelnen Ladens geht in
+`_ = st.note(ctx, s.ID, err)` und wird verworfen, am Ende steht `return nil`. Ein unerreichbarer
+Laden liefert also `nil`, und `slog.Warn` darüber feuert nie. Der Grund landet still in der Zeile
+des Ladens und ist nur in `ngc.store/sources` zu sehen — für den, der sich anmeldet und dorthin
+klickt. Über die Befehlszeile gibt es gar kein Nachsehen: `ngc-store --help` kennt nur Packen,
+Unterschreiben und Prüfen, `ngc-api --help` und `ngc-controller --help` keinen Katalogbefehl.
+
+Ein Laden, der eine Woche weg ist, hat damit **168 Mal erfolglos geklopft**, ohne eine Zeile zu
+hinterlassen, die ein Mensch findet, ohne sie zu suchen. Das `_ =` ist kein Versehen: der
+Kommentar darüber sagt, dass das Aufschreiben den nächsten Laden nicht verschlucken darf. Die
+Absicht ist richtig, die Folge ist Stille.
+
+**Was zu entscheiden wäre:**
+
+- Ob eine Katalogrunde, die einen Laden nicht erreicht, **ins Journal** gehört. Vorschlag:
+  ja, aber nicht jede Stunde dieselbe Zeile — beim ersten Fehlschlag eine `WARN`, danach erst
+  wieder, wenn sich etwas ändert (wieder erreichbar, oder ein anderer Grund). Sonst tauscht man
+  Stille gegen Rauschen, und 168 gleiche Zeilen findet auch niemand.
+- Ob `Stores.Refresh` den Fehler **zurückgeben** soll, statt ihn nur in die Zeile zu schreiben.
+  Die heutige Form verschluckt ihn zweimal: `_ =` am `note`, und `return nil` am Ende. Ein
+  gesammelter Fehler („k von n Läden nicht erreicht") würde die Warnzeile erreichbar machen, ohne
+  dass ein kaputter Laden den nächsten kostet.
+- Ob es einen Weg über die **Befehlszeile** geben soll, nach dem Laden zu sehen. Heute kann man
+  den Zustand der Läden nur über eine Anmeldung in der Oberfläche erfahren. Für jeden, der eine
+  Anlage aus der Ferne betreut, ist das eine Tür, die fehlt.
+
+Alle drei sind Entscheidungen und keine Messungen. Die Messung ist: sie fragt, sie scheitert, und
+es steht nirgends, wo man es sieht.
+
+Herkunft und die ganze Messreihe, samt zweier Messfallen, die den Lauf fast entwertet haben:
+`docs/ausfall-je-maschine.md`.
+
+## Punkt 80: Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen
+
+Gemessen am 24.10.2026. Der DNS des Netzes (10.2.3.102) liefert für **jeden** Namen
+`*.ngc.mein.lan` neben dem richtigen A-Satz auch einen AAAA-Satz `::`. Alles, was über NSS
+geht — `getent`, `curl`, `ping`, jedes Werkzeug, zu dem ein Mensch greift — nimmt das `::`
+zuerst und landet damit auf der **eigenen** Maschine, wo auf 443 der Apache von api-1 antwortet.
+
+Was das kostet, ist an zwei Zeilen zu sehen, beide von api-1 aus, bei **laufendem** und bei
+**abgeschaltetem** Laden:
+
+```
+curl -sk https://store.ngc.mein.lan/catalog.json                       Laden an  -> 404 von=::
+dieselbe Zeile                                                         Laden aus -> 404 von=::
+curl --resolve store.ngc.mein.lan:443:10.2.3.215 … /catalog.json       Laden an  -> 200 von=10.2.3.215
+dieselbe Zeile                                                         Laden aus -> 000
+```
+
+**Die naive Frage kann einen toten Laden nicht von einem lebenden unterscheiden.** Sie gibt beide
+Mal dieselbe Zahl, und die kommt von der falschen Maschine. `getent ahosts store.ngc.mein.lan`
+auf api-1 zeigt es direkt: erst `10.2.3.215`, dann `::`.
+
+Dass NGC selbst davon nicht stirbt, liegt daran, dass Go die Adressen einer Antwort der Reihe
+nach durchgeht und am `::` vorbeifällt. Die Anlage läuft also, **weil die Software die kaputte
+Adresse überspringt** — und der Mensch, der danach mit einem Werkzeug nachsieht, bekommt ein
+anderes Ergebnis als die Software und glaubt dem Werkzeug. Von einem Windows-PC aus beißt die
+Falle nicht: dessen `curl` überspringt das `::` ebenfalls und landet auf 10.2.3.210. Das ist der
+Grund, warum sie so lange unentdeckt blieb — sie zeigt sich nur dort, wo gemessen wird, nämlich
+auf den Knoten.
+
+Dazu eine zweite, kleinere Falle derselben Messung: `store.crt` ist mit **ED25519**
+unterschrieben. Beide `curl` unter Windows (`/mingw64/bin/curl` und `C:\WINDOWS\system32\curl`)
+brechen den Handshake mit `schannel: SEC_E_ILLEGAL_MESSAGE` ab, und `-k` hilft nicht, weil nicht
+die Prüfung scheitert, sondern der Handshake. Der Laden ist von einem Windows-PC aus gar nicht
+erreichbar.
+
+**Was zu entscheiden wäre:**
+
+- Ob der AAAA-Satz `::` aus dem DNS **weg** soll. Das ist keine Frage an NGC, sondern an das
+  Netz — aber solange er dort steht, ist jede Messung auf einem Knoten, die einen Namen auflöst,
+  verdächtig, und das betrifft jede Sitzung, die an dieser Anlage misst.
+- Ob NGC sich darauf **verlassen** darf, dass Go am `::` vorbeifällt. Heute hängt die
+  Erreichbarkeit der Läden daran. Ein Client, der anders auswählt, trifft den eigenen Apache.
+
+Die Messregel, die daraus folgt und die in jedem Blatt dieser Anlage gelten sollte: **auf einem
+Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gemessen wurde.**
+
+Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".
