@@ -5068,7 +5068,6 @@ die ihre Bedeutung wechselt, ist schlimmer als eine, die fehlt.
 
 Was daraus zu lernen ist, steht schon im Buch: **ein Buch, das nur hinten waechst,
 braucht einen Riegel gegen doppelte Nummern.** Daran arbeitet ein eigener Strang.
-
 ## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
 
 Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
@@ -5303,3 +5302,50 @@ Die Messregel, die daraus folgt und die in jedem Blatt dieser Anlage gelten soll
 Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gemessen wurde.**
 
 Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".
+
+---
+
+## Punkt 81: Gesichert wird genau der Teil, den die Anlage ohnehin wiederbekäme — und „ngc-db backup" gibt es nicht
+
+Gemessen am 24.10.2026 an der verteilten Anlage, Stand `17b9895`.
+
+**Was gemessen ist.** Die Anlage hat genau ein Sicherungskommando: `ngc-controller backup
+<Datei>`. Es schreibt die eigene SQLite-Datei des Controllers — Zeilen der Apps mit ihren
+Manifesten, Lizenzen, Vertrauenslisten-Versionen, gelegte Aktualisierungen. Das läuft, der
+Controller läuft dabei und danach weiter (auf api-1, db-1 und svc-1 je `active` vor und nach dem
+Lauf, Ausstiegscode 0).
+
+Zwei Stellen im Code schicken einen Admin für die Benutzerdaten an ein zweites Programm:
+`state/backup.go:60` und `register/register.go:127` nennen beide `"ngc-db backup"`. **Dieses
+Programm existiert nicht.** `apps/server-db/` hat kein `main.go`, und auf keiner der fünf
+Maschinen liegt ein `ngc-db` (`ls /usr/lib/ngc/`: `ngc-api`, `ngc-controller`, `ngc-store` und
+Vorgängerstände). Für `ngc_user` (1 Zeile), `ngc_blob` (15), `ngc_session` (27) und `ngc_log`
+(470) auf db-1 gibt es damit heute kein Sicherungskommando — nur `mariabackup` 11.8.6 aus der
+Distribution, das zur Probe in 1 s eine 49-MB-Sicherung schrieb, bei weiterlaufender Datenbank.
+
+**Und die Sicherung hängt allein am Schlüssel, nicht an der Maschine.** Die Kopie von svc-1 auf
+einem fremden Rechner geöffnet (Windows, nie gekoppelt): mit dem dbKey aus `controller.json`
+**offen**, zwei App-Zeilen. Ein Bit des Schlüssels gekippt: `sqlite3: file is not a database`.
+Mit dem dbKey von api-1: dasselbe. Jeder Rechner hat seinen eigenen dbKey, vier verschiedene auf
+dieser Anlage. Dasselbe gilt für die App-Datenordner: die fscrypt-Schlüsselkennung, die der Kern
+von svc-1 für `org.sorglos.terminal` und `org.sorglos.uhr` hält, ist bitgleich mit der, die HKDF
+über den dbKey dieses Rechners liefert. Und für die MariaDB ein drittes Mal: die Tabellen sind
+`FORCE`-verschlüsselt, der Schlüssel liegt in `/etc/ngc/db-keys/` und nicht in der Sicherung —
+der Benutzername `weiricth` steht in keiner der neun `.ibd` der Probe-Sicherung.
+
+**Was nicht gemessen ist.** Zurückgespielt wurde nichts, auf keiner Maschine: weder `state.db`
+noch die MariaDB noch ein App-Datenordner, und kein neuer Rechner wurde mit einem alten
+`controller.json` gekoppelt. Dafür fehlt eine Wegwerf-Maschine; an der laufenden Anlage wird es
+nicht geübt.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob die dbKeys bei einer Neuinstallation **vorgegeben** werden dürfen. Ohne das kann „dieselbe
+  Maschine wiederherstellen" nicht funktionieren — der neue Rechner bekommt einen neuen
+  Schlüssel und öffnet die alte Sicherung nicht. Wer sie vorgeben darf, kann sie falsch vorgeben.
+- Ob die beiden Code-Stellen auf `ngc-db backup` zeigen dürfen, solange es das nicht gibt. Eine
+  Fehlermeldung, die einen Admin an ein Programm schickt, das nicht existiert, kostet ihn den
+  Abend, an dem er sie braucht.
+- Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
