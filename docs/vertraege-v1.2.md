@@ -175,6 +175,7 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
 | 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
 | 85 | Ein flatternder Prüffall, der an der Vorrichtung lag – und das Flattern stand in der Zahl | gilt | Messung |
+| 86 | Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat – das nächste OPEN darauf verschwindet lautlos | gilt – **Wettrennen im Code, nicht behoben**; der Testfehler daneben ist behoben | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6096,3 +6097,207 @@ beendet, reichen sie, weil es schon zweimal rot war.
 **Nicht gemessen und darum offen:** warum der Lauf auf einem GitHub-Runner häufiger oder seltener
 stückelt als hier. Die 23 % gelten für diese Maschine; dass es dieselbe Ursache ist, folgt aus der
 Fehlerzeile (`code == 0` bei 2,003 s), nicht aus einer gemessenen Quote dort.
+
+---
+
+## Punkt 86: Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat — und das nächste OPEN darauf verschwindet lautlos
+
+**Woher das kommt.** Die Linux-Prüfung „-race (Linux goroutines)“ wurde immer wieder rot, ohne
+dass etwas kaputt war, und einmal ist derselbe Commit (`97945b6`) bei der Wiederholung ohne jede
+Änderung grün geworden. Eine Prüfung, die gelegentlich ohne echten Fehler rot wird, ist
+schlimmer als keine Prüfung (`tools/recovery-ci.sh`) — also war zu messen, nicht zu drehen.
+
+**Was gemessen ist.** Die Laufliste der Prüfung, 200 Einträge gelesen, davon **90 abgeschlossene
+Läufe** (ohne abgebrochene). In **12 von 90 = 13 %** war die Aufgabe `-race` rot wegen zweier
+Fälle des Pakets `apps/server-controller/classes/link`: `TestFramesAfterOwnCloseAreDropped`
+(10×) und `TestChannelNumberFreeOnlyAfterBothCloses` (2×). Vier weitere rote `-race`-Läufe
+gehören woanders hin: `TestAOneTimeCodeReachesNoLog` (`users`), `TestAFaultEndsTheTerminalAtOnce`
+und zweimal `TestNormalCloseGivesTheNumberBackAtOnce` (Terminal), dazu ein Lauf (40114506408), in
+dessen Protokoll keine `--- FAIL`-Zeile zu finden war und der hier **nicht untersucht** ist.
+
+**Und 13 % ist eine Untergrenze, keine Quote.** Die erste Fassung dieses Punktes nannte 9 von 90
+= 10 %, und das war zu niedrig gezählt. `gh run list` zeigt je Lauf nur den **letzten Versuch**:
+ein Lauf, den jemand mit `gh run rerun --failed` wiederholt hat, steht dort als `success`, und der
+rote erste Versuch ist aus der Liste verschwunden. Nachgemessen über die API
+(`runs/<id>/attempts/1`): von den 90 Läufen sind **6 wiederholt** worden, und in **vier** davon
+war Versuch 1 in der Aufgabe `-race` rot — dreimal an genau diesen beiden Fällen (40119921187 und
+40087877366 mit `TestFramesAfterOwnCloseAreDropped` nach 30,06 bzw. 30,07 s, 40109214083 mit
+`TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s), einmal an einem Terminal-Fall. Diese
+drei fehlten in der ersten Zählung.
+
+Daraus folgt zweierlei. Erstens: wer das Flattern aus der Laufliste zählt, zählt zu niedrig, und
+zwar um so mehr, je fleissiger wiederholt wird. Zweitens, und das ist der unangenehmere Teil:
+**eine Wiederholung löscht den Beleg aus der Liste.** Ein roter Lauf, den niemand wiederholt hat,
+steht darin; ein roter Versuch unter einem wiederholten Lauf ist nur über die API zu finden, und
+nur, wenn man weiß, dass man danach suchen muss. 13 % ist also das, was sich **nachweisen** lässt,
+nicht das, was war.
+
+**Der eine Lauf, der das Flattern beweist.** Lauf 40109214083 auf Commit `97945b6` ist
+`run_attempt` **2** und grün; Versuch 1 desselben Laufs, derselbe Commit, derselbe Baum, ist rot
+mit `TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s. Dazwischen lag nichts als
+`gh run rerun --failed`. Das ist der Nachweis an einem unveränderten Baum und stärker als jede
+Statistik: der Zweig, auf dem es auffiel, ändert **keine** Codedatei (nur `docs/` und
+`tools/*.sh`) und kann die Ursache nicht sein. Berichtigt am 24.10.2026: hier stand erst, der
+einzige echte Lauf auf diesem Commit sei grün gewesen — das war falsch gelesen, weil die
+Laufliste den roten Versuch 1 nicht zeigt, und es hätte den eigenen Befund geschwächt.
+
+**Auf dieser Maschine ist nichts geflattert.** In WSL (Debian, go1.27.2, `-race`): 3000 Läufe der
+beiden Fälle auf **einem** Prozessorkern, 500 Läufe mit allen Kernen, 20 Läufe des ganzen Pakets
+auf zwei Kernen — **0 Fehlschläge**. Die natürliche Flatterquote hier ist 0 %, und damit war der
+Beweis einer Besserung durch Wiederholen allein nicht zu führen. Gemessen wurde deshalb **durch
+Einspritzen**: eine Verzögerung an genau der Stelle, an der das Wettrennen vermutet wurde, und
+dann der Vergleich der Fehlermeldung mit der aus der CI.
+
+**Zur Nummer, und was mit ihr geschehen ist.** Dieser Punkt hat die 83 getragen, dann die 84,
+dann die 85, und trägt jetzt die **86**. Dreimal umgeschrieben, jedes Mal, weil ein anderer Zweig
+zuerst zusammengeführt wurde: PR 139 nahm die 83, PR 143 die 84, PR 144 die 85. Gemessen am 24.10.2026 an den
+offenen Pull Requests, bevor 139 herein kam: `main` endete bei 82, die **83 war von fünf Zweigen
+beansprucht** (PR 139, 142, 143, 144 und dieser) und die 84 von PR 140. PR 139 ist zuerst
+zusammengeführt worden und hat die 83 bekommen; die vier anderen stehen seitdem alle auf Konflikt
+und schreiben ebenfalls um.
+
+Ein Ausweichen nach oben war vorher nicht möglich. Auf einem Zweig, der von `main` geschnitten
+ist, wäre die 85 ein Loch über 83 und 84 gewesen, und genau das weist der Riegel mechanisch ab
+(ausprobiert: „no chapter carries these numbers, although they lie between 19 and 85: 83 84“).
+Solange `main` bei 82 endete, war die 83 auf diesem Zweig die einzige Nummer, die den Riegel grün
+ließ. Das ist die Regel des Buches und kein Versehen: eine Nummer lässt sich nicht
+vorreservieren, **wer zweitens zusammenführt, schreibt um**, und bis dahin hält jeder Zweig seine
+Reihe lückenlos.
+
+Die Vorhersage von damals ist zweimal eingetreten, und das ist der Grund, warum sie hier
+stehenbleibt. In der Fassung mit der 84 stand: „die 84 ist nicht sicher, PR 140 beansprucht sie
+ebenfalls, und PR 142, 143 und 144 greifen nach demselben Umschreiben danach“. Genau so kam es,
+zweimal hintereinander — PR 143 nahm die 84, PR 144 die 85. Die **86** ist jetzt die nächste freie
+Nummer und aus demselben Grund genauso unsicher: **PR 140 und 142 stehen noch offen**. Wer zuerst
+herein kommt, bekommt die Zahl; die übrigen schreiben um. Verweise auf diesen Punkt gibt es keine,
+das Umschreiben kostet also zwei Zeilen — das Kapitel und die Zeile in der Reihe-B-Tabelle. Drei
+Umschreibungen für einen Punkt sind der Preis dafür, dass die Reihe am Dateiende wächst und der
+Riegel nur die eigene Datei sieht.
+
+**Was die Bauart des Riegels dabei zeigt.** `tools/check-buch.sh` erzwingt Lückenlosigkeit
+**innerhalb einer Datei** und kann fremde Zweige nicht sehen. Damit drängt er jede parallel
+laufende Sitzung auf dieselbe nächste Nummer und zeigt die Kollision erst beim Zusammenführen.
+Fünf Zweige auf einer Nummer ist die vorhersehbare Folge davon, nicht die Unaufmerksamkeit von
+fünf Sitzungen. Hier nur als Beobachtung notiert; was daraus folgt, ist eine Frage der
+Koordination und steht nicht in diesem Punkt.
+
+### Es sind zwei Fehler, nicht einer
+
+Die Protokolle zeigen zwei Erscheinungen mit ganz verschiedenen Laufzeiten:
+
+| Erscheinung | Laufzeit | Meldung | Läufe |
+|---|---|---|---|
+| A | 0,03–0,05 s | `the handler was called 2 times and came back 1 times` | 4 |
+| B | 30,04–30,08 s | `waiting for 4 on channel 1: ...`, dazu `Run did not end` | 8 |
+
+Die 8 sind 5 aus der Laufliste und 3 aus verdeckten ersten Versuchen. **B ist also die Mehrheit,
+zwei Drittel** — und B ist der Fehler, der hier nicht behoben wird.
+
+**A ist ein Testfehler.** Der Fall liest `opened` und `back` unmittelbar nach `waitFor`, also
+sobald `Run` zurück ist. Das Ende von `Run` ist aber **nicht** das Ende der Handler: die Goroutine
+eines Kanals (`channels.run`) hat hinter dem Handler noch die CLOSE-Buchung zu erledigen, und
+`back.Add(1)` steht im Handler dahinter. Wer die Zähler dort liest, liest zu früh. Der Kommentar
+im Nachbarfall sagte sogar ausdrücklich das Gegenteil („Counted once the tunnel is over, so that
+no handler is still on its way“) — er war falsch.
+
+*Beweis:* 50 ms zwischen `c.send` der CLOSE und der Buchung dahinter, eingespritzt in
+`channels.finish`. Der Fall fällt sofort mit **genau** der CI-Meldung
+(`the handler was called 2 times and came back 1 times`, 0,08 s). Mit der Behebung in diesem
+Commit ist er bei derselben Einspritzung **grün**.
+
+**B ist ein Wettrennen im Code.** `channels.finish` schreibt die CLOSE dieser Seite und setzt
+`ch.closed = true` **erst, nachdem der Schreibvorgang zurück ist**. Die API kann die CLOSE in
+dieser Lücke schon gelesen und beantwortet haben. Trifft ihre CLOSE für dieselbe Nummer in der
+Lücke ein, dann setzt `channels.route` nur `ch.peer` und gibt die Nummer **nicht** frei
+(`if ch.closed { c.drop(ch) }` greift nicht). Das unmittelbar folgende OPEN der API für diese
+Nummer fällt dann in den Zweig „nach der eigenen CLOSE wird alles verworfen“ und wird **lautlos
+weggeworfen** — kein Kanal, keine Antwort, kein Fehler. Die API wartet auf einen Kanal, der nie
+kommt.
+
+*Beweis:* eine **einmalige** Verzögerung von 2 s an derselben Stelle, aber nur für Kanal 1 (damit
+die Antwort auf den Merker nicht mitverzögert wird). Der Fall fällt nach **30,08 s** mit
+`Run did not end`, `waiting for 4 on channel 1: ... opPing: use of closed network connection` und
+`failed to write msg: use of closed network connection` — Zeile für Zeile die Meldung aus der CI.
+Mit der Behebung von A ist er bei dieser Einspritzung **weiter rot**, wie es sein muss: A und B
+sind zwei Fehler, und hier ist nur A behoben.
+
+**Dass die Zahl 30 zweimal vorkommt, hat das Lesen verdeckt.** `answer` im Test (die Schranke
+eines Lesevorgangs der API) und `WriteTimeout` im Code sind beide 30 s. Eine Meldung nach 30,06 s
+sagt darum nicht, welche der beiden Schranken abgelaufen ist, und die erste Lesart („der Test
+dreht den Zeitablauf zu knapp“) war deshalb naheliegend und falsch.
+
+### Was das für den Betrieb heißt
+
+Nicht nur ein Testproblem. Eine API, die eine Kanalnummer wiederverwendet, sobald sie die CLOSE
+dieser Seite gelesen und ihre eigene gesendet hat — und genau das erlaubt der Vertrag, „CLOSE
+gesendet und empfangen“ — kann ihr OPEN verlieren. Kein Absturz, keine Lücke in der Sicherheit:
+ein hängender Kanal, auf den niemand antwortet. Die Buchhaltung des Controllers läuft dem
+Vertrag nach, statt ihm zu folgen.
+
+### Warum B hier nicht behoben ist
+
+Der naheliegende Griff — `ch.closed = true` **vor** den Schreibvorgang setzen — ist falsch.
+`finish` hält beim Setzen noch nicht die Schreibsperre des Tunnels (`t.mu` wird erst in
+`c.send` genommen). Zwischen dem Setzen und dem Nehmen der Sperre könnte `route` die Nummer
+freigeben, ein neuer Kanal entstehen und **dessen** erster Rahmen vor der CLOSE des alten auf die
+Leitung gehen. Dann wäre aus einem verlorenen OPEN eine falsche Reihenfolge auf der Leitung
+geworden, und das ist schlimmer.
+
+Was es wirklich braucht, ist eine dritte Zustandsstufe („meine CLOSE ist dem Tunnel übergeben“),
+die unter derselben Sperre gesetzt wird, die die Reihenfolge auf der Leitung hält — oder die
+Entscheidung, ein OPEN für eine Nummer, deren CLOSE der Gegenseite schon da ist, nicht zu
+verwerfen. Beides rührt den Schließweg an, der an drei Stellen Sperren in festgelegter Reihenfolge
+nimmt, und gehört in eine eigene, geprüfte Änderung. Der Befund ist hier wichtiger als der grüne
+Lauf.
+
+### Die rote Aufgabe auf `main` hatte eine andere Ursache
+
+Geprüft, wie im Auftrag verlangt: Lauf **40097136329** auf `main` war in der Aufgabe
+„check.sh + counted test run“ rot, und das war **nicht** dieses Flattern. Im Protokoll steht
+`buch: these points have a chapter but no row in the Reihe-B table of contents: 75 76 77 78 79 80
+81` — `tools/check-buch.sh` hat fehlende Tabellenzeilen gemeldet, deterministisch und zu Recht.
+Auf dem heutigen `main` (f77143c) ist `bash tools/check-buch.sh` grün
+(64 Punkte, 19–82). Zwei verschiedene Ursachen, zwei verschiedene Aufgaben.
+
+### Flatterquote vorher und nachher
+
+| | vorher | nachher |
+|---|---|---|
+| CI, Aufgabe `-race`, 90 abgeschlossene Läufe | mindestens 12 rot (13 %), davon 4 × A und 8 × B | **unvermessen** — braucht neue Läufe |
+| hier, 3000 Läufe auf einem Kern, `-race` | 0 | 0 |
+| hier, 500 Läufe, `-race` | 0 | 0 |
+| hier, Einspritzung A (50 ms) | **rot** (0,08 s) | **grün** |
+| hier, Einspritzung B (2 s, einmalig) | **rot** (30,08 s) | **rot** (unverändert) |
+
+### Was ungemessen bleibt
+
+- **Die CI-Quote nach der Änderung.** Sie ist erst nach genug neuen Läufen zu haben. Erwartet
+  wird, dass die 4 Erscheinungen vom Typ A verschwinden und die 8 vom Typ B bleiben — also
+  **ein Drittel** des nachweisbaren Flatterns, nicht alles. Wer diese Prüfung jetzt für still
+  hält, irrt. Und wer sie nachzählt, muss die Versuche mitzählen (`runs/<id>/attempts/1`), sonst
+  sieht sie stiller aus, als sie ist.
+- **Das natürliche Eintreten von B.** Hier nie gesehen, nur durch Einspritzen erzwungen. Warum
+  es auf einem 4-Kern-Runner unter `-race` mit über zwanzig gleichzeitig laufenden Paketen in
+  etwa jedem zwanzigsten Lauf auftritt und auf dieser Maschine in 3000 Läufen nie, ist nicht
+  gemessen.
+- **Ob B über die Tests hinaus schon einmal zugeschlagen hat.** Keine Spur in einem Protokoll
+  einer echten Anlage gesucht; die API im Betrieb verwendet Nummern vielleicht gar nicht so
+  schnell wieder.
+- **Die anderen roten `-race`-Läufe**, soweit sie nicht hierher gehören: `TestAOneTimeCodeReachesNoLog`
+  (`users`) und Lauf 40114506408 sind hier **nicht untersucht**. Die Terminal-Fälle
+  (`TestAFaultEndsTheTerminalAtOnce`, `TestNormalCloseGivesTheNumberBackAtOnce`) sind es
+  inzwischen, aber von anderer Hand: **Punkt 85** hat sie gemessen, und dort lag es an der
+  Vorrichtung des Falls (eine Lesegrenze des Pseudoterminals) und nicht am Produktionscode.
+
+Verwandt: **Punkt 69** (die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt) —
+dieselbe Prüfung, dieselbe Frage, diesmal nicht „zählt sie?“, sondern „sagt sie die Wahrheit?“.
+**Punkt 70** ist der andere Fund in diesem Paket, ebenfalls unter Last.
+
+**Punkt 85** ist der nächste Verwandte und am selben Tag entstanden: auch dort ein flatternder
+Fall, der die Prüfung ohne echten Fehler rot machte, auch dort an einem Zweig aufgefallen, der
+keine Zeile Go anfasst. Der Vergleich ist der Ertrag. Dort lag **alles** an der Vorrichtung des
+Falls, und mit ihrer Behebung ist das Flattern weg. Hier liegt die Hälfte der Erscheinungen an der
+Vorrichtung (A, behoben) und zwei Drittel der Läufe an einem Wettrennen im Produktionscode
+(B, **nicht** behoben) — die Prüfung flattert also weiter, und das ist kein Rest von A.
+Zwei flatternde Fälle am selben Tag, zwei verschiedene Antworten auf dieselbe Frage: wer von der
+Vorrichtung des einen auf die des anderen schliesst, hält einen offenen Befund für erledigt.
