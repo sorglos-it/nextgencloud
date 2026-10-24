@@ -147,6 +147,51 @@ ist ein App-Container nach einer Neuinstallation **auf dem alten Knoten stehen
 geblieben** (Punkt 74 der Verträge). Wenn ein Rest auf dem jeweils anderen
 Knoten liegt, kann der Ausfall harmloser aussehen, als er ist.
 
+### Nachtrag zu den beiden svc-Fällen, geschrieben vor dem Schalten
+
+Diese vier Zeilen sind am 24.10.2026 gemessen, nachdem die Erwartungen oben
+schon standen, und sie schärfen sie, ohne sie umzuschreiben:
+
+| | svc-1 | svc-2 |
+|---|---|---|
+| App-Benutzer | `ngc-terminal-439982dd` **und** `ngc-uhr-ad8c00e2` | nur `ngc-terminal-439982dd` |
+| `ngc-controller` | 0.2.2 | 0.2.1 |
+
+**Punkt 74 ist von der Benutzerseite bestätigt**, bevor ich schalte: svc-1 trägt
+den Benutzer *und* den Containerspeicher des Terminals, obwohl `ngc_app` das
+Terminal auf svc-2 führt. Wenn also nach dem Abschalten von svc-2 ein Terminal
+antwortet, ist das **dieser Befund und kein Ausfallschutz**. Genau darum steht
+es hier vorher.
+
+Und die **Fassungen stehen gemischt** (0.2.2 gegen 0.2.1, dazu db-1 auf 0.2.1).
+Ein Ausfall gegen gemischte Fassungen misst zwei Dinge auf einmal; kommt einer
+der beiden Knoten anders zurück als der andere, ist das zuerst eine Frage an die
+Fassung und erst danach an den Ausfall.
+
+Dazu eine **Erwartung einer Nachbarsitzung**, die ich übernehme, weil sie die
+richtige Stelle trifft — als Erwartung, nicht als Behauptung, und von dort,
+nicht von mir: nach einem harten Abschalten ist die interessante Frage nicht, ob
+der Dienst wieder läuft, sondern **ob die Containerspeicher heil sind.** Was ich
+dazu gemessen habe:
+
+- `/var/lib/ngc/apps` ist auf beiden Knoten ein **eigenes Dateisystem**,
+  `/dev/sdb`, ext4, `rw,relatime` — mit gesetztem `encrypt`-Merkmal, also
+  fscrypt für die App-Verzeichnisse.
+- Darin läuft `podman` **rootless mit `overlay`**, und seine Datenbank ist
+  `db.sql` (SQLite) unter
+  `/var/lib/ngc/apps/<app-id>/.local/share/containers/storage/`.
+
+Ein Stromausfall mitten in einem Schreibvorgang trifft damit eine SQLite-Datei
+und einen overlay-Baum auf einem eigenen ext4. Das ist die Stelle, an der ich
+beim Wiederanlauf zuerst hinsehe — und die Frage ist nicht „läuft der
+Controller", sondern „kann der App-Benutzer sein Abbild noch lesen".
+
+Eine Zahl, die das Ausmessen abkürzt, **von der Lastsitzung gemessen**: im
+Leerlauf steht `ngc-controller.service` bei `TasksCurrent=16` von
+`TasksMax=3466`, ein leerer App-Container kostet rund 6 Aufgaben, eine offene
+Terminal-Sitzung rund 9,4. Hängt nach dem Hochfahren etwas und `TasksCurrent`
+steht weit unter 100, ist es **nicht** der Deckel.
+
 ## Wie hier gemessen wird — und warum der naheliegende Weg lügt
 
 Das steht vor den Ergebnissen, weil es sie alle trägt. Zwei Fallen, beide am
@@ -358,44 +403,374 @@ und ein Neustart der API nimmt dort die Laufzeitverzeichnisse der Apps mit. Auf
 api-1, wo beide Dienste laufen, wäre derselbe Neustart darum nicht harmlos
 gewesen; api-2 trägt nur die API.
 
-## Was offen ist, und warum
+### api-1 aus — gemessen am 24.10.2026, 13:32–13:34 UTC
 
-Vier der sechs Fälle sind nicht gefahren, und die Spalte „was der Benutzer
-dabei sieht" ist in dem einen gefahrenen Fall leer. Beides hat Gründe, die
-nicht an der Messung liegen:
+Vor dem Schalten gemessen, und schon das ist die halbe Antwort: **alle drei
+Controller nennen in `/etc/ngc/controller.json` genau einen Tunnel,
+`wss://api-1.ngc.mein.lan:7443/tunnel`.** db-1, svc-1 und svc-2 kennen api-2
+nicht. Nur `web.json` auf api-1 nennt beide APIs.
 
-1. **Es fehlt ein Zugang.** In `ngc_user` steht genau ein Benutzer: `weiricth`,
-   `admin`, kein TOTP. Ohne dessen Kennwort sind (b) anmelden, (c) Apps sehen,
-   (d) App öffnen und (e) neu einrichten in **keinem** Fall zu messen — und das
-   ist genau die Spalte, um die es im Auftrag geht. Die Leitsitzung gibt das
-   Kennwort nicht weiter (richtig so, es ist nicht ihres). Der Sperrzähler ist
-   nachgelesen und harmlos genug für eine Messung:
-   `lock.go` hat `freeCount = 2`, danach verdoppelnde Wartezeit bis
-   `maxWait = 300` s, keine dauerhafte Sperre des Kontos.
-2. **api-1 und db-1 sind gesperrt.** Beide nehmen die ganze Anlage mit; an ihr
-   hängen gerade mehrere Sitzungen. Bei db-1 erwarte ich, dass sie ohne
-   `galera_new_cluster` von Hand nicht zurückkommt — heute früh lag die
-   Datenbank aus genau diesem Grund von 02:45 bis 09:30 tot. Ein Fenster dafür
-   liegt bei Thomas.
-3. **api-2, svc-1 und svc-2 sind freigegeben, aber das Abschalten wurde
-   abgelehnt.** Der erste `qm stop 302` wurde von der Prüfung dieser Sitzung mit
-   „Interfere With Workloads" zurückgewiesen. Das ist nicht umgangen worden.
-   Der Ladenfall lief vorher noch durch; ab api-2 braucht es eine Erlaubnis.
-4. **Die stündliche Katalogrunde ist nicht gemessen, nur gelesen.** Der Beleg
-   dafür, dass 168 erfolglose Versuche keine Zeile hinterlassen, braucht ein
-   Ausfallfenster von über einer Stunde. Vierzig Sekunden zeigen es nicht.
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | nein, vollständig | **nein.** `ngc.mein.lan` und api-1:443 antworten gar nicht; api-2:443 antwortet nicht, vorher wie nachher — dort liegt kein Web |
+| (b)–(e) | nein | **nein**, es gibt keine Seite, die sie anbieten könnte |
+| API-Pfad auf api-2 | — | **lebt, unverändert.** `POST /api/v1/login/start` mit `{}` gibt 400, genau wie im vollen Betrieb und genau wie api-1 sonst |
+| Datenbank | — | `mariadb` auf db-1 die ganze Zeit `active` |
+| Controller | — | **alle drei verlieren den Tunnel und versuchen es ewig bei api-1.** `0` Treffer auf api-2 in allen drei Journalen |
+| laufende Apps | — | **laufen weiter.** `ngc-terminal-439982dd` und `ngc-uhr-ad8c00e2` auf svc-1, `ngc-terminal-439982dd` auf svc-2 — unverändert über den ganzen Ausfall |
+| Ehrlichkeit | Browserfehler, mehr nicht | **nach innen ehrlich, nach außen stumm** — siehe unten |
+| Selbstfang | ja | **ja, und gut.** Oberfläche wieder 200 **vier Sekunden** nachdem die Adresse antwortete; alle drei Controller hängen sich von selbst wieder ein (13:34:02, 13:34:03, 13:34:04). Keine Hand nötig |
 
-Zwei Dinge aus den Nachbarsitzungen, die beim Wiederanlauf der Dienstknoten
-zählen und hier festgehalten sind, damit sie nicht in Nachrichten verschwinden
-— **von dort gemessen, nicht von mir**:
+**Die Antwort auf die Frage des Auftrags.** „Ist der zweite API-Server etwas
+wert oder nur Zierde?" — Zierde ist zu hart und zu ungenau. Gemessen ist:
+api-2 **arbeitet durchgehend**, er beantwortet die ganze Zeit dieselben
+Anfragen wie api-1 im Normalbetrieb. Nur kommt niemand zu ihm:
 
-- Kein App-Container hat auf dieser Anlage eine eigene cgroup;
-  `CgroupPath` zeigt auf `/system.slice/ngc-controller.service`. Was greift, ist
-  `TasksMax=3466` des Controllers, geteilt mit allen Apps des Knotens. Im
-  Leerlauf steht er bei `TasksCurrent=16`; ein leerer App-Container kostet rund
-  6 Aufgaben, eine offene Terminal-Sitzung rund 9,4. Für den Wiederanlauf heißt
-  das: die Container allein bringen den Deckel nicht in Gefahr. Hängt dort
-  etwas und `TasksCurrent` steht weit unter 100, ist es **nicht** der Deckel.
-- **svc-1 trägt `ngc-controller` 0.2.2, svc-2 trägt 0.2.1.** Die beiden Knoten
-  sind nicht gleich. Kommt einer anders zurück als der andere, muss das nicht am
-  Ausfall liegen.
+- der Apache, der ihn aufrufen würde, lief auf api-1,
+- der Name `ngc.mein.lan` zeigt nur auf api-1,
+- und **kein einziger Controller hat ihn in seiner Liste.**
+
+api-2 ist also kein Zierstück, sondern ein **Ersatzteil, an das nichts
+angeschlossen ist**. Der Unterschied ist wichtig, weil er sagt, was zu tun
+wäre: nicht „api-2 reparieren", sondern drei Verdrahtungen nachziehen — Web
+auch auf api-2, ein Name, der auf beide zeigt, und beide APIs in jeder
+`controller.json`. Dass `web.json` beide schon kennt, zeigt, dass die Bauart
+darauf angelegt ist; nur die Anlage ist nicht so verdrahtet.
+
+**Zur Ehrlichkeit, und hier ist sie zweigeteilt.** Nach innen sagt die Anlage
+die Wahrheit, wörtlich und ohne Beschönigung:
+
+```
+WARN tunnel failed api=wss://api-1.ngc.mein.lan:7443/tunnel err="link: the API cannot be reached"
+INFO status stayed on this server apps=2 err="node: this controller has no tunnel to an API"
+```
+
+Das ist genau richtig: es nennt die Ursache, es nennt die Folge („apps=2
+bleiben hier"), und es schiebt nichts auf den Benutzer. Nach außen aber sieht
+der Benutzer **nur den Verbindungsfehler seines Browsers**. Dass seine Daten
+unangetastet sind, dass die Datenbank läuft, dass seine beiden Apps die ganze
+Zeit weiterlaufen — davon erfährt er nichts, weil die Stelle, die es ihm sagen
+könnte, dieselbe Maschine ist, die fehlt. Das ist kein leerer Zustand, der wie
+ein Angriff aussieht; es ist ein Totalausfall, der wie ein Netzproblem
+aussieht, und immerhin ist er das auch.
+
+Der beruhigendste Einzelbefund dieses Falls: **die Apps laufen weiter, während
+niemand sie sehen kann.** Wer ein Terminal offen hatte, verliert die Seite,
+aber nicht den Behälter.
+
+Eine Messnotiz zum Lesen der Tabelle: meine Sonde schreibt bei „keine Antwort"
+`000000` (die Null von `curl` und die des Rückfalls hintereinander). Und die
+Container-Sonde musste ich korrigieren: über `su` gefragt meldete rootloses
+`podman` „nichts", weil es als `su`-Kind sein Laufzeitverzeichnis nicht findet
+(`mkdir /run/user/0/libpod: permission denied`) — die Container liefen die ganze
+Zeit. Gemessen wird darum von root aus an den `conmon`-Prozessen, die den Namen
+des Behälters hinter `-n` tragen. Eine Sonde, die „nichts" sagt, weil sie selbst
+nicht darf, ist die gefährlichste Sorte.
+
+### db-1 aus — gemessen am 24.10.2026, 13:46–13:51 UTC
+
+Der Fall, bei dem ich mit dem schwersten Befund gerechnet habe. **Zwei von drei
+Erwartungen waren falsch, und beide in die gute Richtung.**
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | ja | **ja**, `200`, unverändert — Apache und PHP liegen auf api-1 |
+| (b) anmelden | nein | **nein** — und zwar so: |
+| | | `{"status":"error","code":"E_UNREACHABLE","message":"Dienst nicht erreichbar."}` mit **HTTP 503**, gleichlautend über den Lastverteiler *und* direkt auf api-2:7443 |
+| (c)–(e) | nein | **nein**, alles hängt an dieser Datenbank |
+| laufende Apps | — | **laufen weiter**, beide Container auf svc-1, einer auf svc-2, unverändert |
+| sagt die Anlage es ehrlich? | **nein erwartet** | **ja, sie sagt es ehrlich** |
+| Selbstfang | **nein erwartet** | **ja, ganz allein** |
+
+**Die erste falsche Erwartung: die Anlage schiebt dem Benutzer nichts unter.**
+Ich hatte erwartet, dass eine Anmeldung ohne Datenbank denselben Ausgang nimmt
+wie eine mit falschem Kennwort — der leere Zustand, der wie ein eigener Fehler
+aussieht. Das ist nicht so, und es ist nicht Zufall, sondern gebaut. Im Code
+ist der erste Zugriff in `login/start` ein `lock.Check` gegen die Datenbank,
+und sein Fehler wird ausdrücklich als `E_UNREACHABLE` beantwortet. Die
+Oberfläche hat dafür einen **eigenen Satz**, getrennt vom Satz für eine
+gescheiterte Anmeldung:
+
+| Fall | Text, den der Benutzer sieht |
+|---|---|
+| Datenbank weg | `err.unreachable` — „Service unavailable. Please try again later." |
+| falsches Kennwort | `login.failed` — „Login failed." |
+
+Die API liefert dazu „Dienst nicht erreichbar." auf Deutsch. Der Benutzer
+erfährt also, dass es nicht an ihm liegt. Das ist genau das Gegenteil des
+Befunds, den der Auftrag gesucht hat, und gehört aufgeschrieben, weil die drei
+leeren Zustände dieser Woche den Verdacht in die andere Richtung gelegt hatten.
+
+Dazu kommt ein **Gegensatz zum Ladenfall, der ins Auge springt.** Die
+unerreichbare Datenbank bekommt eine Journalzeile, mit Zähler:
+
+```
+api-2  WARN the database could not be reached reason=db-unreachable count=1 since=1
+```
+
+Der unerreichbare Laden bekommt **keine**. Dieselbe Anlage, zwei fehlende
+Nachbarn, zweimal eine andere Lautstärke. Das ist der Beleg dafür, dass das
+Schweigen im Ladenfall kein Hausstil ist, sondern eine Lücke an einer Stelle.
+
+**Die zweite falsche Erwartung: db-1 kommt von selbst zurück.** Ich hatte
+erwartet, dass ein einzelner Galera-Knoten kein Quorum findet und
+`galera_new_cluster` von Hand braucht — heute früh lag die Datenbank aus genau
+diesem Grund von 02:45 bis 09:30 tot. **Ich habe nicht von Hand geholfen, und
+es war nicht nötig.** Gemessen im halbminütigen Takt über drei Minuten: schon
+beim ersten Blick `active`, `wsrep_cluster_size 1`, `wsrep_cluster_status
+Primary`. Aus dem Journal:
+
+```
+13:47:16  Starting mariadb.service - MariaDB 11.8.6 database server...
+13:47:20  WSREP: Recovered cluster id dc0a900c-cf30-11f1-8342-b316e8ae0db8
+13:47:20  WSREP: Server db-1 synced with group
+13:47:20  WSREP: Synchronized with group, ready for connections
+```
+
+**Vier Sekunden** vom Start des Dienstes bis „ready for connections". Der Grund
+steht in `grastate.dat`: `safe_to_bootstrap: 1`. Ein Knoten, der weiß, dass er
+der letzte war, darf sich selbst hochziehen.
+
+**Und das war ein harter Schnitt, kein sauberes Herunterfahren.** `qm stop` ist
+in Proxmox der Stecker, nicht das ACPI-Signal, und zwei Spuren belegen, dass es
+auch so ankam: im vorigen Start steht **keine Herunterfahr-Folge** zur Uhrzeit
+des Abschaltens, und die Journalspitze fehlt — der letzte Eintrag ist 13:37:00,
+obwohl die Maschine um 13:45:51 nachweislich geantwortet hat. Alles dazwischen
+war noch nicht auf die Platte geschrieben und ist mit dem Strom weg.
+
+**Was damit NICHT gemessen ist, und das ist die wichtige Einschränkung.** Dass
+dieser harte Schnitt heil überstanden wurde, heißt nicht, dass der Fall von
+heute früh nicht existiert. `grastate.dat` trug hier `safe_to_bootstrap: 1`;
+der bekannte Stillstand tritt ein, wenn dort `0` steht, weil der Knoten nicht
+weiß, ob er der letzte war. Die Startliste von db-1 zeigt, dass der
+Vorfall von heute früh an einem anderen Neustart hing (Start endet 02:44:50,
+nächster beginnt 02:45:03). **Was den Unterschied macht, ist offen** — und das
+ist der nächste Fall, der gemessen werden müsste, nicht der, den ich gefahren
+habe. Ein Satz wie „db-1 fängt sich immer selbst" wäre aus dieser Messung
+nicht gedeckt.
+
+Vor dem Lauf lag eine **logische Sicherung** der Datenbank bereit
+(`mariadb-dump --single-transaction`, 155 KB, 9 Tabellen, Abschlusszeile
+geprüft), außerhalb von db-1. Sie war nicht nötig. Zwei Dinge daran sind
+trotzdem festzuhalten: der Dump braucht die Schlüsseldateien unter
+`/etc/ngc/db-keys` **nicht**, weil er entschlüsselt ausliest — und mein erster
+Versuch erzeugte eine 47-KB-Datei, die wie eine Sicherung aussah und keine war
+(0 Tabellen, kein Benutzer): Binärdaten über `ssh`-stdout in eine Windows-Datei
+werden verbogen, mit `scp` geht es. Wer einen Rückweg baut, **macht die
+Sicherung auf**, statt ihre Größe anzusehen.
+
+### api-2 aus — gemessen am 24.10.2026, 13:57–14:07 UTC
+
+Der Fall, bei dem ich die Zahl erst nach drei Anläufen hatte, und das ist der
+lehrreiche Teil.
+
+**Erster Anlauf:** zwanzig Anfragen auf die Startseite, vor und während des
+Ausfalls, **20 von 20 mal 200**. Kein Unterschied. Meine Erwartung („jede zweite
+Anfrage hängt oder gibt 503") sah widerlegt aus.
+
+**Dann fiel mir auf**, dass beim Wiederanfahren eine Anmeldeanfrage eine
+Apache-Fehlerseite zurückbrachte (`<!DOCTYPE HTML PUBLIC …`). Der Grund für den
+scheinbar sauberen ersten Anlauf: **`GET /` geht gar nicht durch den
+Lastverteiler.** Die Seite kommt von PHP auf api-1; nur `/api/` ist
+weitergeleitet. Ich hatte die falsche Anfrage gezählt.
+
+**Dritter Anlauf**, und diesmal getrennt gezählt, je vierzig Anfragen:
+
+| | `POST /api/v1/login/start` (über den Verteiler) | `GET /` (nicht über den Verteiler) |
+|---|---|---|
+| beide APIs oben | **40/40 gut** | 40/40 gut |
+| api-2 nachweisbar aus | **31/40 gut, 9 schlecht** — 6× HTTP 500, 3× keine Antwort | **40/40 gut** |
+
+Damit ist es gemessen: **api-2 fehlt unsichtbar auf der Oberfläche und
+schmerzhaft auf jedem API-Weg.** Ungefähr jede vierte Anmeldung scheitert,
+solange er weg ist. Für den Benutzer heißt das genau das, was diese Woche
+berichtet wurde: *erst scheitert die Anmeldung, dann geht sie.* Hier ist die
+Erklärung dafür, und sie ist kein Zufall und keine Laune.
+
+Zur Ehrlichkeit ist das der **schlechteste Fall der sechs**. Der Benutzer
+bekommt **HTTP 500** — „internal server error", also die Meldung, die nach einem
+Fehler im Programm klingt, nicht nach einer fehlenden Maschine. Und in
+`/var/log/apache2/error.log` steht dazu **keine Zeile**: `0` Treffer auf
+`proxy` oder `balancer` in der ganzen Datei. Nur das Zugriffsprotokoll trägt die
+500er und 502er, und die liegen minutengenau in meinen Fenstern (13:59–14:01 und
+14:05–14:07, dazu 09:25–09:26 mit 503ern von heute früh, die nicht von mir sind).
+
+**Und hier beißt die DNS-Falle aus Punkt 80 nicht das Messwerkzeug, sondern die
+Anlage selbst.** Auf api-1 gemessen:
+
+```
+getent ahosts api-2.ngc.mein.lan   ->  10.2.3.211 STREAM …   und   :: STREAM
+```
+
+Der Lastverteiler trägt das Mitglied als Namen (`BalancerMember
+"https://api-2.ngc.mein.lan:7443"`). Ist die echte Adresse tot, bleibt die
+zweite — `::` — und die führt auf die **eigene** Maschine. Im Journal von
+`ngc-api` auf api-1 steht dann:
+
+```
+http: TLS handshake error from [::1]:34332: EOF
+```
+
+Apache hat sich zu sich selbst verbunden und ist am Namensabgleich gescheitert
+(`SSLProxyCheckPeerName on`). **Was ich dazu gemessen habe und was nicht:** diese
+Zeile kam **einmal** in den neun Fehlschlägen vor. Dass das `::` der Weg *aller*
+neun ist, ist damit **nicht** gemessen — aber dass es im Anfrageweg der Anlage
+liegt und nicht nur in meiner Sonde, ist belegt. Ohne den `::`-Satz hätte Apache
+nur ein totes Mitglied zu überspringen; mit ihm hat es ein zweites, das
+antwortet und dann den Abgleich verweigert.
+
+Selbstfang: **ja.** Im Sekundentakt über 90 Sekunden nach dem Einschalten
+gemessen: **1 schlechte Antwort von 90**, und die gleich am Anfang. `ngc-api`
+auf api-2 war 14:01:21 bereit.
+
+### svc-1 aus und svc-2 aus — gemessen am 24.10.2026, 14:08–14:15 UTC
+
+Die beiden ruhigsten Fälle, und der Wiederanlauf ist der beste der ganzen Reihe.
+
+| Frage | svc-1 aus | svc-2 aus |
+|---|---|---|
+| (a) Oberfläche | 20/20 mal 200 | 20/20 mal 200 |
+| (b) Anmeldung beginnt | geht, unverändert | geht, unverändert |
+| Container auf dem anderen Knoten | `ngc-terminal-439982dd` läuft weiter | beide auf svc-1 laufen weiter |
+| Controller des anderen Knotens | `active` | `active` |
+| api-1 sagt | nichts im Fenster | `INFO controller tunnel ended node=svc-2 seconds=2370` |
+| App-Speicher nach dem harten Schnitt | `terminal=ok uhr=ok` | `terminal=ok` |
+| Container von selbst zurück | **ja, nach 1 s** | **ja, nach 1 s** |
+| `TasksCurrent/Max` nachher | 24 / 3466 | 16 / 3466 |
+
+Der Wiederanlauf ist in den Journalen Schritt für Schritt zu lesen, und er
+braucht eine Sekunde:
+
+```
+14:09:58  Started ngc-controller.service
+14:09:59  system refresh
+14:09:59  container init / container start   ngc-terminal-439982dd
+14:09:59  container init / container start   ngc-uhr-ad8c00e2
+14:09:59  INFO tunnel up api=wss://api-1...
+```
+
+**Die Sorge der Nachbarsitzung trifft nicht zu:** rootloses `podman` mit
+`overlay` und einer SQLite-`db.sql` auf einem eigenen ext4 übersteht den harten
+Schnitt. `pragma integrity_check` sagt vorher und nachher `ok`, auf beiden
+Knoten, für jede App. Und der Deckel ist weit weg: 24 von 3466 Aufgaben.
+
+Zwei Dinge, die erst beim Hinsehen harmlos wurden:
+
+- **Der Gerätename der App-Platte wechselte** über den Neustart, auf svc-1 von
+  `/dev/sdb` nach `/dev/sda`. Das sieht nach einem Problem aus und ist keines:
+  `/etc/fstab` hängt sie per `LABEL=ngc-apps` ein, die Wurzel per `PARTUUID`.
+  svc-1 und svc-2 haben ihre Platten gerade spiegelbildlich benannt, und beide
+  hängen richtig. Hier ist etwas **richtig gebaut**, und der Neustart hat es
+  bewiesen.
+- **Punkt 74 ist von der Benutzerseite bestätigt**: svc-1 trägt
+  `ngc-terminal-439982dd` *und* `ngc-uhr-ad8c00e2`, obwohl `ngc_app` das
+  Terminal auf svc-2 führt — und der Controller wirft den Fremdling beim
+  Wiederanlauf **von selbst wieder an** (`container start … ngc-terminal` auf
+  svc-1, 14:09:59). Dass nach dem Abschalten von svc-2 ein Terminal antwortet,
+  ist also dieser Befund und kein Ausfallschutz. Der Ausfall überlebt die
+  Doppelung nicht nur, er festigt sie.
+
+## Alle sechs auf einem Blatt
+
+Jede Maschine einmal mit `qm stop` ausgeschaltet und wieder angefahren,
+24.10.2026 zwischen 12:42 und 14:15 UTC, von diesem PC aus gemessen.
+
+| aus | Oberfläche | Anmeldung beginnt | laufende Apps | sagt es die Anlage? | fängt sich selbst |
+|---|---|---|---|---|---|
+| **store** | unberührt | unberührt | laufen | **nein, nirgends** | ja, 40 s |
+| **api-1** | **ganz weg** | ganz weg | **laufen weiter** | innen ja, außen stumm | ja, 4 s nach der Adresse |
+| **api-2** | unberührt | **jede vierte scheitert** | laufen | **nein: HTTP 500** | ja, 1 von 90 |
+| **db-1** | unberührt | **nein, aber ehrlich** | laufen weiter | **ja, mit Zähler** | **ja, allein, 4 s** |
+| **svc-1** | unberührt | unberührt | die des anderen laufen | — | ja, Container nach 1 s |
+| **svc-2** | unberührt | unberührt | die des anderen laufen | — | ja, Container nach 1 s |
+
+**Der Sinn der sechs Maschinen ist erfüllt — mit einer Ausnahme.** Fünf von
+sechs Ausfällen nimmt die Anlage nicht mit, und alle sechs fängt sie ohne eine
+Hand von Hand. Die Ausnahme ist **api-1**: solange der einzige Apache, der
+einzige Name und der einzige Tunnel aller Controller dort liegen, ist die
+Anlage für ihre Benutzer eine Ein-Maschinen-Anlage mit fünf Gehilfen.
+
+**Die Reihenfolge der Ehrlichkeit, von gut nach schlecht**, und sie folgt nicht
+der Schwere des Ausfalls:
+
+1. **db-1** — eigener Fehlercode, eigener Satz in der Oberfläche, Journalzeile
+   mit Zähler. Vorbildlich, und der schwerste Ausfall der sechs.
+2. **api-1** — nach innen wörtlich und schuldfrei („this controller has no
+   tunnel to an API"), nach außen nur der Verbindungsfehler des Browsers. Mehr
+   ist von einer fehlenden Maschine auch nicht zu erwarten.
+3. **store** — die Auskunft existiert in der Zeile des Ladens, aber nichts
+   weist darauf hin. Stille.
+4. **api-2** — **HTTP 500 und keine Zeile im Fehlerprotokoll.** Der Benutzer
+   bekommt die Meldung, die nach einem Fehler im Programm klingt, für eine
+   fehlende Maschine. Der schlechteste der sechs, obwohl der harmloseste
+   Ausfall.
+
+## Was offen bleibt
+
+**Eins, und es ist dasselbe in allen sechs Fällen: (c) Apps sehen, (d) eine App
+öffnen und (e) eine neue einrichten sind nicht gemessen.** Dafür braucht es eine
+Anmeldung, und in `ngc_user` steht genau ein Benutzer: `weiricth`, `admin`, kein
+TOTP. Ohne dessen Kennwort kommt man über den ersten Schritt nicht hinaus.
+Gemessen ist darum überall der Anfang der Anmeldung (`login/start`) und nie ihr
+Ende. Was die Oberfläche in den Fällen *zeigt*, ist für db-1 am Code belegt
+(`err.unreachable` gegen `login.failed`) und sonst offen.
+
+Der Sperrzähler stand der Messung nicht im Weg und ist nachgelesen:
+`lock.go` hat `freeCount = 2`, danach verdoppelnde Wartezeit bis
+`maxWait = 300` s, keine dauerhafte Sperre — und `login/start` zählt überhaupt
+keinen Fehlversuch, nur `login/finish` tut das. Die Sonden dieses Blattes haben
+also niemanden ausgesperrt.
+
+Drei weitere Löcher, ausdrücklich benannt:
+
+1. **Die stündliche Katalogrunde über eine lange Zeit.** Dass 168 erfolglose
+   Versuche keine Zeile hinterlassen, ist am Code belegt und an einer
+   erzwungenen Runde gemessen — nicht an einem Ausfall von einer Woche.
+2. **`safe_to_bootstrap: 0`.** Dass db-1 sich selbst fängt, ist für den Fall
+   gemessen, in dem die Datei `1` trägt. Der bekannte Stillstand von heute früh
+   braucht `0`, und **diesen Fall hat niemand erzeugt.** Er steht hier nicht
+   unter „abgewogen", sondern unter „offen".
+3. **Ob das `::` der Weg aller neun api-2-Fehlschläge ist.** Belegt ist eine
+   `[::1]`-Zeile von neun, und dass das `::` im Anfrageweg liegt.
+
+Eine **Berichtigung**, die ich von der Sicherungs-Sitzung übernehme und die
+meinen eigenen Text betrifft: der logische Dump, den ich vor dem db-1-Fall
+gezogen habe, war mein Rückweg für diese Messung und ist **nicht** der Rückweg
+dieser Anlage. Ein zurückgespielter Dump kann Code ausführen, und `register.go`
+macht aus genau diesem Grund keinen. Wer einen Rückweg baut, nimmt
+`mariabackup` mit den Schlüsseln unter `/etc/ngc/db-keys` — dort gilt der
+Hinweis auf die Schlüssel, den ich für den Dump zurückgewiesen hatte, in voller
+Länge. Mein Einwand war für das logische Werkzeug richtig und für das
+physische falsch.
+
+Und eine Warnung zu den Sicherungssätzen oben, damit niemand sie
+missversteht. Am 24.10.2026 existierte von dieser Anlage **keine Sicherung**:
+die Wegwerf-Maschine, auf der der Rückweg geprobt wurde, war abgeräumt und die
+Kopien mitgelöscht (von der Sicherungs-Sitzung berichtet, **nicht von mir
+gemessen**). Gefehlt hat dem fertigen Werkzeug nur ein Ort, und Thomas hat ihn
+am selben Tag genannt: **`d:\ngc_backup`**.
+
+Dort liegt seit 17:05 die logische Sicherung, die ich vor dem db-1-Fall gezogen
+habe, mit einer Datei `WAS-HIER-LIEGT.txt` daneben, die sagt, was sie ist und
+was nicht. Sie ist **kein** Rückweg dieser Anlage — nur die Datenbank, ein Stand
+von 13:36 UTC, und ein zurückgespielter Dump kann Code ausführen, weshalb die
+Anlage selbst keinen macht. Sie liegt dort, weil sie zu diesem Zeitpunkt die
+einzige Sicherung der Datenbank war, die überhaupt existierte, und sonst mit
+meinem Sitzungsordner verschwunden wäre. Dass sie den Kennwort-Abdruck des
+einzigen Benutzers enthält, steht in der Datei daneben; ins Repository gehört
+sie nicht. Der richtige Rückweg bleibt `mariabackup` mit den Schlüsseln unter
+`/etc/ngc/db-keys`, und das Werkzeug dafür gehört der Sicherungs-Sitzung.
+
+Zwei Zahlen aus den Nachbarsitzungen, die beim Wiederanlauf zählen und hier
+stehen, damit sie nicht in Nachrichten verschwinden — **von dort gemessen,
+nicht von mir**: kein App-Container hat eine eigene cgroup, es greift
+`TasksMax=3466` des Controllers (gemessen nachher: 24 bzw. 16 Aufgaben, der
+Deckel ist weit weg); und der Systembenutzer einer App wird nur von
+`install/activate.go` angelegt, nie von `node.Restore` — nach einer
+*Wiederherstellung* bleibt eine App darum aus, auch wenn sie nach einem
+*Ausfall* von selbst zurückkommt. Beides sind verschiedene Wege, und dieses
+Blatt hat nur den zweiten gemessen.
+
+**svc-1 trägt `ngc-controller` 0.2.2, svc-2 trägt 0.2.1, db-1 ebenfalls 0.2.1.**
+Die Knoten sind nicht gleich. Dass beide svc-Knoten sich gleich verhalten
+haben, ist gemessen — dass sie es wegen der Fassungen müssten, nicht.
