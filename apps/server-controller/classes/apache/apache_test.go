@@ -663,3 +663,69 @@ func TestWorkerParametersStayOnTheBalancerMember(t *testing.T) {
 		t.Fatalf("two APIs went in, %d BalancerMember lines came out", members)
 	}
 }
+
+// TestTheBalancerAnswersAMissingMemberHonestly holds the three lines book
+// point 91 put into the template as a RULE, which the byte-wise comparison
+// above cannot: testdata/apache-apis.conf is whatever we wrote into it, so a
+// line dropped from BOTH sides matches itself just fine.
+//
+// Measured on 24.10.2026 with api-2 gone (point 90): nine of forty logins
+// failed, six of them with a naked HTTP 500 and about 1600 byte of Apache
+// error page, and /var/log/apache2/error.log held not one line about a
+// member - grep -c on proxy|balancer was 0. The three lines answer the two
+// halves of that: a dead member is given up on in two seconds instead of
+// sixty-five, the 503 Apache answers when nothing is left carries the same
+// Retry-After a busy database gives (point 48), and the failure is written
+// down where someone looking for the cause will read it.
+//
+// What this does not measure: no Apache runs on the machine this was written
+// on, so that the directives are also ACCEPTED is unmeasured here, as in
+// every other case of this package. headers_module and proxy_balancer_module
+// were read as loaded on api-1 on 25.10.2026.
+func TestTheBalancerAnswersAMissingMemberHonestly(t *testing.T) {
+	got := string(Render([]config.WebAPI{
+		{URL: "https://api-1.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE1}, 32)},
+		{URL: "https://api-2.ngc.test:7443", TLS: bytes.Repeat([]byte{0xE2}, 32)},
+	}))
+	if got == "" {
+		t.Fatal("Render wrote nothing, so this case measures an earlier wall")
+	}
+	members := 0
+	for _, line := range strings.Split(got, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "BalancerMember ") {
+			continue
+		}
+		members++
+		// The DIAL has to be bounded on its own. Without connectiontimeout it
+		// inherits timeout, and then a member whose machine is gone is waited
+		// on for over a minute before the balancer looks at the next one.
+		if !strings.Contains(trimmed, "connectiontimeout=2") {
+			t.Errorf("a BalancerMember bounds no dial of its own, so a dead member is waited out at timeout=: %q", trimmed)
+		}
+		// And it has to be SHORTER than the answer's own timeout, or it would
+		// change nothing - the same relation connectDeadline has to the
+		// driver's ReadTimeout in apps/server-db.
+		if !strings.Contains(trimmed, "timeout=65") {
+			t.Errorf("a BalancerMember no longer gives the ANSWER its 65 s, so cutting the dial would cut the answer with it: %q", trimmed)
+		}
+	}
+	if members != 2 {
+		t.Fatalf("two APIs went in, %d BalancerMember lines came out", members)
+	}
+	if !strings.Contains(got, `Header always set Retry-After "5" "expr=%{REQUEST_STATUS} == 503"`) {
+		t.Error("a 503 of the balancer's own goes out bare, while a busy database answers 503 with Retry-After: 5 (point 48)")
+	}
+	if !strings.Contains(got, "LogLevel proxy:info") {
+		t.Error("a member that cannot be reached is not written to the error log, which is the second half of point 90")
+	}
+	// The bolt against the line that looks like the fix and is not: this API
+	// answers its OWN faults with 500 (E_INTERNAL, httpapi/fault.go), so
+	// failonstatus=500 would pull a HEALTHY api out of the balancer over a
+	// damaged row of its own and put an error page in place of its honest
+	// body. Decided against in point 91, and held here so the next hand does
+	// not add it back as an obvious improvement.
+	if strings.Contains(got, "failonstatus=500") {
+		t.Error("failonstatus=500 takes a healthy API out of the balancer over its own E_INTERNAL and replaces its honest body with an error page (point 91)")
+	}
+}

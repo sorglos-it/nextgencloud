@@ -222,7 +222,11 @@ gibt, aber erst nach dem Schreiben.
 | 88 | Der Galera-Verkehr lief ohne Cipher-Beschränkung – die Vorlage war richtig, die Anlage nicht | gilt – an allen drei Knoten behoben, rollend, Verbund durchgehend vollständig | Sicherheit |
 | 89 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
 | 90 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
-| 91 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
+| 91 | Die fünf Sekunden sind zwei eigene Zahlen derselben Länge | gilt – Anwahlfrist auf 1 s, Stufe **Stabilität**, am laufenden System belegt; Vorlagenteil zu Punkt 90 mitgebaut | Entscheidung |
+| 92 | Bei verlorener Mehrheit ist auch das Lesen zu – und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500` | gilt – **schärft Punkt 90**; die Anlage antwortet ehrlich, zwei eigene Erwartungen widerlegt | Messung |
+| 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
+| 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
+| 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6720,9 +6724,369 @@ erreichbar." und einer Journalzeile mit Zähler beantwortet. Dieselbe Anlage kan
 
 Herkunft und die ganze Messreihe aller sechs Maschinen: `docs/ausfall-je-maschine.md`.
 
+## Punkt 91: Die fünf Sekunden sind zwei eigene Zahlen derselben Länge — der Umschaltweg war gebaut und kam nie zum Zug
+
+Gemessen am 25.10.2026 an der verteilten Anlage, als Nacharbeit zum DB-Fall aus Punkt 89 und zum
+Lastverteiler-Fall aus Punkt 90.
+
+**Der Befund in einem Satz:** der Umschaltweg auf den nächsten Datenbankknoten war vorhanden und
+richtig — `db.nodes` nannte alle drei, und `balancer.Connect`
+(`apps/server-db/classes/mariadb/nodes.go`) nimmt der Reihe nach den nächsten Knoten. Er kam nur
+nie zum Zug, weil **die Frist für den Anwahlversuch EINES Knotens genauso lang war wie die Frist
+für die ganze Anfrage**.
+
+| Zahl | Wo sie steht | Woher sie kommt |
+|---|---|---|
+| 5 s Anwahlfrist je Knoten | `apps/server-db/classes/mariadb/mariadb.go`, `c.Timeout` | **eigene Einstellung**, keine Vorgabe |
+| 5 s Frist der Benutzeranfrage | `apps/server-api/classes/dbwait/dbwait.go`, `UserWait` | **eigene Einstellung** (Punkt 48) |
+
+**Keine der beiden ist eine Vorgabe der Bibliothek, und das ist nachgelesen, nicht vermutet.**
+`mysql.NewConfig()` (`vendor/.../dsn.go`) setzt `Timeout` nicht, und bei `Timeout == 0` überspringt
+`connector.go` Zeile 92 die eigene Frist und gibt `net.Dialer` **gar keine** — die Anwahl fällt
+dann an den Kern. `tcp_syn_retries` ist auf allen sechs Maschinen **6** (gelesen am 25.10.2026),
+also etwa 130 s gegen einen Rechner, der das SYN verwirft. Die eigene Einstellung war also nicht
+das Übel, nur die **Länge** war es. Beide Zahlen sind einstellbar: sie sind Konstanten im Code,
+keine Zeile in `/etc/ngc/*.json`.
+
+**Warum der zweite Aufrufer 0,03 s hatte.** `picker.failed` legt einen Knoten, der abgelehnt hat,
+für `failPause` (30 s) nach hinten. Der erste Aufrufer zahlt die Anwahl, alle folgenden erben die
+Erkenntnis. Das erklärt das „erst scheitert es, dann geht es" aus Punkt 90 **auf demselben
+Muster**, nur an einer anderen Stelle.
+
+**Und eine Beobachtung, die dazugehört:** jeder Datenbankknotenname löst auf api-1 auf **zwei**
+Adressen auf — `db-1.ngc.mein.lan` auf `10.2.3.212` **und** `::` (gelesen am 25.10.2026). Das ist
+derselbe `::`-Satz aus Punkt 80 und 90, jetzt auch im Datenbankweg. Er kostet hier nichts
+Messbares, weil `::` örtlich ist und sofort ablehnt; er teilt aber die Anwahlfrist auf zwei
+Adressen auf.
+
+### Entschieden: die Anwahlfrist wird auf 1 s gekürzt — Stufe **Stabilität**
+
+Nach der Rangfolge **Sicherheit vor Stabilität vor Leistung** gibt **Stabilität** den Ausschlag,
+und die beiden anderen Stufen sind ausdrücklich geprüft:
+
+- **Sicherheit: unberührt.** Es wird nichts gelockert. `SSLProxyVerify require`,
+  `SSLProxyCheckPeerName on`, `c.TLS` gegen die CA der Anlage,
+  `AllowFallbackToPlaintext = false` — alles bleibt, wie es war. Eine kürzere Anwahlfrist kann
+  keine Zertifikatsprüfung schwächen.
+- **Stabilität: das ist der Fall.** Die Anlage hat drei Knoten und benutzt die Reserve nicht. Ein
+  Aufrufer, der neben zwei lebenden Knoten auf einen toten wartet, ist ein Stabilitätsfehler und
+  kein Leistungsfehler.
+- **Leistung: nur die Erscheinung.** Die 5,03 s sind das, was man sieht, nicht der Grund.
+
+**Die Vorsicht, die der Auftrag verlangt, ist eingebaut, und sie liegt in der WAHL der Stelle:**
+gekürzt wird die **Anwahl**, nicht die Antwort. Alles nach dem Accept — TLS-Handschlag,
+Anmeldung, das `SET` — steht weiter unter `connectDeadline` (10 s, `nodes.go`) und
+`ReadTimeout` (60 s) des Treibers. Ein Knoten, der nur **langsam** ist, wird dadurch nicht zu
+einem toten; aufgegeben wird nur ein Knoten, der das SYN überhaupt nicht beantwortet.
+
+**Nachgewiesen am laufenden System, 25.10.2026 auf api-2 (10.2.3.211).** Kein Knoten wurde
+angehalten — weder Dienst noch Maschine: eine eigene nftables-Tabelle `messung5s` verwarf nur
+`10.2.3.218:3306` (db-3), die Härtungstabelle blieb unberührt, und die Tabelle wurde danach
+gelöscht. Ein Dienst-Stopp wäre der falsche Fall: der lehnt sofort ab und zeigt die fünf
+Sekunden gar nicht. Gemessen wurde mit demselben Programm in zwei Ständen, db-3 jeweils als
+ERSTER Knoten der Liste:
+
+| | Stand vorher (5 s) | Stand nachher (1 s) |
+|---|---|---|
+| 1. Aufruf | **Fehler nach 5,0016 s** — „no database node can be reached" | **gut nach 1,0049 s** |
+| 2. Aufruf | gut nach 5,417 ms | gut nach 0,251 ms |
+| 3. Aufruf | gut nach 0,238 ms | gut nach 0,229 ms |
+
+Gegenprobe ohne Regel, alle drei Knoten gesund: 7,222 ms / 0,297 ms / 0,195 ms. Die 5,0016 s
+treffen die 5,03 s vom 24.10.2026, und der erste Aufrufer bekommt jetzt eine Antwort statt einer
+abgelaufenen Frist.
+
+**Die 1 s ist gegen eine Messung gewählt, nicht gegen Geschmack:** 30 Anwahlen von api-1 zu den
+drei Knoten am 25.10.2026 brauchten **0,101 ms** im besten und **4,129 ms** im schlechtesten Fall.
+Eine Sekunde ist über zweihundertmal der schlechteste davon.
+
+**Was NICHT gedeckt ist, und es bleibt offen:** ein Knoten, der die Verbindung **annimmt und dann
+schweigt**. Der frisst weiter `connectDeadline` (10 s) und damit die ganze Frist der Anfrage; der
+Benutzer bekommt dann ein ehrliches 503 `db-busy`, aber eben kein 200. Der gemessene Fall war ein
+**weggefallener** Knoten, kein stummer. Eine gerechte Aufteilung der Restfrist auf die Knoten
+wäre der nächste Schritt — sie ist hier **nicht** gebaut, weil sie genau die Gefahr trägt, vor der
+die Rangfolge warnt: bei drei Knoten bekäme jeder nur ein Drittel, und ein gesunder, aber
+belasteter Knoten würde für tot erklärt.
+
+**Was NICHT gemessen ist:** die Zahl der konfigurierbaren Knoten ist 16 (`maxList`,
+`shared/config`). Fünfzehn tote Knoten passen in keine Fünf-Sekunden-Frist, mit keiner Anwahlfrist,
+die diesen Namen verdient. Der Prüffall hält darum die **betriebene** Gestalt (drei) und sagt das
+hin; `shared/` ist eingefroren, die Schranke lässt sich hier nicht senken.
+
+### Punkt 90, zweiter Teil: die Behebung liegt in der Vorlage, und die Vorlage hängt an `shared/`
+
+Geprüft am 25.10.2026: die Datei `/etc/ngc/apache-apis.conf` auf api-1 (10.2.3.210, Apache 2.4.69)
+ist **Zeichen für Zeichen** das, was
+`apps/server-controller/templates/apache-apis.conf.tmpl` erzeugt. Der nackte `500` liegt also
+**nicht** in NGC-Code, sondern in der Apache-Konfiguration — und die kommt aus der Vorlage. Von
+Hand auf der Maschine wäre falsch.
+
+Entschieden gehört in die Vorlage:
+
+1. `connectiontimeout=2` je Mitglied. Heute erbt die Anwahl `timeout=65`, ein Mitglied ohne
+   Rechner wird also über eine Minute lang bewartet, bevor der Verteiler das nächste ansieht. Zwei
+   Sekunden sind hundertfach die gemessene Anwahl und nehmen der **Antwort** nichts.
+2. `Header always set Retry-After "5" "expr=%{REQUEST_STATUS} == 503"`. Bleibt kein Mitglied
+   übrig, antwortet Apache selbst `503` — nackt. Eine besetzte Datenbank antwortet längst `503`
+   **mit** `Retry-After: 5` (Punkt 48). Der Satz macht aus zwei Antworten eine.
+   `headers_module` ist auf api-1 geladen (gelesen am 25.10.2026).
+3. `LogLevel proxy:info proxy_balancer:info`. Das schließt die zweite Hälfte von Punkt 90: am
+   24.10.2026 stand im Fehlerprotokoll **keine** Zeile, während neun von vierzig Anmeldungen
+   scheiterten.
+
+**Ausdrücklich NICHT entschieden: `failonstatus=500`.** Das wäre der Satz, der den nackten `500`
+in einen Wurf auf das gesunde Mitglied verwandelt — aber diese API antwortet ihre **eigenen**
+Fehler mit `500` (`E_INTERNAL`, `httpapi/fault.go`). `failonstatus` würde dann eine **gesunde**
+API wegen einer beschädigten Zeile aus dem Verteiler nehmen und ihren ehrlichen Rumpf durch eine
+Fehlerseite ersetzen. Die Erscheinung ist das nicht wert. Was von Punkt 90 danach übrig bleibt,
+braucht das `::` aus den Namen (Punkt 80) — und das liegt beim Netz.
+
+**Gebaut, und der Weg dahin gehört in den Punkt:** `shared/ulh.md` hält die Datei
+`apache-apis.conf` Zeichen für Zeichen als Vertrag, und
+`TestBalancerTemplateMatchesTheContract` vergleicht beide Seiten. Die Vorlage lässt sich also
+nicht ändern, ohne **einen Beispielblock in `shared/ulh.md` mitzuziehen** — und `shared/` ist
+eingefroren. Thomas hat am 25.10.2026 die Freigabe für genau diesen **einen** Beispielblock
+gegeben; Code in `shared/` ist nicht angefasst.
+
+**Was an Fall 2 NICHT geprüft ist, und es bleibt der ehrliche Rest:** auf der Maschine, auf der
+das geschrieben wurde, läuft kein Apache. Dass die drei Zeilen von Apache **angenommen** werden,
+ist unbelegt — wie in jedem Fall dieses Pakets. `headers_module` und `proxy_balancer_module`
+sind auf api-1 als geladen gelesen (25.10.2026). Und ob die neun Fehlschläge vom 24.10.2026
+damit auf null gehen, ist **nicht** nachgemessen: das bräuchte wieder einen Maschinen-Stopp von
+api-2, und der gehört in einen eigenen Lauf.
+## Punkt 92: Bei verlorener Mehrheit ist auch das Lesen zu — und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500`
+
+Am 24.10.2026 ist jede der sechs Maschinen einmal abgeschaltet worden. Zwei
+Fälle blieben offen, und beide sind am 25.10.2026 nachgeholt: **zwei
+Datenbankknoten gleichzeitig** (die Mehrheit fällt) und **der Dienst-Stopp**,
+den die ganze Reihe von gestern nicht enthielt — sie bestand aus sechs
+`qm stop`. Die Erwartungen stehen in einem Stand, der **vor** dem ersten Stopp
+festgeschrieben wurde; das ganze Blatt mit beiden Spalten:
+`docs/ausfall-nachtrag.md`.
+
+**Erstens: „lesen geht noch, schreiben nicht" gilt hier nicht.** Das war die
+Erwartung, die nachzumessen war. Auf dem einzigen überlebenden Knoten, während
+die Mehrheit weg war, scheitern Lesen und Schreiben **mit demselben Fehler und
+demselben Wortlaut**:
+
+```
+SELECT count(*) FROM ngc.ngc_app  ->  ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+INSERT INTO messung.nachtrag …    ->  ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+```
+
+Der Grund ist eine Einstellung dieser Anlage und keine Eigenschaft des
+Verbunds: `wsrep_dirty_reads` steht auf `OFF`. Wer den Lesebetrieb bei
+verlorener Mehrheit haben will, muss ihn einschalten. **Ob er eingeschaltet
+werden soll, ist nicht entschieden** und steht unten.
+
+Dazu ein Befund, den niemand bestellt hat: **`SELECT 1` antwortet weiter mit
+`1`**, weil es keine Tabelle anfasst. Eine Überwachung, die so fragt, meldet
+diesen Knoten als gesund, während er keine einzige Zeile hergeben kann. Das
+ist eine Falle für jede Überwachung, die noch gebaut wird.
+
+**Zweitens: die Anlage antwortet ehrlich.** Der schwerere Befund, auf den der
+Auftrag gezielt hat — „Anmeldung fehlgeschlagen" statt „Dienst nicht
+erreichbar" —, ist **nicht** eingetreten. Alle 45 Anfragen bei verlorener
+Mehrheit bekamen `HTTP 503` mit
+`{"code":"E_UNREACHABLE","message":"Dienst nicht erreichbar."}`, und das
+Journal trennt `db-busy` von `db-unreachable` mit eigenen Zählern. Die Grenze
+dieser Aussage steht im Blatt: `login/start` hat gar keinen Anmeldefehler, mit
+dem sich das verwechseln ließe (derselbe Aufruf mit einem Namen, den es nicht
+gibt, antwortet im gesunden Betrieb ebenfalls mit `200`). Die Stelle, an der
+sich die beiden treffen könnten, ist `login/finish`, und die braucht einen
+Passkey — **dort ist nur der Code gelesen, nichts gemessen.**
+
+**Drittens, und das schärft Punkt 90: die fünf Sekunden und die `HTTP 500` sind
+zwei verschiedene Fehler.** Gestern lagen sie übereinander. Der Dienst-Stopp
+trennt sie, weil ein abgelehnter Verbindungsversuch sofort zurückkommt und ein
+verfallenes Paket erst nach Ablauf der Frist:
+
+| | Maschinen-Stopp api-2 (24.10.) | Dienst-Stopp api-2 (25.10.) |
+|---|---|---|
+| erste Anmeldung | `503` nach **5,03 s** | `200` in **0,024 s** |
+| 40 in Folge | 31/40 mit `500` | **6/40 mit `500`** |
+
+Der Zeitablauf gehört also **dem stummen Knoten** und nicht dem Umschalten. Die
+`500` dagegen **bleibt** — sechs von vierzig, über die ganzen drei Minuten
+verstreut, und was der Benutzer sieht, ist die nackte Apache-Seite
+`500 Proxy Error`, keine NGC-Antwort. Der Lastverteiler trägt
+`retry=5 … failontimeout=On`: eine abgelehnte Verbindung ist kein Zeitablauf,
+also greift `failontimeout` nicht, und `retry=5` holt das tote Mitglied alle
+fünf Sekunden zurück in die Reihe. Eine Lebensprobe, die es draußen hielte,
+gibt es nicht. **Und wieder schreibt der Apache darüber keine Zeile** — weder
+ins Journal noch in `error.log`, über die ganze Zeit.
+
+**Viertens: der geordnete Austritt ist der Grund für die gute Rückkehr.**
+`systemctl stop mariadb` auf db-1: keine Delle (alle fünf ersten Anfragen
+`200` in 0,024–0,056 s, 40/40 gut, keine API schrieb überhaupt eine Zeile), und
+die Rückkehr lief über **IST** — 53 Ereignisse, in derselben Sekunde fertig,
+`NRestarts=0`, Verbund nach 30 s wieder `size=3 Primary`. Gestern brauchte db-3
+nach dem **Maschinen**-Stopp 71 Versuche und kam nicht zurück, jeder Versuch
+mit vollem Abgleich. Daraus folgt eine Handlungsregel, die nichts kostet: **vor
+jedem Maschinen-Stopp den Dienst geordnet herunterfahren** ist billiger als
+jede Reparatur am Wiederanlauf.
+
+**Fünftens: api-2 ist nicht nur Zierde.** Mit `apache2` auf api-1 am Leben und
+nur dessen eigener `ngc-api` aus: **40/40 Anmeldungen gut, keine einzige
+`500`.** Das Urteil von gestern bleibt für die *Erreichbarkeit* richtig — fällt
+die Maschine api-1, ist alles weg —, aber der zweite API-Server trägt die API
+wirklich, sobald der Eingang lebt. Er hängt nur am selben einzigen Eingang.
+
+**Zwei eigene Erwartungen sind widerlegt, und sie stehen im Blatt als
+widerlegt.** Ich hatte bei zwei abwesenden Knoten rund 10 s für die erste
+Anfrage erwartet — es bleibt bei **einem** Zeitablauf von 5,02 s. Und ich hatte
+nach dem db-3-Fall von gestern Handarbeit für die Rückkehr erwartet — beide
+Knoten kamen nach dem harten Stopp **von selbst** in unter 30 s über den gcache
+zurück, `NRestarts=0`. Warum der Fall von gestern nicht zurückkam und dieser
+schon, ist mit einer Messung **nicht** geklärt.
+
+**Was offen bleibt:**
+
+- **Soll `wsrep_dirty_reads` eingeschaltet werden?** Dafür spricht, dass die
+  Oberfläche bei verlorener Mehrheit wenigstens etwas zeigen könnte statt
+  nichts; dagegen, dass sie dann **veraltete Daten** zeigt, ohne es zu wissen,
+  und dass „es geht noch irgendwie" einen Ausfall verdeckt, den jemand beheben
+  muss. Entscheidung für Thomas.
+- **Warum gab der Dienst-Stopp von api-2 sechs `500` und der von api-1 keine?**
+  Beide Male hing ein totes Mitglied im selben Lastverteiler. Offene Frage,
+  dieselbe Baustelle wie Punkt 90.
+- **Warum kam db-3 am 24.10. nicht zurück und die beiden am 25.10. schon?**
+  gcache-Reichweite oder Länge des Ausfalls — nicht gemessen.
+- **(c), (d) und (e) sind in keinem Fall gemessen.** Sie sitzen hinter einer
+  Anmeldung mit Passkey. Für den Dienst-Stopp auf svc-1 ist das die
+  entscheidende Lücke: dort sind die Container nachweislich **mitgefallen**
+  (`KEINE` statt zwei), aber ob die Oberfläche die Uhr in diesen drei Minuten
+  als „läuft" angezeigt hätte, weiß niemand.
+
+Herkunft, beide Erwartungsspalten und alle Rohzahlen: `docs/ausfall-nachtrag.md`.
+Werkzeuge: `tools/ausfall-mehrheit.sh`, `tools/ausfall-dienst.sh`.
+## Punkt 93: Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach
+
+Auf allen drei Datenbankknoten lag `/etc/mysql/mariadb.conf.d/99-erstlauf-log.cnf`
+mit einer einzigen wirksamen Zeile:
+
+```
+[mariadbd]
+innodb_encrypt_log=OFF
+```
+
+Sie überschrieb `innodb_encrypt_log=ON` aus `60-ngc.cnf`. Gemessen am 25.10.2026:
+`SHOW VARIABLES` gab auf db-1, db-2 und db-3 übereinstimmend `OFF`, bei sonst
+vollständiger Verschlüsselung (`innodb_encrypt_tables=FORCE`,
+`file_key_management ACTIVE`). Das Wiederherstellungsprotokoll lag also im
+Klartext, während die Tabellen verschlüsselt waren.
+
+**Warum sie abgeschaltet war — und warum das kein Zugeständnis ist.** Die Datei
+stammt aus `/root/dbneu2.sh` auf db-1. Das Skript schreibt sie *absichtlich* als
+ersten Schritt, damit beim Neuanlegen des Datenordners überhaupt ein lesbares
+Protokoll entsteht, und **löscht sie im zweiten Schritt wieder**, bevor es mit
+`ON` neu startet. Der zweite Schritt wurde nie erreicht. Im Journal von db-1
+steht, woran es lag:
+
+```
+22:26:37 [ERROR] WSREP: Error setting SSL cipher list to 'TLS_AES_256_GCM_SHA384'
+22:26:37 [ERROR] WSREP: Failed to load provider
+22:26:37 [ERROR] Aborting
+```
+
+Das ist **Punkt 88**, der Galera-Verkehr ohne Cipher-Beschränkung. Das Skript
+brach daran ab, die Datei blieb liegen, und um 22:26:58 kam die Datenbank mit
+der liegengebliebenen Datei hoch. Die Abschaltung war also nie als nötig
+erwiesen — sie ist ein Rest eines Laufes, der an einer ganz anderen Stelle
+scheiterte.
+
+**Der Grund, warum sie trotzdem nicht einfach wegkonnte.** Der Datenordner wurde
+*unter* dieser Datei angelegt, das Protokoll war damit unverschlüsselt
+geschrieben. MariaDB 11.8 legt ein unlesbares Protokoll nicht von selbst neu an;
+bei einem **sauberen** Herunterfahren dagegen schon. Der Weg war deshalb je
+Knoten: sauber stoppen, Abschaltung im Journal nachlesen, Datei entfernen,
+starten.
+
+**Gefahren, rollend, am 25.10.2026:**
+
+| Knoten | Fenster | saubere Abschaltung | danach |
+|---|---|---|---|
+| db-1 (.212) | 10:59:26–10:59:46, 20 s | `log sequence number 2399724`, `seqno: 1992` | `innodb_encrypt_log ON`, Synced |
+| db-2 (.217) | 11:09:56–11:10:01, 5 s | `log sequence number 2736097`, `seqno: 2340` | `innodb_encrypt_log ON`, Synced |
+| db-3 (.218) | — | — | **offen, steht weiter auf `OFF`** |
+
+Der gefürchtete `Malformed log record` kam auf keinem der beiden Knoten. Und
+genau das ist der Beweis, dass MariaDB das Protokoll beim sauberen Stopp neu
+angelegt hat: wäre das alte, unverschlüsselte Protokoll geblieben, hätte der
+Dienst mit `ON` gar nicht erst starten können.
+
+**Warum db-3 offen blieb — und ein Befund über das Arbeiten zu mehreren.** Beim
+Nachmessen nach db-2 war db-1 weg. Nicht durch mich: im Journal von db-1 steht
+eine saubere Abschaltung um **11:09:03**, 53 Sekunden *bevor* ich db-2 stoppte,
+davor vier kurze SSH-Anmeldungen vom selben Arbeitsplatz mit demselben
+Schlüssel. Eine zweite Sitzung arbeitete gleichzeitig an db-1.
+
+Damit lief die Anlage von 11:09:56 bis 11:10:01 auf **einem** Knoten von dreien.
+Das ging gut, und zwar aus einem Grund, der nicht mein Verdienst ist: beide
+Knoten sind **sauber** gegangen, und bei einem geregelten Abgang schrumpft
+Galera die erwartete Mannschaft mit. db-3 blieb durchgehend `primary`
+(`members = 1/1`, `component = PRIMARY`), die Anmeldung antwortete vorher wie
+nachher mit `HTTP 200` in 0,005 s. Hätte die andere Sitzung db-1 hart
+abgeschossen statt sauber gestoppt, wäre db-3 beim Wegfall von db-2 in
+`non-Primary` gegangen und die Anlage hätte gestanden.
+
+**Die Lehre, die ich mittrage:** Der Verbund gehört **vor jedem einzelnen
+Knoten** gemessen, nicht einmal vor dem ersten. Die Regel „rollend, nie zwei
+zugleich" aus Punkt 88 reicht nicht, wenn man nicht der einzige ist, der sie
+befolgt — sie setzt stillschweigend voraus, dass niemand sonst an der Anlage
+steht.
+
+Der Rückweg liegt je Knoten unter `/root/99-erstlauf-log.cnf.rueckweg` und bleibt
+dort, bis db-3 durch ist.
+
+Herkunft und die Tafel aller acht Maschinen: `docs/messreste-je-maschine.md`.
+
+## Punkt 94: Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann
+
+In `ulh`, `apps/cli/assets/scripts/ngc-db.sh`, legt `ensure_encryption_keys()`
+das Schlüsselpaar für `file_key_management` an:
+
+```sh
+openssl enc -aes-256-cbc -pbkdf2 -md sha256 -salt \
+	-in "$plain" -out "${WORK}/keys.enc" -pass "file:${pass}"
+```
+
+MariaDBs `file_key_management` leitet den Schlüssel über OpenSSLs altes
+`EVP_BytesToKey` ab — das entspricht `-md sha1` **ohne** `-pbkdf2`. Was diese
+Funktion schreibt, kann der Plugin daher nie lesen. Gemessen am 23.10.2026 beim
+Aufbau von db-1:
+
+```
+[ERROR] mariadbd: Cannot decrypt /etc/ngc/db-keys/keys.enc. Wrong key?
+[ERROR] Plugin 'file_key_management' init function returned error.
+[ERROR] InnoDB: cannot enable encryption, encryption plugin is not available
+[ERROR] Unknown/unsupported storage engine: InnoDB
+[ERROR] Aborting
+```
+
+Der Knoten startet nicht. Das ist kein Randfall: es trifft **jede** frisch
+installierte Datenbankmaschine.
+
+**An der Anlage ist der Fehler nicht sichtbar, weil er von Hand umgangen wurde.**
+`/root/dbfix.sh` auf db-1 schreibt das Paar mit `-md sha1` neu, und sein eigener
+Kopf sagt, was das bedeutet:
+
+> Das ist KEINE Behebung im Code: ngc-db.sh schreibt beim naechsten Lauf wieder
+> -pbkdf2 -md sha256.
+
+Die Schlüsseldateien auf db-1, db-2 und db-3 sind damit **von Hand gesetzt** und
+stimmen mit nichts überein, was ein Installationslauf erzeugen würde. Das ist
+der Grund, warum dieser Punkt hier steht und nicht in der Aufräumliste: an der
+Anlage ist nichts zu tun, im Quelltext schon.
+
+Behoben gehört es in `ulh`, nicht hier. Die Prüfdatei `ngc-db.test.sh` prüft an
+den Stellen 449 und 452 ausdrücklich auf `-pbkdf2 -md sha256` und schreibt den
+Fehler damit fest.
+
+Herkunft: an der Anlage gemessen, Quelltext gelesen in `/root/ulh` auf db-2.
 ---
 
-## Punkt 91: Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen
+## Punkt 95: Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen
 
 Dies ist **keine zweite Bestandsaufnahme.** Punkt 72 hat die Härtung des App-Containers
 vollständig aufgenommen; seine Tabelle der Schalter gilt und wird hier nicht wiederholt. Gemessen
