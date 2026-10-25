@@ -480,6 +480,13 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .note.warn{border-color:#d2932a}
 .note.error{border-color:#e13e3e}
 .note:empty{margin:0;padding:0;border:0;background:none}
+/* Was NGC ist, klein und unter dem Kasten (docs/gestaltung.md Punkt 6). Oben
+   gehört hin, bei wem man sich anmeldet; was es betreibt, gehört nach unten.
+   Mittig unter dem Anmeldekasten, nicht am Schirmrand: unten links steht der
+   Passkey-Hinweis und unten mittig der Meldungsstreifen des Schreibtisches. */
+.poweredby{margin:0 auto;padding:0 16px;max-width:min(360px,calc(100vw - 32px));
+           text-align:center;color:var(--muted);font-size:12px}
+
 /* The standing advice to move to passkeys. Bottom LEFT, because the notice
    bar of the desktop sits in the middle and this one never goes away: two
    strips over each other is one strip nobody can read. */

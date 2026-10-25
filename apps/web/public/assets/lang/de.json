@@ -5,6 +5,7 @@
   "login.nopasswordkeys": "Dieser Browser kann die Passwort-Anmeldung nicht ausführen. Bitte mit Passkey anmelden.",
   "login.locked": "Zu viele Fehlversuche. Bitte später erneut versuchen.",
   "login.locked.left": "Zu viele Fehlversuche. Noch {seconds} Sekunden.",
+  "login.poweredby": "läuft mit NGC {version}",
   "login.totp.ask": "Bitte den Code aus der Authenticator-App eingeben.",
   "setup.code.incomplete": "Der Einmal-Code ist nicht vollständig.",
   "setup.code.nomatch": "Der Einmal-Code passt nicht zu dieser Anlage. Bitte den Code prüfen und noch einmal versuchen.",

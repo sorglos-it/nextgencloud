@@ -5,6 +5,7 @@
   "login.nopasswordkeys": "Questo browser non può eseguire l'accesso con password. Accedi con una passkey.",
   "login.locked": "Troppi tentativi non riusciti. Riprovare più tardi.",
   "login.locked.left": "Troppi tentativi non riusciti. Ancora {seconds} secondi.",
+  "login.poweredby": "funziona con NGC {version}",
   "login.totp.ask": "Inserire il codice dell'app di autenticazione.",
   "setup.code.incomplete": "Il codice monouso non è completo.",
   "setup.code.nomatch": "Il codice monouso non corrisponde a questo impianto. Controllare il codice e riprovare.",
