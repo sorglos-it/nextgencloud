@@ -1050,12 +1050,61 @@ Hinweis auf die Schlüssel, den ich für den Dump zurückgewiesen hatte, in voll
 Länge. Mein Einwand war für das logische Werkzeug richtig und für das
 physische falsch.
 
-Und eine Warnung zu den Sicherungssätzen oben, damit niemand sie
-missversteht. Am 24.10.2026 existierte von dieser Anlage **keine Sicherung**:
-die Wegwerf-Maschine, auf der der Rückweg geprobt wurde, war abgeräumt und die
-Kopien mitgelöscht (von der Sicherungs-Sitzung berichtet, **nicht von mir
-gemessen**). Gefehlt hat dem fertigen Werkzeug nur ein Ort, und Thomas hat ihn
-am selben Tag genannt: **`d:\ngc_backup`**.
+### Berichtigung am 25.10.2026: es gibt sehr wohl eine Sicherung
+
+Hier stand, am 24.10.2026 habe von dieser Anlage **keine Sicherung** existiert.
+Das war falsch, und zwar weil ich nur auf das NGC-eigene Werkzeug gesehen habe.
+Die Maschinen liegen täglich in der Sicherung des Proxmox-Wirts. Gemessen auf
+10.2.3.2, nicht geglaubt:
+
+```
+/etc/pve/jobs.cfg:  vzdump  all 1  exclude 200,203  schedule 03:00
+                    mode stop   compress zstd   storage hdd_20TB_2
+                    prune-backups keep-last=2
+pvesm list:         15 Sicherungen der VMs 301-309, die neuesten vom
+                    25.10.2026, 04:41-04:43 Uhr
+```
+
+Die beiden neuen Datenbankknoten 308 und 309 sind darin enthalten. Was fehlte,
+war also nie *eine* Sicherung, sondern die **NGC-eigene** — und die beantwortet
+eine andere Frage: eine VM-Sicherung holt Maschinen zurück, das Werkzeug der
+Sicherungs-Sitzung holt eine *Anlage* auf andere Maschinen zurück. Beides ist
+nötig, keines ersetzt das andere.
+
+### Und daraus fällt ein Befund in dieses Blatt
+
+`mode stop`. Der Sicherungslauf **hält jede Maschine an** und fährt sie wieder
+an — jede Nacht ab 03:00, alle neun, nacheinander. Das heißt:
+
+**Der Fall „alle Datenbankknoten gleichzeitig weg", den ich oben als ungemessen
+und offen aufgeschrieben habe, läuft in Wahrheit jede Nacht** — in seiner
+*sauberen* Form, und die Anlage kommt offensichtlich zurück, denn sie lief den
+ganzen 25.10. Ein sauberes Anhalten schreibt den Stand in `grastate.dat`, und
+damit greift die Sperre `safe_to_bootstrap: 0` nicht, die den unsauberen Fall
+blockieren würde. Der offene Fall ist also schmaler als gedacht: offen ist nur
+noch der **unsaubere** gleichzeitige Verlust aller drei — Stromausfall, nicht
+Sicherungslauf.
+
+Das ist zugleich die genaueste Fassung der Unterscheidung, die dieses Blatt an
+mehreren Stellen macht: **ein Dienst-Stopp, ein sauberer Maschinen-Stopp und
+ein harter Schnitt sind drei Fälle, nicht zwei.** Meine sechs Fälle oben sind
+alle der dritte (`qm stop`), der nächtliche Lauf ist der zweite, und der erste
+ist in dieser Reihe nie gemessen worden.
+
+**Eine Frage, die ich ausdrücklich offen lasse, statt sie zu beantworten:** am
+Morgen des 24.10. lag die Datenbank von 02:45 bis 09:30. Der Sicherungslauf
+beginnt um 03:00 und hält dabei Maschinen an. Das sind zwei Dinge in derselben
+Nacht, und der Neustart von db-1 um 02:45:03 liegt **vor** dem Lauf — es passt
+also nicht zusammen, und ich habe es nicht gemessen. Wer den Vorfall aufklären
+will, sollte den Sicherungslauf trotzdem als Beteiligten in Betracht ziehen,
+bevor er anderswo sucht.
+
+### Was zu `d:\ngc_backup` gehört (Stand 24.10.2026)
+
+Gefehlt hat dem NGC-eigenen Werkzeug nur ein Ort, und Thomas hat ihn am selben
+Tag genannt: **`d:\ngc_backup`**. Beide Ordner hat er inzwischen selbst wieder
+abgeräumt; die Schlüssel liegen in Vaultwarden. Der folgende Abschnitt
+beschreibt den Stand von damals und ist als solcher zu lesen.
 
 Dort liegt seit 17:05 die logische Sicherung, die ich vor dem db-1-Fall gezogen
 habe, mit einer Datei `WAS-HIER-LIEGT.txt` daneben, die sagt, was sie ist und
