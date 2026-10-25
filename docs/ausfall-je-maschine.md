@@ -147,6 +147,51 @@ ist ein App-Container nach einer Neuinstallation **auf dem alten Knoten stehen
 geblieben** (Punkt 74 der Verträge). Wenn ein Rest auf dem jeweils anderen
 Knoten liegt, kann der Ausfall harmloser aussehen, als er ist.
 
+### Nachtrag zu den beiden svc-Fällen, geschrieben vor dem Schalten
+
+Diese vier Zeilen sind am 24.10.2026 gemessen, nachdem die Erwartungen oben
+schon standen, und sie schärfen sie, ohne sie umzuschreiben:
+
+| | svc-1 | svc-2 |
+|---|---|---|
+| App-Benutzer | `ngc-terminal-439982dd` **und** `ngc-uhr-ad8c00e2` | nur `ngc-terminal-439982dd` |
+| `ngc-controller` | 0.2.2 | 0.2.1 |
+
+**Punkt 74 ist von der Benutzerseite bestätigt**, bevor ich schalte: svc-1 trägt
+den Benutzer *und* den Containerspeicher des Terminals, obwohl `ngc_app` das
+Terminal auf svc-2 führt. Wenn also nach dem Abschalten von svc-2 ein Terminal
+antwortet, ist das **dieser Befund und kein Ausfallschutz**. Genau darum steht
+es hier vorher.
+
+Und die **Fassungen stehen gemischt** (0.2.2 gegen 0.2.1, dazu db-1 auf 0.2.1).
+Ein Ausfall gegen gemischte Fassungen misst zwei Dinge auf einmal; kommt einer
+der beiden Knoten anders zurück als der andere, ist das zuerst eine Frage an die
+Fassung und erst danach an den Ausfall.
+
+Dazu eine **Erwartung einer Nachbarsitzung**, die ich übernehme, weil sie die
+richtige Stelle trifft — als Erwartung, nicht als Behauptung, und von dort,
+nicht von mir: nach einem harten Abschalten ist die interessante Frage nicht, ob
+der Dienst wieder läuft, sondern **ob die Containerspeicher heil sind.** Was ich
+dazu gemessen habe:
+
+- `/var/lib/ngc/apps` ist auf beiden Knoten ein **eigenes Dateisystem**,
+  `/dev/sdb`, ext4, `rw,relatime` — mit gesetztem `encrypt`-Merkmal, also
+  fscrypt für die App-Verzeichnisse.
+- Darin läuft `podman` **rootless mit `overlay`**, und seine Datenbank ist
+  `db.sql` (SQLite) unter
+  `/var/lib/ngc/apps/<app-id>/.local/share/containers/storage/`.
+
+Ein Stromausfall mitten in einem Schreibvorgang trifft damit eine SQLite-Datei
+und einen overlay-Baum auf einem eigenen ext4. Das ist die Stelle, an der ich
+beim Wiederanlauf zuerst hinsehe — und die Frage ist nicht „läuft der
+Controller", sondern „kann der App-Benutzer sein Abbild noch lesen".
+
+Eine Zahl, die das Ausmessen abkürzt, **von der Lastsitzung gemessen**: im
+Leerlauf steht `ngc-controller.service` bei `TasksCurrent=16` von
+`TasksMax=3466`, ein leerer App-Container kostet rund 6 Aufgaben, eine offene
+Terminal-Sitzung rund 9,4. Hängt nach dem Hochfahren etwas und `TasksCurrent`
+steht weit unter 100, ist es **nicht** der Deckel.
+
 ## Wie hier gemessen wird — und warum der naheliegende Weg lügt
 
 Das steht vor den Ergebnissen, weil es sie alle trägt. Zwei Fallen, beide am
@@ -358,44 +403,766 @@ und ein Neustart der API nimmt dort die Laufzeitverzeichnisse der Apps mit. Auf
 api-1, wo beide Dienste laufen, wäre derselbe Neustart darum nicht harmlos
 gewesen; api-2 trägt nur die API.
 
-## Was offen ist, und warum
+### api-1 aus — gemessen am 24.10.2026, 13:32–13:34 UTC
 
-Vier der sechs Fälle sind nicht gefahren, und die Spalte „was der Benutzer
-dabei sieht" ist in dem einen gefahrenen Fall leer. Beides hat Gründe, die
-nicht an der Messung liegen:
+Vor dem Schalten gemessen, und schon das ist die halbe Antwort: **alle drei
+Controller nennen in `/etc/ngc/controller.json` genau einen Tunnel,
+`wss://api-1.ngc.mein.lan:7443/tunnel`.** db-1, svc-1 und svc-2 kennen api-2
+nicht. Nur `web.json` auf api-1 nennt beide APIs.
 
-1. **Es fehlt ein Zugang.** In `ngc_user` steht genau ein Benutzer: `weiricth`,
-   `admin`, kein TOTP. Ohne dessen Kennwort sind (b) anmelden, (c) Apps sehen,
-   (d) App öffnen und (e) neu einrichten in **keinem** Fall zu messen — und das
-   ist genau die Spalte, um die es im Auftrag geht. Die Leitsitzung gibt das
-   Kennwort nicht weiter (richtig so, es ist nicht ihres). Der Sperrzähler ist
-   nachgelesen und harmlos genug für eine Messung:
-   `lock.go` hat `freeCount = 2`, danach verdoppelnde Wartezeit bis
-   `maxWait = 300` s, keine dauerhafte Sperre des Kontos.
-2. **api-1 und db-1 sind gesperrt.** Beide nehmen die ganze Anlage mit; an ihr
-   hängen gerade mehrere Sitzungen. Bei db-1 erwarte ich, dass sie ohne
-   `galera_new_cluster` von Hand nicht zurückkommt — heute früh lag die
-   Datenbank aus genau diesem Grund von 02:45 bis 09:30 tot. Ein Fenster dafür
-   liegt bei Thomas.
-3. **api-2, svc-1 und svc-2 sind freigegeben, aber das Abschalten wurde
-   abgelehnt.** Der erste `qm stop 302` wurde von der Prüfung dieser Sitzung mit
-   „Interfere With Workloads" zurückgewiesen. Das ist nicht umgangen worden.
-   Der Ladenfall lief vorher noch durch; ab api-2 braucht es eine Erlaubnis.
-4. **Die stündliche Katalogrunde ist nicht gemessen, nur gelesen.** Der Beleg
-   dafür, dass 168 erfolglose Versuche keine Zeile hinterlassen, braucht ein
-   Ausfallfenster von über einer Stunde. Vierzig Sekunden zeigen es nicht.
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | nein, vollständig | **nein.** `ngc.mein.lan` und api-1:443 antworten gar nicht; api-2:443 antwortet nicht, vorher wie nachher — dort liegt kein Web |
+| (b)–(e) | nein | **nein**, es gibt keine Seite, die sie anbieten könnte |
+| API-Pfad auf api-2 | — | **lebt, unverändert.** `POST /api/v1/login/start` mit `{}` gibt 400, genau wie im vollen Betrieb und genau wie api-1 sonst |
+| Datenbank | — | `mariadb` auf db-1 die ganze Zeit `active` |
+| Controller | — | **alle drei verlieren den Tunnel und versuchen es ewig bei api-1.** `0` Treffer auf api-2 in allen drei Journalen |
+| laufende Apps | — | **laufen weiter.** `ngc-terminal-439982dd` und `ngc-uhr-ad8c00e2` auf svc-1, `ngc-terminal-439982dd` auf svc-2 — unverändert über den ganzen Ausfall |
+| Ehrlichkeit | Browserfehler, mehr nicht | **nach innen ehrlich, nach außen stumm** — siehe unten |
+| Selbstfang | ja | **ja, und gut.** Oberfläche wieder 200 **vier Sekunden** nachdem die Adresse antwortete; alle drei Controller hängen sich von selbst wieder ein (13:34:02, 13:34:03, 13:34:04). Keine Hand nötig |
 
-Zwei Dinge aus den Nachbarsitzungen, die beim Wiederanlauf der Dienstknoten
-zählen und hier festgehalten sind, damit sie nicht in Nachrichten verschwinden
-— **von dort gemessen, nicht von mir**:
+**Die Antwort auf die Frage des Auftrags.** „Ist der zweite API-Server etwas
+wert oder nur Zierde?" — Zierde ist zu hart und zu ungenau. Gemessen ist:
+api-2 **arbeitet durchgehend**, er beantwortet die ganze Zeit dieselben
+Anfragen wie api-1 im Normalbetrieb. Nur kommt niemand zu ihm:
 
-- Kein App-Container hat auf dieser Anlage eine eigene cgroup;
-  `CgroupPath` zeigt auf `/system.slice/ngc-controller.service`. Was greift, ist
-  `TasksMax=3466` des Controllers, geteilt mit allen Apps des Knotens. Im
-  Leerlauf steht er bei `TasksCurrent=16`; ein leerer App-Container kostet rund
-  6 Aufgaben, eine offene Terminal-Sitzung rund 9,4. Für den Wiederanlauf heißt
-  das: die Container allein bringen den Deckel nicht in Gefahr. Hängt dort
-  etwas und `TasksCurrent` steht weit unter 100, ist es **nicht** der Deckel.
-- **svc-1 trägt `ngc-controller` 0.2.2, svc-2 trägt 0.2.1.** Die beiden Knoten
-  sind nicht gleich. Kommt einer anders zurück als der andere, muss das nicht am
-  Ausfall liegen.
+- der Apache, der ihn aufrufen würde, lief auf api-1,
+- der Name `ngc.mein.lan` zeigt nur auf api-1,
+- und **kein einziger Controller hat ihn in seiner Liste.**
+
+api-2 ist also kein Zierstück, sondern ein **Ersatzteil, an das nichts
+angeschlossen ist**. Der Unterschied ist wichtig, weil er sagt, was zu tun
+wäre: nicht „api-2 reparieren", sondern drei Verdrahtungen nachziehen — Web
+auch auf api-2, ein Name, der auf beide zeigt, und beide APIs in jeder
+`controller.json`. Dass `web.json` beide schon kennt, zeigt, dass die Bauart
+darauf angelegt ist; nur die Anlage ist nicht so verdrahtet.
+
+**Zur Ehrlichkeit, und hier ist sie zweigeteilt.** Nach innen sagt die Anlage
+die Wahrheit, wörtlich und ohne Beschönigung:
+
+```
+WARN tunnel failed api=wss://api-1.ngc.mein.lan:7443/tunnel err="link: the API cannot be reached"
+INFO status stayed on this server apps=2 err="node: this controller has no tunnel to an API"
+```
+
+Das ist genau richtig: es nennt die Ursache, es nennt die Folge („apps=2
+bleiben hier"), und es schiebt nichts auf den Benutzer. Nach außen aber sieht
+der Benutzer **nur den Verbindungsfehler seines Browsers**. Dass seine Daten
+unangetastet sind, dass die Datenbank läuft, dass seine beiden Apps die ganze
+Zeit weiterlaufen — davon erfährt er nichts, weil die Stelle, die es ihm sagen
+könnte, dieselbe Maschine ist, die fehlt. Das ist kein leerer Zustand, der wie
+ein Angriff aussieht; es ist ein Totalausfall, der wie ein Netzproblem
+aussieht, und immerhin ist er das auch.
+
+Der beruhigendste Einzelbefund dieses Falls: **die Apps laufen weiter, während
+niemand sie sehen kann.** Wer ein Terminal offen hatte, verliert die Seite,
+aber nicht den Behälter.
+
+Eine Messnotiz zum Lesen der Tabelle: meine Sonde schreibt bei „keine Antwort"
+`000000` (die Null von `curl` und die des Rückfalls hintereinander). Und die
+Container-Sonde musste ich korrigieren: über `su` gefragt meldete rootloses
+`podman` „nichts", weil es als `su`-Kind sein Laufzeitverzeichnis nicht findet
+(`mkdir /run/user/0/libpod: permission denied`) — die Container liefen die ganze
+Zeit. Gemessen wird darum von root aus an den `conmon`-Prozessen, die den Namen
+des Behälters hinter `-n` tragen. Eine Sonde, die „nichts" sagt, weil sie selbst
+nicht darf, ist die gefährlichste Sorte.
+
+### db-1 aus — gemessen am 24.10.2026, 13:46–13:51 UTC
+
+Der Fall, bei dem ich mit dem schwersten Befund gerechnet habe. **Zwei von drei
+Erwartungen waren falsch, und beide in die gute Richtung.**
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | ja | **ja**, `200`, unverändert — Apache und PHP liegen auf api-1 |
+| (b) anmelden | nein | **nein** — und zwar so: |
+| | | `{"status":"error","code":"E_UNREACHABLE","message":"Dienst nicht erreichbar."}` mit **HTTP 503**, gleichlautend über den Lastverteiler *und* direkt auf api-2:7443 |
+| (c)–(e) | nein | **nein**, alles hängt an dieser Datenbank |
+| laufende Apps | — | **laufen weiter**, beide Container auf svc-1, einer auf svc-2, unverändert |
+| sagt die Anlage es ehrlich? | **nein erwartet** | **ja, sie sagt es ehrlich** |
+| Selbstfang | **nein erwartet** | **ja, ganz allein** |
+
+**Die erste falsche Erwartung: die Anlage schiebt dem Benutzer nichts unter.**
+Ich hatte erwartet, dass eine Anmeldung ohne Datenbank denselben Ausgang nimmt
+wie eine mit falschem Kennwort — der leere Zustand, der wie ein eigener Fehler
+aussieht. Das ist nicht so, und es ist nicht Zufall, sondern gebaut. Im Code
+ist der erste Zugriff in `login/start` ein `lock.Check` gegen die Datenbank,
+und sein Fehler wird ausdrücklich als `E_UNREACHABLE` beantwortet. Die
+Oberfläche hat dafür einen **eigenen Satz**, getrennt vom Satz für eine
+gescheiterte Anmeldung:
+
+| Fall | Text, den der Benutzer sieht |
+|---|---|
+| Datenbank weg | `err.unreachable` — „Service unavailable. Please try again later." |
+| falsches Kennwort | `login.failed` — „Login failed." |
+
+Die API liefert dazu „Dienst nicht erreichbar." auf Deutsch. Der Benutzer
+erfährt also, dass es nicht an ihm liegt. Das ist genau das Gegenteil des
+Befunds, den der Auftrag gesucht hat, und gehört aufgeschrieben, weil die drei
+leeren Zustände dieser Woche den Verdacht in die andere Richtung gelegt hatten.
+
+Dazu kommt ein **Gegensatz zum Ladenfall, der ins Auge springt.** Die
+unerreichbare Datenbank bekommt eine Journalzeile, mit Zähler:
+
+```
+api-2  WARN the database could not be reached reason=db-unreachable count=1 since=1
+```
+
+Der unerreichbare Laden bekommt **keine**. Dieselbe Anlage, zwei fehlende
+Nachbarn, zweimal eine andere Lautstärke. Das ist der Beleg dafür, dass das
+Schweigen im Ladenfall kein Hausstil ist, sondern eine Lücke an einer Stelle.
+
+**Die zweite falsche Erwartung: db-1 kommt von selbst zurück.** Ich hatte
+erwartet, dass ein einzelner Galera-Knoten kein Quorum findet und
+`galera_new_cluster` von Hand braucht — heute früh lag die Datenbank aus genau
+diesem Grund von 02:45 bis 09:30 tot. **Ich habe nicht von Hand geholfen, und
+es war nicht nötig.** Gemessen im halbminütigen Takt über drei Minuten: schon
+beim ersten Blick `active`, `wsrep_cluster_size 1`, `wsrep_cluster_status
+Primary`. Aus dem Journal:
+
+```
+13:47:16  Starting mariadb.service - MariaDB 11.8.6 database server...
+13:47:20  WSREP: Recovered cluster id dc0a900c-cf30-11f1-8342-b316e8ae0db8
+13:47:20  WSREP: Server db-1 synced with group
+13:47:20  WSREP: Synchronized with group, ready for connections
+```
+
+**Vier Sekunden** vom Start des Dienstes bis „ready for connections". Der Grund
+steht in `grastate.dat`: `safe_to_bootstrap: 1`. Ein Knoten, der weiß, dass er
+der letzte war, darf sich selbst hochziehen.
+
+**Und das war ein harter Schnitt, kein sauberes Herunterfahren.** `qm stop` ist
+in Proxmox der Stecker, nicht das ACPI-Signal, und zwei Spuren belegen, dass es
+auch so ankam: im vorigen Start steht **keine Herunterfahr-Folge** zur Uhrzeit
+des Abschaltens, und die Journalspitze fehlt — der letzte Eintrag ist 13:37:00,
+obwohl die Maschine um 13:45:51 nachweislich geantwortet hat. Alles dazwischen
+war noch nicht auf die Platte geschrieben und ist mit dem Strom weg.
+
+**Was damit NICHT gemessen ist, und das ist die wichtige Einschränkung.** Dass
+dieser harte Schnitt heil überstanden wurde, heißt nicht, dass der Fall von
+heute früh nicht existiert. `grastate.dat` trug hier `safe_to_bootstrap: 1`;
+der bekannte Stillstand tritt ein, wenn dort `0` steht, weil der Knoten nicht
+weiß, ob er der letzte war. Die Startliste von db-1 zeigt, dass der
+Vorfall von heute früh an einem anderen Neustart hing (Start endet 02:44:50,
+nächster beginnt 02:45:03). **Was den Unterschied macht, ist offen** — und das
+ist der nächste Fall, der gemessen werden müsste, nicht der, den ich gefahren
+habe. Ein Satz wie „db-1 fängt sich immer selbst" wäre aus dieser Messung
+nicht gedeckt.
+
+Vor dem Lauf lag eine **logische Sicherung** der Datenbank bereit
+(`mariadb-dump --single-transaction`, 155 KB, 9 Tabellen, Abschlusszeile
+geprüft), außerhalb von db-1. Sie war nicht nötig. Zwei Dinge daran sind
+trotzdem festzuhalten: der Dump braucht die Schlüsseldateien unter
+`/etc/ngc/db-keys` **nicht**, weil er entschlüsselt ausliest — und mein erster
+Versuch erzeugte eine 47-KB-Datei, die wie eine Sicherung aussah und keine war
+(0 Tabellen, kein Benutzer): Binärdaten über `ssh`-stdout in eine Windows-Datei
+werden verbogen, mit `scp` geht es. Wer einen Rückweg baut, **macht die
+Sicherung auf**, statt ihre Größe anzusehen.
+
+### api-2 aus — gemessen am 24.10.2026, 13:57–14:07 UTC
+
+Der Fall, bei dem ich die Zahl erst nach drei Anläufen hatte, und das ist der
+lehrreiche Teil.
+
+**Erster Anlauf:** zwanzig Anfragen auf die Startseite, vor und während des
+Ausfalls, **20 von 20 mal 200**. Kein Unterschied. Meine Erwartung („jede zweite
+Anfrage hängt oder gibt 503") sah widerlegt aus.
+
+**Dann fiel mir auf**, dass beim Wiederanfahren eine Anmeldeanfrage eine
+Apache-Fehlerseite zurückbrachte (`<!DOCTYPE HTML PUBLIC …`). Der Grund für den
+scheinbar sauberen ersten Anlauf: **`GET /` geht gar nicht durch den
+Lastverteiler.** Die Seite kommt von PHP auf api-1; nur `/api/` ist
+weitergeleitet. Ich hatte die falsche Anfrage gezählt.
+
+**Dritter Anlauf**, und diesmal getrennt gezählt, je vierzig Anfragen:
+
+| | `POST /api/v1/login/start` (über den Verteiler) | `GET /` (nicht über den Verteiler) |
+|---|---|---|
+| beide APIs oben | **40/40 gut** | 40/40 gut |
+| api-2 nachweisbar aus | **31/40 gut, 9 schlecht** — 6× HTTP 500, 3× keine Antwort | **40/40 gut** |
+
+Damit ist es gemessen: **api-2 fehlt unsichtbar auf der Oberfläche und
+schmerzhaft auf jedem API-Weg.** Ungefähr jede vierte Anmeldung scheitert,
+solange er weg ist. Für den Benutzer heißt das genau das, was diese Woche
+berichtet wurde: *erst scheitert die Anmeldung, dann geht sie.* Hier ist die
+Erklärung dafür, und sie ist kein Zufall und keine Laune.
+
+Zur Ehrlichkeit ist das der **schlechteste Fall der sechs**. Der Benutzer
+bekommt **HTTP 500** — „internal server error", also die Meldung, die nach einem
+Fehler im Programm klingt, nicht nach einer fehlenden Maschine. Und in
+`/var/log/apache2/error.log` steht dazu **keine Zeile**: `0` Treffer auf
+`proxy` oder `balancer` in der ganzen Datei. Nur das Zugriffsprotokoll trägt die
+500er und 502er, und die liegen minutengenau in meinen Fenstern (13:59–14:01 und
+14:05–14:07, dazu 09:25–09:26 mit 503ern von heute früh, die nicht von mir sind).
+
+**Und hier beißt die DNS-Falle aus Punkt 80 nicht das Messwerkzeug, sondern die
+Anlage selbst.** Auf api-1 gemessen:
+
+```
+getent ahosts api-2.ngc.mein.lan   ->  10.2.3.211 STREAM …   und   :: STREAM
+```
+
+Der Lastverteiler trägt das Mitglied als Namen (`BalancerMember
+"https://api-2.ngc.mein.lan:7443"`). Ist die echte Adresse tot, bleibt die
+zweite — `::` — und die führt auf die **eigene** Maschine. Im Journal von
+`ngc-api` auf api-1 steht dann:
+
+```
+http: TLS handshake error from [::1]:34332: EOF
+```
+
+Apache hat sich zu sich selbst verbunden und ist am Namensabgleich gescheitert
+(`SSLProxyCheckPeerName on`). **Was ich dazu gemessen habe und was nicht:** diese
+Zeile kam **einmal** in den neun Fehlschlägen vor. Dass das `::` der Weg *aller*
+neun ist, ist damit **nicht** gemessen — aber dass es im Anfrageweg der Anlage
+liegt und nicht nur in meiner Sonde, ist belegt. Ohne den `::`-Satz hätte Apache
+nur ein totes Mitglied zu überspringen; mit ihm hat es ein zweites, das
+antwortet und dann den Abgleich verweigert.
+
+Selbstfang: **ja.** Im Sekundentakt über 90 Sekunden nach dem Einschalten
+gemessen: **1 schlechte Antwort von 90**, und die gleich am Anfang. `ngc-api`
+auf api-2 war 14:01:21 bereit.
+
+### svc-1 aus und svc-2 aus — gemessen am 24.10.2026, 14:08–14:15 UTC
+
+Die beiden ruhigsten Fälle, und der Wiederanlauf ist der beste der ganzen Reihe.
+
+| Frage | svc-1 aus | svc-2 aus |
+|---|---|---|
+| (a) Oberfläche | 20/20 mal 200 | 20/20 mal 200 |
+| (b) Anmeldung beginnt | geht, unverändert | geht, unverändert |
+| Container auf dem anderen Knoten | `ngc-terminal-439982dd` läuft weiter | beide auf svc-1 laufen weiter |
+| Controller des anderen Knotens | `active` | `active` |
+| api-1 sagt | nichts im Fenster | `INFO controller tunnel ended node=svc-2 seconds=2370` |
+| App-Speicher nach dem harten Schnitt | `terminal=ok uhr=ok` | `terminal=ok` |
+| Container von selbst zurück | **ja, nach 1 s** | **ja, nach 1 s** |
+| `TasksCurrent/Max` nachher | 24 / 3466 | 16 / 3466 |
+
+Der Wiederanlauf ist in den Journalen Schritt für Schritt zu lesen, und er
+braucht eine Sekunde:
+
+```
+14:09:58  Started ngc-controller.service
+14:09:59  system refresh
+14:09:59  container init / container start   ngc-terminal-439982dd
+14:09:59  container init / container start   ngc-uhr-ad8c00e2
+14:09:59  INFO tunnel up api=wss://api-1...
+```
+
+**Die Sorge der Nachbarsitzung trifft nicht zu:** rootloses `podman` mit
+`overlay` und einer SQLite-`db.sql` auf einem eigenen ext4 übersteht den harten
+Schnitt. `pragma integrity_check` sagt vorher und nachher `ok`, auf beiden
+Knoten, für jede App. Und der Deckel ist weit weg: 24 von 3466 Aufgaben.
+
+Zwei Dinge, die erst beim Hinsehen harmlos wurden:
+
+- **Der Gerätename der App-Platte wechselte** über den Neustart, auf svc-1 von
+  `/dev/sdb` nach `/dev/sda`. Das sieht nach einem Problem aus und ist keines:
+  `/etc/fstab` hängt sie per `LABEL=ngc-apps` ein, die Wurzel per `PARTUUID`.
+  svc-1 und svc-2 haben ihre Platten gerade spiegelbildlich benannt, und beide
+  hängen richtig. Hier ist etwas **richtig gebaut**, und der Neustart hat es
+  bewiesen.
+- **Punkt 74 ist von der Benutzerseite bestätigt**: svc-1 trägt
+  `ngc-terminal-439982dd` *und* `ngc-uhr-ad8c00e2`, obwohl `ngc_app` das
+  Terminal auf svc-2 führt — und der Controller wirft den Fremdling beim
+  Wiederanlauf **von selbst wieder an** (`container start … ngc-terminal` auf
+  svc-1, 14:09:59). Dass nach dem Abschalten von svc-2 ein Terminal antwortet,
+  ist also dieser Befund und kein Ausfallschutz. Der Ausfall überlebt die
+  Doppelung nicht nur, er festigt sie.
+
+## Alle sechs auf einem Blatt
+
+Jede Maschine einmal mit `qm stop` ausgeschaltet und wieder angefahren,
+24.10.2026 zwischen 12:42 und 14:15 UTC, von diesem PC aus gemessen.
+
+| aus | Oberfläche | Anmeldung beginnt | laufende Apps | sagt es die Anlage? | fängt sich selbst |
+|---|---|---|---|---|---|
+| **store** | unberührt | unberührt | laufen | **nein, nirgends** | ja, 40 s |
+| **api-1** | **ganz weg** | ganz weg | **laufen weiter** | innen ja, außen stumm | ja, 4 s nach der Adresse |
+| **api-2** | unberührt | **jede vierte scheitert** | laufen | **nein: HTTP 500** | ja, 1 von 90 |
+| **db-1** | unberührt | **nein, aber ehrlich** | laufen weiter | **ja, mit Zähler** | **ja, allein, 4 s** |
+| **svc-1** | unberührt | unberührt | die des anderen laufen | — | ja, Container nach 1 s |
+| **svc-2** | unberührt | unberührt | die des anderen laufen | — | ja, Container nach 1 s |
+
+**Der Sinn der sechs Maschinen ist erfüllt — mit einer Ausnahme.** Fünf von
+sechs Ausfällen nimmt die Anlage nicht mit, und alle sechs fängt sie ohne eine
+Hand von Hand. Die Ausnahme ist **api-1**: solange der einzige Apache, der
+einzige Name und der einzige Tunnel aller Controller dort liegen, ist die
+Anlage für ihre Benutzer eine Ein-Maschinen-Anlage mit fünf Gehilfen.
+
+**Die Reihenfolge der Ehrlichkeit, von gut nach schlecht**, und sie folgt nicht
+der Schwere des Ausfalls:
+
+1. **db-1** — eigener Fehlercode, eigener Satz in der Oberfläche, Journalzeile
+   mit Zähler. Vorbildlich, und der schwerste Ausfall der sechs.
+2. **api-1** — nach innen wörtlich und schuldfrei („this controller has no
+   tunnel to an API"), nach außen nur der Verbindungsfehler des Browsers. Mehr
+   ist von einer fehlenden Maschine auch nicht zu erwarten.
+3. **store** — die Auskunft existiert in der Zeile des Ladens, aber nichts
+   weist darauf hin. Stille.
+4. **api-2** — **HTTP 500 und keine Zeile im Fehlerprotokoll.** Der Benutzer
+   bekommt die Meldung, die nach einem Fehler im Programm klingt, für eine
+   fehlende Maschine. Der schlechteste der sechs, obwohl der harmloseste
+   Ausfall.
+
+## Nachtrag vom selben Tag: die Anlage hat sich unter dem Blatt verändert
+
+Noch am 24.10.2026, nach Abschluss der sechs Fälle, hat Thomas drei
+Datenbankknoten in Auftrag gegeben. **Alles oben beschreibt damit die Anlage mit
+einem einzelnen Datenbankknoten**, und besonders der db-1-Fall ist so zu lesen:
+er ist richtig für die Anlage, an der er gemessen wurde, und er ist keine
+Eigenschaft von NGC.
+
+Stand zum Zeitpunkt dieses Nachtrags, von mir gemessen:
+
+```
+qm list        308 ngc-db-2 running,  309 ngc-db-3 running
+db-1           wsrep_cluster_size 1,  wsrep_incoming_addresses 10.2.3.212:0
+db-2, db-3     mariadb INACTIVE  (ein beitretender Knoten wartet auf den Verbund)
+api-1, api-2   /etc/ngc/api.json  ->  db.nodes = ['db-1.ngc.mein.lan:3306']
+```
+
+**Und hier steht eine Erwartung, bevor jemand den Umbau für fertig erklärt:**
+`db.nodes` ist eine Liste, die Bauart ist auf mehrere angelegt — aber beide APIs
+tragen darin genau einen Eintrag. Solange das so bleibt, ändern drei Knoten am
+Ausfall von db-1 **nichts**: beide APIs greifen auf denselben Namen, und der
+zeigt auf die Maschine, die fehlt. Der Verbund hält dann die Daten, und niemand
+fragt die anderen zwei.
+
+Das ist dieselbe Gestalt wie api-2 in diesem Blatt — ein Ersatzteil, an das
+nichts angeschlossen ist. Endet der Umbau hier, hat die Anlage zwei davon, und
+das Ergebnis wäre **schlechter** als der gemessene Zustand von 13:46: derselbe
+Vollausfall, aber mit zwei laufenden Reservemaschinen daneben, die wie
+Redundanz aussehen.
+
+Zwei Dinge, die für die nächste Messung gelten und die ich von der
+Koordinationssitzung habe, **nicht gemessen**: die Firewall-Rolle „Datenbank"
+lässt 3306 nur von den beiden APIs zu, wer also von einem svc-Knoten aus gegen
+die Datenbank misst, misst die Firewall und nicht den Ausfall — und ein
+beitretender Knoten wartet, db-1 muss zuerst stehen. Damit sind es **zwei**
+Fälle und nicht einer: „der Erste fällt" und „ein Beitretender fällt".
+
+### Der Umbau ist fertig, und die Warnung hat sich erledigt
+
+Wenig später gemessen, und beides hat sich geändert:
+
+```
+db-1   wsrep_cluster_size=3  wsrep_cluster_status=Primary
+       incoming = 10.2.3.212:0, db-3.ngc.mein.lan:0, db-2.ngc.mein.lan:0
+db-2, db-3   mariadb active
+api-1 und api-2   db.nodes = ['db-1...:3306', 'db-2...:3306', 'db-3...:3306']
+```
+
+**`db.nodes` nennt jetzt auf beiden APIs alle drei.** Die Gestalt „Ersatzteil,
+an das nichts angeschlossen ist" ist hier damit nicht eingetreten — anders als
+bei api-2, wo sie steht. Erst damit ist der Fall überhaupt messbar: vorher
+wusste ich das Ergebnis, jetzt nicht.
+
+### Was ich für die zwei neuen Fälle erwarte (geschrieben vor dem Abschalten)
+
+Thomas hat 308 und 309 auf die Liste genommen; der Riegel ist neu geprüft (200
+und 307 brechen weiter mit Code 2 ab, ohne Pipe gemessen).
+
+**„Ein Beitretender fällt" — db-2 oder db-3 aus.** Erwartung: **kein sichtbarer
+Unterschied.** Zwei von drei Knoten halten das Quorum (2 > 3/2), beide APIs
+haben zwei gesunde Einträge in `db.nodes`, und nichts zeigt allein auf den
+fehlenden. Oberfläche 200, Anmeldung geht, `wsrep_cluster_size` fällt auf 2.
+Die Sorge liegt nicht beim Ausfall, sondern bei der Rückkehr: ein beitretender
+Knoten **wartet** auf den Verbund, und der Verbund ist dann ja da — also
+erwarte ich, dass er von selbst zurückkommt, schneller als db-1 heute.
+
+**„Der Erste fällt" — db-1 aus, mit drei Knoten.** Das ist der Fall, für den der
+Umbau gemacht wurde, und meine Erwartung ist **jetzt die umgekehrte von heute
+Mittag**: die Anmeldung soll **weiterlaufen**. Zwei Knoten halten das Quorum,
+und beide APIs kennen sie. Wenn stattdessen wieder
+`E_UNREACHABLE` kommt, liegt es nicht mehr am Quorum, sondern daran, wie ein API
+seine Knotenliste abarbeitet — und das wäre der schwerere Befund, weil dann drei
+Knoten und eine richtige Liste nicht reichen.
+
+Zwei Dinge, die ich dabei gezielt ansehe, weil sie heute Mittag nicht zu sehen
+waren: **ob die erste Anfrage nach dem Ausfall anders aussieht als die zehnte**
+(ein Verbindungsaufbau, der in einen Zeitablauf läuft, statt sofort auf den
+nächsten Knoten zu gehen — dasselbe Muster wie bei api-2, wo jede vierte
+Anmeldung 500 bekam), und **ob db-1 als der Knoten, der den Verbund gebootet
+hat, beim Zurückkommen anders behandelt wird** als ein Beitretender.
+
+### db-3 aus — gemessen am 24.10.2026, 18:21–18:31 UTC
+
+Der Ausfall selbst geht glatt. Die Rückkehr nicht.
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | unverändert | **200**, unverändert |
+| (b) Anmeldung, 40 in Folge | unverändert | **40/40 gut** — wie vorher |
+| (b) **die erste Anfrage** | — | **`503` nach 5,03 s.** Zweite und dritte: `200` in 0,03 s |
+| Verbund | fällt auf 2, bleibt Primary | **genau so**: `wsrep_cluster_size=2`, `Primary` |
+| laufende Apps | laufen | laufen, unverändert |
+| sagt die Anlage es ehrlich? | — | **ja, vorbildlich** (siehe unten) |
+| Selbstfang | **ja, schneller als db-1** | **nein. 71 Versuche, keiner gelingt** |
+
+**Die erste Anfrage ist der Befund, den die vierzig verdecken.** Genau dafür war
+sie getrennt gemessen, und das api-2-Muster hat sich bestätigt: der erste
+Aufrufer nach dem Wegfall läuft in einen Zeitablauf von fünf Sekunden und
+bekommt `503`; ab dem zweiten ist der Knoten als tot geführt und alles ist
+wieder bei 0,03 s. Hätte ich nur die vierzig gezählt, stünde hier „kein
+Unterschied" — und das wäre falsch gewesen.
+
+Die Anlage sagt es dabei **vorbildlich**, besser als in jedem der sechs Fälle
+vorher:
+
+```
+api-1  WARN the database did not come free in time, the caller is told to come back
+       reason=db-busy count=1 since=1 retry-after=5
+api-1  WARN callers were turned away because the database was busy or could not be
+       reached busy=1 unreachable=0 new-busy=1 new-unreachable=0
+```
+
+Eigener Grund, eigener Zähler, `retry-after` — und `503` statt der `500`, die
+api-2 geliefert hat. Für den Benutzer heißt das „kommen Sie in fünf Sekunden
+wieder" und nicht „interner Fehler". Das ist die Messlatte, an der der
+api-2-Fall (Punkt 86) zu messen ist: **dieselbe Anlage kann es.**
+
+**Und jetzt der schwere Teil: db-3 kommt nicht zurück.** Nach dem Einschalten
+antwortet die Adresse, aber `mariadb` hängt in `activating` und versucht es
+wieder und wieder — `NRestarts=71`, als ich die Schleife angehalten habe. Jeder
+Versuch startet einen vollen Abgleich und endet so:
+
+```
+[ERROR] WSREP: gcs_group_handle_join_msg(): Will never receive state. Need to abort.
+```
+
+`grastate.dat` auf db-3 danach: `uuid: 00000000-0000-...`, `seqno: -1`,
+`safe_to_bootstrap: 0` — der Knoten hat keinen Stand mehr, von dem aus er
+anknüpfen könnte, und braucht einen vollen Abgleich, der nicht zustande kommt.
+
+**Die Ursache habe ich nicht.** Was ich habe, ist eine widerlegte Vermutung: ich
+hatte die Firewall im Verdacht, weil der Abgleich über Port 4444 läuft. Die
+Regel auf db-1 sagt das Gegenteil, und damit ist der Verdacht erledigt:
+
+```
+ip saddr { 10.2.3.212, 10.2.3.217, 10.2.3.218 } tcp dport { 4444, 4567, 4568 } accept
+```
+
+Mein Portklopfen von db-3 aus (`4444 ZU`) beweist ebenfalls nichts: 4444 lauscht
+nur, **während** ein Abgleich läuft, und db-1 ist dabei nicht der Lauschende.
+Eine Sonde, die den Normalzustand für einen Befund nimmt, misst sich selbst.
+
+### Die Ursache ist gefunden, und meine Vermutung war falsch
+
+Hier stand: „ein kurzer Ausfall knüpft vermutlich inkrementell an, ein langer
+braucht den vollen Abgleich — und der ist das, was scheitert", gestützt darauf,
+dass eine Nachbarsitzung db-3 48 Sekunden lang gestoppt hatte und er nach fünf
+Sekunden wieder im Verbund war, während mein Fenster sechs Minuten lang war.
+**Das war falsch, und der richtige Satz ist schärfer.** Gefunden hat ihn die
+Release-Sitzung; hier steht er als deren Messung.
+
+Es war **nie ein voller Abgleich**. Der Spender sagt wörtlich
+`IST failed … Connection refused` — das ist der *inkrementelle* Weg, und
+„refused" heißt, dass dort niemand lauschte. (Das ist zugleich das zweite
+Argument gegen die Firewall: eine mit `policy drop` lässt ins Leere laufen, sie
+weist nicht ab. Mein erstes war die Regel selbst — damit ist sie doppelt
+ausgeschlossen.)
+
+Die Ursache: **db-3 öffnete seinen Empfänger auf einer link-lokalen
+IPv6-Adresse und nannte dem Spender den Namen.** db-1 löste den Namen auf
+10.2.3.218 auf, und dort lauschte nichts. Bei dreißig Sekunden Ausfall wäre das
+genauso gescheitert — die Dauer war nie der Unterschied.
+
+**Der Unterschied war Dienst-Stopp gegen VM-Stopp.** Beim VM-Stopp liegt ein
+Neustart dazwischen, und `cloud-init` schreibt beim Start `/etc/hosts` neu — und
+hat dabei die Zeile verworfen, die den eigenen Namen auf die echte Adresse legte.
+
+**Und das wirft eine Einschränkung auf diese ganze Reihe zurück.** Alle sechs
+Fälle oben sind mit `qm stop` gemessen, also sechsmal der **VM**-Fall. Wo eine
+Maschine etwas zur Laufzeit gesetzt bekommen hat — in `/etc/hosts` oder sonstwo
+—, habe ich den Dienst-Fall nie gesehen. „Ein Dienst-Stopp und ein VM-Stopp sind
+zwei verschiedene Fälle" ist damit keine Feinheit, sondern eine Lücke, die
+**alle sechs Maschinen** betrifft und in keinem Fall oben gemessen ist.
+
+Damit ist auch mein Satz „die 48-Sekunden-Messung konnte diesen Fehler nicht
+finden" nur zufällig richtig gewesen: sie konnte ihn nicht finden, aber nicht
+wegen der Dauer, sondern weil sie den Dienst stoppte und nicht die Maschine.
+
+**db-3 ist inzwischen wieder im Verbund** (`size=3`, `Primary`, `Synced`), und
+das war nicht mein Werk — ich hatte nur die Schleife angehalten.
+
+Der Fall „db-1 fällt bei drei Knoten" war danach noch offen, aus einem anderen
+Grund: db-1 und db-2 trugen denselben Fehler, der db-3 herausgeworfen hat, und
+db-1 trägt die CA und den Datenbestand. **Entschieden** (die Wahl lag bei mir):
+erst wird `wsrep_node_address` auf beiden festgenagelt, dann wird gemessen. Den
+bekannten Mechanismus am Knoten mit der CA noch einmal vorzuführen, kauft keine
+Erkenntnis, sondern nur Risiko. Die Release-Sitzung hat es gemacht; alle drei
+Knoten tragen jetzt ihre Adresse statt ihres Namens, und der Verbund ist dabei
+nie unter drei gefallen.
+
+### db-1 aus, mit drei Knoten — gemessen am 24.10.2026, 19:28–19:31 UTC
+
+**Der Fall, für den der Umbau gemacht wurde, und er geht auf.** Hier war meine
+Erwartung einmal richtig.
+
+| Frage | gemessen |
+|---|---|
+| (a) Oberfläche | **200** |
+| (b) **erste** Anmeldung nach dem Wegfall | **200 in 0,027 s** — kein 503, kein Zeitablauf |
+| (b) 40 in Folge | **40/40 gut** |
+| Verbund | fällt auf 2, bleibt `Primary` |
+| laufende Apps | laufen, unverändert |
+| Selbstfang | **ja, in unter 30 s** |
+
+Der Vergleich mit dem Mittag ist der ganze Punkt: **dieselbe Maschine, am Mittag
+ein Vollausfall mit `E_UNREACHABLE`, jetzt nicht einmal eine langsame Anfrage.**
+Drei Knoten und eine Knotenliste, die alle drei nennt, tragen den Ausfall des
+Knotens, der vorher die ganze Anlage war.
+
+Der Wiederanlauf braucht keine Hand:
+
+```
+19:30:30  WSREP: 1.0 (db-1): State transfer from 2.0 (db-3) complete.
+19:30:30  WSREP: Shifting JOINER -> JOINED -> SYNCED
+19:30:30  WSREP: Synchronized with group, ready for connections
+```
+
+Und eine Einzelheit, die den db-1-Befund vom Mittag ausdrücklich **überholt**:
+`grastate.dat` auf db-1 trägt jetzt `safe_to_bootstrap: 0`. Am Mittag war es
+`1`, und genau daran hing, dass er sich allein hochziehen konnte. Mit dreien ist
+er nicht mehr der Ausgezeichnete — er holt sich den Stand von db-3. **Die
+Eigenschaft, die ich am Mittag gemessen habe, hat die Anlage heute Abend nicht
+mehr.**
+
+### Was die beiden DB-Fälle zusammen über die fünf Sekunden sagen
+
+Das ist der Befund, den erst der Vergleich hergibt:
+
+| | erste Anmeldung nach dem Wegfall |
+|---|---|
+| **db-3** fällt | `503` nach **5,03 s** |
+| **db-1** fällt | `200` nach **0,027 s** |
+
+Dieselbe Anlage, dieselbe Art Ausfall, zweimal ein anderes Ergebnis für den
+ersten Benutzer. Die Strafe von fünf Sekunden ist also **nicht die Knotenliste**
+und nicht der Verbund, sondern ein Zeitablauf beim Verbindungsaufbau, der nur
+anfällt, **wenn der wegfallende Knoten gerade der benutzte war** (so von der
+Release-Sitzung im api-Code eingeordnet; von mir gemessen sind die beiden Zahlen
+oben). Für den Benutzer heißt das: es ist ein Münzwurf, ob ihn ein Knotenausfall
+fünf Sekunden kostet oder nichts.
+
+Und dieselbe Ursache hat in dieser Reihe **zwei Gesichter beim Benutzer**:
+`503` mit `retry-after` und einer Journalzeile mit Zähler (DB-Fall,
+vorbildlich) und `500` ohne eine Zeile im Fehlerprotokoll (api-2-Fall, Punkt
+86). Dass beides aus einem Zeitablauf beim Verbindungsaufbau kommt, macht den
+Unterschied in der Meldung nicht kleiner — es erklärt ihn: niemand hat ihn
+entschieden.
+
+**Was ich deshalb NICHT gemessen habe, und das ist eine Entscheidung.** Der Fall
+„db-1 fällt bei drei Knoten" ist nicht gefahren. Mit db-3 draußen sind es zwei
+von drei; nehme ich db-1 dazu, bleibt **einer**, das Quorum ist weg, und die
+Anlage liegt — und zwar in einem Zustand, von dem ich gerade gemessen habe, dass
+ein Knoten nicht von selbst zurückfindet. Nach der Rangfolge Sicherheit =
+Stabilität vor Leistung ist das kein Fall, den man „noch schnell" fährt. Er
+bleibt offen, bis db-3 wieder im Verbund ist.
+
+**Zustand der Anlage am Ende dieses Falls**, gemessen: Verbund 2 von 3,
+`Primary`, Oberfläche 200, drei Anmeldungen hintereinander 200 bei 0,03 s. Für
+den Benutzer ist nichts kaputt; kaputt ist die **Reserve**. Die Schleife auf
+db-3 habe ich angehalten (`systemctl stop mariadb`), weil 71 erfolglose
+Versuche keine Selbstheilung sind, sondern Last — der Knoten war zu dem
+Zeitpunkt ohnehin nicht im Verbund, das Anhalten ändert an der Anlage nichts und
+ist mit einem `start` rückgängig.
+
+## Was offen bleibt
+
+**Der Ausfall aller drei Datenbankknoten gleichzeitig ist ungemessen — und was
+die Anlage dafür bereithält, ist gemessen.** Auf allen drei Knoten steht am
+24.10.2026 abends in `/var/lib/mysql/grastate.dat`:
+
+```
+db-1, db-2, db-3:   seqno: -1,  safe_to_bootstrap: 0
+```
+
+(Von mir auf allen drei einzeln gelesen, bei laufendem Verbund `size=3`.)
+
+Was daraus **folgt** — Galeras eigene Regel, also eine Überlegung und keine
+Messung: fallen alle drei **unsauber** zugleich weg (Stromausfall, Neustart des
+Wirts, oder dreimal `qm stop`), darf **kein** Knoten den Verbund von selbst
+hochziehen. Keiner weiß, ob er den neuesten Stand hat, also wartet jeder — und
+die Anlage braucht `galera_new_cluster` von Hand. `seqno: -1` heißt genau das:
+keiner hat beim Anhalten seinen Stand hinterlassen.
+
+Damit hat der Umbau auf drei Knoten **auch etwas weggenommen**, und das ist das
+Gegenstück zum db-1-Fall oben. Am Mittag trug der einzelne Knoten
+`safe_to_bootstrap: 1` und fing sich nach einem harten Schnitt in vier Sekunden
+allein. Jetzt übersteht die Anlage den Verlust **eines** Knotens, ohne dass ein
+Benutzer es merkt — und sie steht, bis jemand kommt, wenn **alle** zugleich
+weg sind. Der eine Fall ist häufig und ist jetzt gelöst; der andere ist selten
+und war vorher gelöst.
+
+Das ist kein Vorwurf an den Umbau — ein seltener Fall mit einem Handgriff ist
+besser als ein häufiger ohne. Aber es ist genau die Sorte Veränderung, die man
+nicht merkt, bis sie eintritt, und es ist der Fall, der heute früh von 02:45 bis
+09:30 gedauert hat. Wer ihn messen will, braucht ein Fenster, in dem die Anlage
+liegen darf, und sollte vorher wissen, wo `galera_new_cluster` steht.
+
+**Der Ausfall von zwei Datenbankknoten gleichzeitig ist ungemessen.** Keine der
+beteiligten Sitzungen hat ihn gefahren, und aus zwei verschiedenen Gründen, die
+beide dastehen sollen. Bei mir ist es Methode: ich hatte die Erwartung dafür
+nicht aufgeschrieben, und ohne die fange ich nicht an. Bei der Release-Sitzung
+ist es der Auftrag — zwei von drei Knoten anzuhalten heißt, die Mehrheit der
+laufenden Anlage wegzunehmen und jedes Schreiben zu verweigern, und das ist
+Thomas' Entscheidung, nicht ihre. Die Erwartung dazu ist **ihre und unbelegt**:
+lesen geht noch, jedes Schreiben wird verweigert, und die Anlage sollte `503`
+mit `db-busy` liefern und nicht `500`. Nach den beiden gemessenen DB-Fällen ist
+das plausibel — aber plausibel ist nicht gemessen, und die Reihe oben lebt
+davon, dass der Unterschied benannt wird.
+
+**Eins, und es ist dasselbe in allen sechs Fällen: (c) Apps sehen, (d) eine App
+öffnen und (e) eine neue einrichten sind nicht gemessen.** Dafür braucht es eine
+Anmeldung, und in `ngc_user` steht genau ein Benutzer: `weiricth`, `admin`, kein
+TOTP. Ohne dessen Kennwort kommt man über den ersten Schritt nicht hinaus.
+Gemessen ist darum überall der Anfang der Anmeldung (`login/start`) und nie ihr
+Ende. Was die Oberfläche in den Fällen *zeigt*, ist für db-1 am Code belegt
+(`err.unreachable` gegen `login.failed`) und sonst offen.
+
+Der Sperrzähler stand der Messung nicht im Weg und ist nachgelesen:
+`lock.go` hat `freeCount = 2`, danach verdoppelnde Wartezeit bis
+`maxWait = 300` s, keine dauerhafte Sperre — und `login/start` zählt überhaupt
+keinen Fehlversuch, nur `login/finish` tut das. Die Sonden dieses Blattes haben
+also niemanden ausgesperrt.
+
+Drei weitere Löcher, ausdrücklich benannt:
+
+1. **Die stündliche Katalogrunde über eine lange Zeit.** Dass 168 erfolglose
+   Versuche keine Zeile hinterlassen, ist am Code belegt und an einer
+   erzwungenen Runde gemessen — nicht an einem Ausfall von einer Woche.
+2. **`safe_to_bootstrap: 0`.** Dass db-1 sich selbst fängt, ist für den Fall
+   gemessen, in dem die Datei `1` trägt. Der bekannte Stillstand von heute früh
+   braucht `0`, und **diesen Fall hat niemand erzeugt.** Er steht hier nicht
+   unter „abgewogen", sondern unter „offen".
+3. **Ob das `::` der Weg aller neun api-2-Fehlschläge ist.** Belegt ist eine
+   `[::1]`-Zeile von neun, und dass das `::` im Anfrageweg liegt.
+
+Eine **Berichtigung**, die ich von der Sicherungs-Sitzung übernehme und die
+meinen eigenen Text betrifft: der logische Dump, den ich vor dem db-1-Fall
+gezogen habe, war mein Rückweg für diese Messung und ist **nicht** der Rückweg
+dieser Anlage. Ein zurückgespielter Dump kann Code ausführen, und `register.go`
+macht aus genau diesem Grund keinen. Wer einen Rückweg baut, nimmt
+`mariabackup` mit den Schlüsseln unter `/etc/ngc/db-keys` — dort gilt der
+Hinweis auf die Schlüssel, den ich für den Dump zurückgewiesen hatte, in voller
+Länge. Mein Einwand war für das logische Werkzeug richtig und für das
+physische falsch.
+
+Und eine Warnung zu den Sicherungssätzen oben, damit niemand sie
+missversteht. Am 24.10.2026 existierte von dieser Anlage **keine Sicherung**:
+die Wegwerf-Maschine, auf der der Rückweg geprobt wurde, war abgeräumt und die
+Kopien mitgelöscht (von der Sicherungs-Sitzung berichtet, **nicht von mir
+gemessen**). Gefehlt hat dem fertigen Werkzeug nur ein Ort, und Thomas hat ihn
+am selben Tag genannt: **`d:\ngc_backup`**.
+
+Dort liegt seit 17:05 die logische Sicherung, die ich vor dem db-1-Fall gezogen
+habe, mit einer Datei `WAS-HIER-LIEGT.txt` daneben, die sagt, was sie ist und
+was nicht. Sie ist **kein** Rückweg dieser Anlage — nur die Datenbank, ein Stand
+von 13:36 UTC, und ein zurückgespielter Dump kann Code ausführen, weshalb die
+Anlage selbst keinen macht. Sie liegt dort, weil sie zu diesem Zeitpunkt die
+einzige Sicherung der Datenbank war, die überhaupt existierte, und sonst mit
+meinem Sitzungsordner verschwunden wäre. Dass sie den Kennwort-Abdruck des
+einzigen Benutzers enthält, steht in der Datei daneben; ins Repository gehört
+sie nicht. Der richtige Rückweg bleibt `mariabackup` mit den Schlüsseln unter
+`/etc/ngc/db-keys`, und das Werkzeug dafür gehört der Sicherungs-Sitzung.
+
+**Entschieden am 24.10.2026 nach der Rangfolge Sicherheit = Stabilität vor
+Leistung** (von Thomas delegiert), weil die Sicherungs-Sitzung zwei Orte
+vorschlagen wollte statt einem:
+
+**Nicht zwei Ordner auf derselben Platte.** Das ist die Form, die wie Trennung
+aussieht und keine ist — dieselbe Maschine, dasselbe Konto, dieselben Rechte.
+Wer den einen Ordner lesen kann, kann auch den anderen. Die Zahlen sagen, wo
+die Trennung wirklich liegt, und sie sind gemessen:
+
+| | Größe | gehört |
+|---|---|---|
+| die Daten (`/var/lib/mysql`, App-Daten, Dumps) | **285 MB** | nach `d:\ngc_backup`, wie benannt |
+| die Schlüssel (`/etc/ngc/db-keys`: `keyfile.key`, `keys.enc`, `sst.pass`) | **224 Byte** | in **keinen Ordner** |
+
+224 Byte schließen 285 MB auf. Was sie gefährlich macht, ist nicht ihr Ort,
+sondern dass sie alles aufschließen und in eine Textnachricht passen — also
+gehören sie dorthin, wo dieses Haus Geheimnisse hält (Vaultwarden, der
+Passwortmanager auf dem Stick), nicht in ein Verzeichnis daneben. Ein
+Sicherungsordner ohne die Schlüssel ist Geheimtext; mit ihnen ist er die
+Anlage.
+
+**Nachtrag, und er macht aus der Entscheidung eine Messung** — von der
+Sicherungs-Sitzung gebaut und gemessen, **nicht von mir**: `tools/sicherung.sh`
+nimmt jetzt zwei Ziele und fährt ohne das zweite nicht los (drei Verweigerungen
+je mit Code 2, auch wenn der Schlüsselordner *im* Datenordner liegt — die Pfade
+werden vorher mit `pwd -P` aufgelöst). Der Lauf gegen alle fünf Maschinen
+trennt sich in **348 MB Daten** und **75 KB Schlüssel**. Damit ist das Argument
+nicht nur richtig, sondern billig: 75 KB für fünf Rechner passen als Anhang in
+einen Passwortmanager, und der Datenordner darf liegen, wo Platz ist.
+
+Und sie hat die Trennung **an den Werten geprüft, nicht an den Wörtern**: ein
+`grep` nach Feldnamen findet im Datenordner sieben Treffer, die alle aus
+Zeichenketten in den Programmen des App-Abbilds stammen; die Suche nach den
+achtzehn **echten** Geheimnissen des Schlüsselordners ergibt **0 von 18** im
+Datenordner. Eine Trennung, die nur an Dateinamen geprüft wird, ist nicht
+geprüft.
+
+**Eine Ausnahme bleibt offen und ist keine Nachlässigkeit:** `app-daten.tar` ist
+Klartext, 110–201 MB, zu groß für einen Passwortmanager, und es geht ohne jeden
+Schlüssel auf. Es liegt darum bei den Daten. Nach derselben Rangfolge gehören
+die App-Daten **vor** dem Wegschreiben verschlüsselt — mit einem Schlüssel, der
+in den Schlüssel-Ordner geht und nicht mitfährt.
+
+Die Bedingung dazu war, dass der Weg zurück mit getrenntem Schlüssel **einmal
+gegangen** sein muss, bevor verschlüsselt wird — sonst tauscht man ein
+Leseproblem gegen ein Totalverlustproblem und hat einen grünen Lauf als Beleg.
+Dafür fehlte die Maschine, und was dabei half, kam aus der Vermessung dieses
+Wirts: die **Vorlage VMID 300 (`ngc-vorlage`) stand noch**, 308 und 309 waren
+frei, `ssd_2TB` hatte 1 TB von 1,9 TB frei (`qm list` und `pvesm status` auf
+10.2.3.2, 24.10.2026). Eine Wegwerf-Maschine war also ein Klon und keine
+Neuinstallation.
+
+**Beides ist inzwischen eingelöst — von der Sicherungs-Sitzung gebaut und
+gemessen, nicht von mir.** Auf einem Klon von 300 (VM 311) ist der Weg zurück
+gegangen: `app-daten.tar.enc` lässt sich ohne Schlüssel nicht öffnen, auch nicht
+mit einem leeren und nicht mit einem falschen 32-Byte-Schlüssel („This does not
+look like a tar archive"), mit dem richtigen 6720 Dateien — und danach laufen
+**beide** Apps wieder, Terminal und Uhr. Der Schlüssel ist einer je Maschine und
+Lauf, er kommt über `ssh`-stdin in eine 0600-Datei statt als Argument (ein
+Argument steht in `ps` für jeden Benutzer), und der Klartext wird nirgends eine
+Datei. Kosten: 473 s statt 313 s, Schlüssel-Ordner 106 statt 75 KB.
+
+Eine Einschränkung, die sie selbst nennt und die hier mitsteht, weil sie leicht
+untergeht: **AES-256-CTR gibt Vertraulichkeit, keine Beglaubigung.** Ein
+verändertes Byte fängt die `sha256`-Liste im Verzeichnis — und die fängt einen
+**Unfall**, nicht jemanden, der in den Ordner schreiben darf, denn der kann die
+Liste mitändern. Nach derselben Rechnung wie bei den 224 Byte gehört die
+Prüfsummenliste darum **zu den Schlüsseln**, nicht neben die Daten.
+
+Das war mein Vorschlag, und er ist **gebaut und gemessen** — von der
+Sicherungs-Sitzung, nicht von mir. Mit einem angehängten Byte in
+`app-daten.tar.enc`: der Datenordner allein enthält **null Prüfsummen**, es ist
+also nichts zu vergleichen; mit `summen.txt` aus dem Schlüssel-Ordner meldet
+`sha256sum -c` `app-daten.tar.enc: FAILED` und `state.db: OK`. Damit gilt für
+beide Hälften derselbe Satz: wer nur die Daten hat, kann sie weder lesen noch
+unbemerkt ändern. Laufzeit kostet es nicht.
+
+**Und zu meiner eigenen Datei, nach derselben Rangfolge:** sie bleibt liegen.
+Sie trägt einen argon2id-Abdruck, keinen Klartext, auf dem Rechner ihres
+Besitzers in einem Ordner, den er selbst benannt hat — und sie ist zur Stunde
+die einzige Sicherung der Datenbank, die existiert. Sicherheit und Stabilität
+stehen hier gleich, und bei Gleichstand wiegt „es gibt überhaupt eine
+Sicherung" mehr als „ein Abdruck liegt auf der eigenen Platte". Sobald das
+richtige Werkzeug einmal dorthin geschrieben hat, kann sie weg.
+
+Zwei Zahlen aus den Nachbarsitzungen, die beim Wiederanlauf zählen und hier
+stehen, damit sie nicht in Nachrichten verschwinden — **von dort gemessen,
+nicht von mir**: kein App-Container hat eine eigene cgroup, es greift
+`TasksMax=3466` des Controllers (gemessen nachher: 24 bzw. 16 Aufgaben, der
+Deckel ist weit weg); und der Systembenutzer einer App wird nur von
+`install/activate.go` angelegt, nie von `node.Restore` — nach einer
+*Wiederherstellung* bleibt eine App darum aus, auch wenn sie nach einem
+*Ausfall* von selbst zurückkommt. Beides sind verschiedene Wege, und dieses
+Blatt hat nur den zweiten gemessen.
+
+**svc-1 trägt `ngc-controller` 0.2.2, svc-2 trägt 0.2.1, db-1 ebenfalls 0.2.1.**
+Die Knoten sind nicht gleich. Dass beide svc-Knoten sich gleich verhalten
+haben, ist gemessen — dass sie es wegen der Fassungen müssten, nicht.
