@@ -820,7 +820,7 @@ api-1  WARN callers were turned away because the database was busy or could not 
 Eigener Grund, eigener Zähler, `retry-after` — und `503` statt der `500`, die
 api-2 geliefert hat. Für den Benutzer heißt das „kommen Sie in fünf Sekunden
 wieder" und nicht „interner Fehler". Das ist die Messlatte, an der der
-api-2-Fall (Punkt 86) zu messen ist: **dieselbe Anlage kann es.**
+api-2-Fall (Punkt 90) zu messen ist: **dieselbe Anlage kann es.**
 
 **Und jetzt der schwere Teil: db-3 kommt nicht zurück.** Nach dem Einschalten
 antwortet die Adresse, aber `mariadb` hängt in `activating` und versucht es
@@ -949,7 +949,7 @@ fünf Sekunden kostet oder nichts.
 Und dieselbe Ursache hat in dieser Reihe **zwei Gesichter beim Benutzer**:
 `503` mit `retry-after` und einer Journalzeile mit Zähler (DB-Fall,
 vorbildlich) und `500` ohne eine Zeile im Fehlerprotokoll (api-2-Fall, Punkt
-86). Dass beides aus einem Zeitablauf beim Verbindungsaufbau kommt, macht den
+90). Dass beides aus einem Zeitablauf beim Verbindungsaufbau kommt, macht den
 Unterschied in der Meldung nicht kleiner — es erklärt ihn: niemand hat ihn
 entschieden.
 
