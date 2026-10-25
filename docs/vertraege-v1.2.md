@@ -224,6 +224,8 @@ gibt, aber erst nach dem Schreiben.
 | 90 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
 | 91 | Die fünf Sekunden sind zwei eigene Zahlen derselben Länge | gilt – Anwahlfrist auf 1 s, Stufe **Stabilität**, am laufenden System belegt; Vorlagenteil zu Punkt 90 mitgebaut | Entscheidung |
 | 92 | Bei verlorener Mehrheit ist auch das Lesen zu – und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500` | gilt – **schärft Punkt 90**; die Anlage antwortet ehrlich, zwei eigene Erwartungen widerlegt | Messung |
+| 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
+| 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6957,3 +6959,127 @@ schon, ist mit einer Messung **nicht** geklärt.
 
 Herkunft, beide Erwartungsspalten und alle Rohzahlen: `docs/ausfall-nachtrag.md`.
 Werkzeuge: `tools/ausfall-mehrheit.sh`, `tools/ausfall-dienst.sh`.
+## Punkt 93: Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach
+
+Auf allen drei Datenbankknoten lag `/etc/mysql/mariadb.conf.d/99-erstlauf-log.cnf`
+mit einer einzigen wirksamen Zeile:
+
+```
+[mariadbd]
+innodb_encrypt_log=OFF
+```
+
+Sie überschrieb `innodb_encrypt_log=ON` aus `60-ngc.cnf`. Gemessen am 25.10.2026:
+`SHOW VARIABLES` gab auf db-1, db-2 und db-3 übereinstimmend `OFF`, bei sonst
+vollständiger Verschlüsselung (`innodb_encrypt_tables=FORCE`,
+`file_key_management ACTIVE`). Das Wiederherstellungsprotokoll lag also im
+Klartext, während die Tabellen verschlüsselt waren.
+
+**Warum sie abgeschaltet war — und warum das kein Zugeständnis ist.** Die Datei
+stammt aus `/root/dbneu2.sh` auf db-1. Das Skript schreibt sie *absichtlich* als
+ersten Schritt, damit beim Neuanlegen des Datenordners überhaupt ein lesbares
+Protokoll entsteht, und **löscht sie im zweiten Schritt wieder**, bevor es mit
+`ON` neu startet. Der zweite Schritt wurde nie erreicht. Im Journal von db-1
+steht, woran es lag:
+
+```
+22:26:37 [ERROR] WSREP: Error setting SSL cipher list to 'TLS_AES_256_GCM_SHA384'
+22:26:37 [ERROR] WSREP: Failed to load provider
+22:26:37 [ERROR] Aborting
+```
+
+Das ist **Punkt 88**, der Galera-Verkehr ohne Cipher-Beschränkung. Das Skript
+brach daran ab, die Datei blieb liegen, und um 22:26:58 kam die Datenbank mit
+der liegengebliebenen Datei hoch. Die Abschaltung war also nie als nötig
+erwiesen — sie ist ein Rest eines Laufes, der an einer ganz anderen Stelle
+scheiterte.
+
+**Der Grund, warum sie trotzdem nicht einfach wegkonnte.** Der Datenordner wurde
+*unter* dieser Datei angelegt, das Protokoll war damit unverschlüsselt
+geschrieben. MariaDB 11.8 legt ein unlesbares Protokoll nicht von selbst neu an;
+bei einem **sauberen** Herunterfahren dagegen schon. Der Weg war deshalb je
+Knoten: sauber stoppen, Abschaltung im Journal nachlesen, Datei entfernen,
+starten.
+
+**Gefahren, rollend, am 25.10.2026:**
+
+| Knoten | Fenster | saubere Abschaltung | danach |
+|---|---|---|---|
+| db-1 (.212) | 10:59:26–10:59:46, 20 s | `log sequence number 2399724`, `seqno: 1992` | `innodb_encrypt_log ON`, Synced |
+| db-2 (.217) | 11:09:56–11:10:01, 5 s | `log sequence number 2736097`, `seqno: 2340` | `innodb_encrypt_log ON`, Synced |
+| db-3 (.218) | — | — | **offen, steht weiter auf `OFF`** |
+
+Der gefürchtete `Malformed log record` kam auf keinem der beiden Knoten. Und
+genau das ist der Beweis, dass MariaDB das Protokoll beim sauberen Stopp neu
+angelegt hat: wäre das alte, unverschlüsselte Protokoll geblieben, hätte der
+Dienst mit `ON` gar nicht erst starten können.
+
+**Warum db-3 offen blieb — und ein Befund über das Arbeiten zu mehreren.** Beim
+Nachmessen nach db-2 war db-1 weg. Nicht durch mich: im Journal von db-1 steht
+eine saubere Abschaltung um **11:09:03**, 53 Sekunden *bevor* ich db-2 stoppte,
+davor vier kurze SSH-Anmeldungen vom selben Arbeitsplatz mit demselben
+Schlüssel. Eine zweite Sitzung arbeitete gleichzeitig an db-1.
+
+Damit lief die Anlage von 11:09:56 bis 11:10:01 auf **einem** Knoten von dreien.
+Das ging gut, und zwar aus einem Grund, der nicht mein Verdienst ist: beide
+Knoten sind **sauber** gegangen, und bei einem geregelten Abgang schrumpft
+Galera die erwartete Mannschaft mit. db-3 blieb durchgehend `primary`
+(`members = 1/1`, `component = PRIMARY`), die Anmeldung antwortete vorher wie
+nachher mit `HTTP 200` in 0,005 s. Hätte die andere Sitzung db-1 hart
+abgeschossen statt sauber gestoppt, wäre db-3 beim Wegfall von db-2 in
+`non-Primary` gegangen und die Anlage hätte gestanden.
+
+**Die Lehre, die ich mittrage:** Der Verbund gehört **vor jedem einzelnen
+Knoten** gemessen, nicht einmal vor dem ersten. Die Regel „rollend, nie zwei
+zugleich" aus Punkt 88 reicht nicht, wenn man nicht der einzige ist, der sie
+befolgt — sie setzt stillschweigend voraus, dass niemand sonst an der Anlage
+steht.
+
+Der Rückweg liegt je Knoten unter `/root/99-erstlauf-log.cnf.rueckweg` und bleibt
+dort, bis db-3 durch ist.
+
+Herkunft und die Tafel aller acht Maschinen: `docs/messreste-je-maschine.md`.
+
+## Punkt 94: Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann
+
+In `ulh`, `apps/cli/assets/scripts/ngc-db.sh`, legt `ensure_encryption_keys()`
+das Schlüsselpaar für `file_key_management` an:
+
+```sh
+openssl enc -aes-256-cbc -pbkdf2 -md sha256 -salt \
+	-in "$plain" -out "${WORK}/keys.enc" -pass "file:${pass}"
+```
+
+MariaDBs `file_key_management` leitet den Schlüssel über OpenSSLs altes
+`EVP_BytesToKey` ab — das entspricht `-md sha1` **ohne** `-pbkdf2`. Was diese
+Funktion schreibt, kann der Plugin daher nie lesen. Gemessen am 23.10.2026 beim
+Aufbau von db-1:
+
+```
+[ERROR] mariadbd: Cannot decrypt /etc/ngc/db-keys/keys.enc. Wrong key?
+[ERROR] Plugin 'file_key_management' init function returned error.
+[ERROR] InnoDB: cannot enable encryption, encryption plugin is not available
+[ERROR] Unknown/unsupported storage engine: InnoDB
+[ERROR] Aborting
+```
+
+Der Knoten startet nicht. Das ist kein Randfall: es trifft **jede** frisch
+installierte Datenbankmaschine.
+
+**An der Anlage ist der Fehler nicht sichtbar, weil er von Hand umgangen wurde.**
+`/root/dbfix.sh` auf db-1 schreibt das Paar mit `-md sha1` neu, und sein eigener
+Kopf sagt, was das bedeutet:
+
+> Das ist KEINE Behebung im Code: ngc-db.sh schreibt beim naechsten Lauf wieder
+> -pbkdf2 -md sha256.
+
+Die Schlüsseldateien auf db-1, db-2 und db-3 sind damit **von Hand gesetzt** und
+stimmen mit nichts überein, was ein Installationslauf erzeugen würde. Das ist
+der Grund, warum dieser Punkt hier steht und nicht in der Aufräumliste: an der
+Anlage ist nichts zu tun, im Quelltext schon.
+
+Behoben gehört es in `ulh`, nicht hier. Die Prüfdatei `ngc-db.test.sh` prüft an
+den Stellen 449 und 452 ausdrücklich auf `-pbkdf2 -md sha256` und schreibt den
+Fehler damit fest.
+
+Herkunft: an der Anlage gemessen, Quelltext gelesen in `/root/ulh` auf db-2.
