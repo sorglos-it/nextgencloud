@@ -13,7 +13,8 @@ import { UICache, openAppUI } from "./appframe.js";
 import { iconName, fillGlyph } from "./icon.js";
 import { APPS, Changed, RIGHTS } from "./changed.js";
 import {
-  ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentChoice, toggleTheme,
+  ACCENTS, DENSITIES, WALLPAPERS, applyAccent, applyDensity, applyTheme, applyWallpaper,
+  currentChoice, currentDensity, toggleTheme,
 } from "./theme.js";
 
 // The apps whose face the web interface itself builds: app id to the function
@@ -316,7 +317,24 @@ class Desktop {
     }
     this.paperRow = papers;
 
-    box.append(head, themes, colors, papers);
+    // Eng oder luftig (docs/gestaltung.md Punkt 5). HERE and nowhere else:
+    // this is where colour and wallpaper already stand, and the decision was
+    // "no new place, no new store". Nothing is typed in, so there is nothing
+    // to get wrong, and three named steps are a choice a person can make
+    // without knowing what a pixel is.
+    const dens = el("div", "row");
+    for (const d of DENSITIES) {
+      const b = button("b", d.name, null);
+      b.dataset.density = d.id;
+      b.addEventListener("click", () => {
+        applyDensity(d.id);
+        this.markLook();
+      });
+      dens.append(b);
+    }
+    this.densRow = dens;
+
+    box.append(head, themes, dens, colors, papers);
     return box;
   }
 
@@ -329,6 +347,8 @@ class Desktop {
     // dark like any other moment.
     const t = currentChoice();
     for (const b of this.themeRow.children) b.classList.toggle("on", b.dataset.theme === t);
+    const d = currentDensity();
+    for (const b of this.densRow.children) b.classList.toggle("on", b.dataset.density === d);
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
     for (const b of this.colorRow.children) b.classList.toggle("on", b.dataset.accent === accent);
     const bg = this.wallpaper.style.background;

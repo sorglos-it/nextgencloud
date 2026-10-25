@@ -71,7 +71,7 @@ test("nothing chosen means the machine decides", async ({ shell }) => {
     .toBe("#e7ecf4");
   // The start menu marks that choice, and only that one.
   await shell.getByRole("button", { name: "Start" }).click();
-  await expect(shell.locator("#smlook .row button.on")).toHaveCount(1);
+  await expect(shell.locator("#smlook .row button[data-theme].on")).toHaveCount(1);
   await expect(shell.locator('#smlook .row button[data-theme="system"]')).toHaveClass(/on/);
 });
 
@@ -79,6 +79,7 @@ test("a chosen design overrules the machine and is kept", async ({ shell }) => {
   await shell.getByRole("button", { name: "Design wechseln" }).click();
   await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
   await shell.reload();
+  await signIn(shell);
   await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
   // On a light machine, and it stays dark: that is what "overrules" means.
   expect(await shell.evaluate(() => matchMedia("(prefers-color-scheme: light)").matches)).toBe(true);
@@ -94,6 +95,7 @@ test("the choice can be handed back to the machine", async ({ shell }) => {
   // Kept as a choice of its own: a reload comes back following the machine
   // and not back on the dark that was stored before it.
   await shell.reload();
+  await signIn(shell);
   await expect(shell.locator("html")).not.toHaveAttribute("data-theme", /.*/);
 });
 
@@ -110,6 +112,75 @@ test("the shell follows the machine changing its mind, without being reloaded", 
   expect(await shell.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue("--page-bg").trim()))
     .toBe("#e7ecf4");
+});
+
+// docs/gestaltung.md point 5: the spacing and the font size are the person's
+// own setting, in three named steps, and the default is the density that was
+// measured. The numbers are read off the DRAWN page - getComputedStyle - and
+// not out of the stylesheet: what a person calls "tighter" is what the browser
+// put on the screen.
+test("the density is the measured one until somebody changes it", async ({ shell }) => {
+  await expect(shell.locator("html")).not.toHaveAttribute("data-density", /.*/);
+  expect(await shell.evaluate(() => getComputedStyle(document.body).fontSize)).toBe("14px");
+  await shell.getByRole("button", { name: "Start" }).click();
+  await expect(shell.locator("#smlook .row button[data-density].on")).toHaveCount(1);
+  await expect(shell.locator('#smlook .row button[data-density="normal"]')).toHaveClass(/on/);
+});
+
+test("tighter and airier change the font and the padding, and are kept", async ({ shell }) => {
+  // One row of the Store is the thing the spec measures the density by: its
+  // padding is the "9 to 11 pixels" of today. Read before and after.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "App-Store", exact: true }).click();
+  const row = () => shell.locator(".store .row").first().evaluate((e) => {
+    const c = getComputedStyle(e);
+    return { pad: c.paddingTop, font: getComputedStyle(document.body).fontSize };
+  });
+  await expect(shell.locator(".store .row").first()).toBeVisible();
+  expect(await row()).toEqual({ pad: "10px", font: "14px" });
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Eng", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "eng");
+  expect(await row()).toEqual({ pad: "7px", font: "12.5px" });
+
+  await shell.getByRole("button", { name: "Luftig", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "luftig");
+  expect(await row()).toEqual({ pad: "13px", font: "15.5px" });
+
+  // Kept over a reload, like the design and the colour.
+  await shell.reload();
+  await signIn(shell);
+  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "luftig");
+  expect(await shell.evaluate(() => getComputedStyle(document.body).fontSize)).toBe("15.5px");
+
+  // And back: "Wie heute" writes no attribute at all, so the sizes of :root
+  // are what is drawn - there is no second copy of those three numbers.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Wie heute", exact: true }).click();
+  await expect(shell.locator("html")).not.toHaveAttribute("data-density", /.*/);
+  await shell.reload();
+  await signIn(shell);
+  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expect(shell.locator("html")).not.toHaveAttribute("data-density", /.*/);
+  expect(await shell.evaluate(() => getComputedStyle(document.body).fontSize)).toBe("14px");
+});
+
+test("no density makes a window too small to close", async ({ shell }) => {
+  // THE PRICE OF THE SETTING, guarded. --win-min-w/h is measured against the
+  // three buttons of the title bar; a step that shrank it would be a step
+  // that makes a window impossible to get rid of. No step touches it.
+  const min = () => shell.evaluate(() => {
+    const c = getComputedStyle(document.documentElement);
+    return [c.getPropertyValue("--win-min-w").trim(), c.getPropertyValue("--win-min-h").trim()];
+  });
+  expect(await min()).toEqual(["240px", "150px"]);
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Eng", exact: true }).click();
+  expect(await min()).toEqual(["240px", "150px"]);
+  await shell.getByRole("button", { name: "Luftig", exact: true }).click();
+  expect(await min()).toEqual(["240px", "150px"]);
 });
 
 test("a name from outside is never HTML", async ({ shell }) => {

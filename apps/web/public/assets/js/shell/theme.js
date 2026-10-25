@@ -9,6 +9,7 @@
 const KEY_THEME = "ngc.theme";
 const KEY_ACCENT = "ngc.accent";
 const KEY_WALLPAPER = "ngc.wallpaper";
+const KEY_DENSITY = "ngc.density";
 
 // The two designs there are. A name outside this list never reaches the
 // document, and applyTheme refuses it.
@@ -44,6 +45,21 @@ export const WALLPAPERS = [
 ];
 
 export const ACCENTS = ["#2f7de1", "#16d1c3", "#e14f8a", "#f0a020", "#8b5cf6", "#22c55e"];
+
+// Eng, wie heute, luftig (docs/gestaltung.md Punkt 5). The names a person
+// reads stand with them, because this is the one list of them: the start menu
+// draws its three buttons out of this and nothing else.
+//
+// "normal" is the default and writes NO attribute: the sizes of :root are the
+// density that was measured and checked, and a second place holding the same
+// three numbers is a place for them to drift apart. Same shape as the theme's
+// "system", and for the same reason.
+export const DENSITIES = [
+  { id: "eng", name: "Eng" },
+  { id: "normal", name: "Wie heute" },
+  { id: "luftig", name: "Luftig" },
+];
+export const DEFAULT_DENSITY = "normal";
 
 const listeners = new Set();
 
@@ -170,6 +186,23 @@ export function applyAccent(c) {
   write(KEY_ACCENT, c);
 }
 
+// What the document shows, read off the document itself for the reason
+// markLook reads it: the mark in the menu and the screen cannot then drift.
+export function currentDensity() {
+  const d = document.documentElement.dataset.density;
+  return DENSITIES.some((x) => x.id === d) ? d : DEFAULT_DENSITY;
+}
+
+// applyDensity sets the two size tokens of shell.css, by name. It writes no
+// number of its own: the numbers are in the stylesheet, where the shell's
+// other sizes are, and this only says which of the three sets is in force.
+export function applyDensity(id) {
+  if (!DENSITIES.some((x) => x.id === id)) return;
+  if (id === DEFAULT_DENSITY) delete document.documentElement.dataset.density;
+  else document.documentElement.dataset.density = id;
+  write(KEY_DENSITY, id);
+}
+
 export function applyWallpaper(id) {
   const w = WALLPAPERS.find((x) => x.id === id) || WALLPAPERS[0];
   const e = document.getElementById("wallpaper");
@@ -204,4 +237,13 @@ export function initTheme() {
   else delete document.documentElement.dataset.theme;
   const a = read(KEY_ACCENT);
   if (ACCENTS.includes(a)) document.documentElement.style.setProperty("--accent", a);
+  // The density, remembered the same way and set in the same breath: before
+  // the desktop is built, so nothing is drawn at one density and redrawn at
+  // another.
+  const d = read(KEY_DENSITY);
+  if (DENSITIES.some((x) => x.id === d) && d !== DEFAULT_DENSITY) {
+    document.documentElement.dataset.density = d;
+  } else {
+    delete document.documentElement.dataset.density;
+  }
 }
