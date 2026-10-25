@@ -191,10 +191,16 @@ Damit die Skripte ohne Rückfragen laufen. Schlüssel je Skript:
     SSLProxyCipherSuite TLSv1.3 TLS_AES_256_GCM_SHA384
 
     <Proxy "balancer://ngc-api">
-        BalancerMember "https://api-1.ngc.test:7443" retry=5 timeout=65 keepalive=On upgrade=websocket
-        BalancerMember "https://api-2.ngc.test:7443" retry=5 timeout=65 keepalive=On upgrade=websocket
+        BalancerMember "https://api-1.ngc.test:7443" retry=5 timeout=65 connectiontimeout=2 keepalive=On upgrade=websocket
+        BalancerMember "https://api-2.ngc.test:7443" retry=5 timeout=65 connectiontimeout=2 keepalive=On upgrade=websocket
         ProxySet lbmethod=byrequests failontimeout=On
     </Proxy>
+
+    # A 503 of the balancer's own carries the same header a busy database gives.
+    Header always set Retry-After "5" "expr=%{REQUEST_STATUS} == 503"
+    # A member that cannot be reached belongs in the error log, not only in the
+    # access log.
+    LogLevel proxy:info proxy_balancer:info
 
     ProxyPreserveHost Off
     ProxyPass        "/api/" "balancer://ngc-api/api/"

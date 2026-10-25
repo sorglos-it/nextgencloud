@@ -222,7 +222,7 @@ gibt, aber erst nach dem Schreiben.
 | 88 | Der Galera-Verkehr lief ohne Cipher-Beschränkung – die Vorlage war richtig, die Anlage nicht | gilt – an allen drei Knoten behoben, rollend, Verbund durchgehend vollständig | Sicherheit |
 | 89 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
 | 90 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
-| 91 | Die fünf Sekunden sind zwei eigene Zahlen derselben Länge | gilt – Anwahlfrist auf 1 s, Stufe **Stabilität**; Vorlagenteil **offen, wartet auf Thomas** (`shared/` eingefroren) | Entscheidung |
+| 91 | Die fünf Sekunden sind zwei eigene Zahlen derselben Länge | gilt – Anwahlfrist auf 1 s, Stufe **Stabilität**, am laufenden System belegt; Vorlagenteil zu Punkt 90 mitgebaut | Entscheidung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6837,9 +6837,16 @@ API wegen einer beschädigten Zeile aus dem Verteiler nehmen und ihren ehrlichen
 Fehlerseite ersetzen. Die Erscheinung ist das nicht wert. Was von Punkt 90 danach übrig bleibt,
 braucht das `::` aus den Namen (Punkt 80) — und das liegt beim Netz.
 
-**Offen, wartet auf Thomas, und es ist der Grund, warum diese drei Zeilen hier noch NICHT
-gebaut sind:** `shared/ulh.md` hält die Datei `apache-apis.conf` Zeichen für Zeichen als Vertrag,
-und `TestBalancerTemplateMatchesTheContract` vergleicht beide Seiten. Die Vorlage lässt sich also
+**Gebaut, und der Weg dahin gehört in den Punkt:** `shared/ulh.md` hält die Datei
+`apache-apis.conf` Zeichen für Zeichen als Vertrag, und
+`TestBalancerTemplateMatchesTheContract` vergleicht beide Seiten. Die Vorlage lässt sich also
 nicht ändern, ohne **einen Beispielblock in `shared/ulh.md` mitzuziehen** — und `shared/` ist
-eingefroren. Die fertige Änderung liegt als Patch bereit; sie braucht eine Zeile Freigabe für
-diese **eine** Dokumentdatei.
+eingefroren. Thomas hat am 25.10.2026 die Freigabe für genau diesen **einen** Beispielblock
+gegeben; Code in `shared/` ist nicht angefasst.
+
+**Was an Fall 2 NICHT geprüft ist, und es bleibt der ehrliche Rest:** auf der Maschine, auf der
+das geschrieben wurde, läuft kein Apache. Dass die drei Zeilen von Apache **angenommen** werden,
+ist unbelegt — wie in jedem Fall dieses Pakets. `headers_module` und `proxy_balancer_module`
+sind auf api-1 als geladen gelesen (25.10.2026). Und ob die neun Fehlschläge vom 24.10.2026
+damit auf null gehen, ist **nicht** nachgemessen: das bräuchte wieder einen Maschinen-Stopp von
+api-2, und der gehört in einen eigenen Lauf.
