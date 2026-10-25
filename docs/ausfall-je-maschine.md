@@ -1106,6 +1106,12 @@ Tag genannt: **`d:\ngc_backup`**. Beide Ordner hat er inzwischen selbst wieder
 abgeräumt; die Schlüssel liegen in Vaultwarden. Der folgende Abschnitt
 beschreibt den Stand von damals und ist als solcher zu lesen.
 
+Der **aktuelle** Stand ist ein anderer: am 25.10.2026 um 12:15 UTC hat die
+Sicherungs-Sitzung einen neuen Lauf über sieben Maschinen gefahren, getrennt
+abgelegt unter `D:\claude\working\ngc-sicherung\` — 456 MB Daten gegen 197 KB
+Schlüssel, alle Prüfsummen je Hälfte in ihrem eigenen Ordner gegengerechnet.
+Das ist ihre Messung, nicht meine.
+
 Dort liegt seit 17:05 die logische Sicherung, die ich vor dem db-1-Fall gezogen
 habe, mit einer Datei `WAS-HIER-LIEGT.txt` daneben, die sagt, was sie ist und
 was nicht. Sie ist **kein** Rückweg dieser Anlage — nur die Datenbank, ein Stand
