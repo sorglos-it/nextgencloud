@@ -1074,7 +1074,32 @@ nötig, keines ersetzt das andere.
 ### Und daraus fällt ein Befund in dieses Blatt
 
 `mode stop`. Der Sicherungslauf **hält jede Maschine an** und fährt sie wieder
-an — jede Nacht ab 03:00, alle neun, nacheinander. Das heißt:
+an — jede Nacht, alle neun, nacheinander.
+
+**Berichtigung an mir selbst:** hier stand „jede Nacht ab 03:00", und meine
+eigenen Zahlen hatten das schon widerlegt — die Zeitstempel, die ich zitiert
+habe, lauten 04:41 bis 04:43. Der *Auftrag* beginnt um 03:00, aber er arbeitet
+sich erst durch die Container des Wirts; bei den NGC-Maschinen ist er **gegen
+04:39 bis 04:45**. Selbst nachgezählt: die Stände vom 25.10. beginnen um
+04:39:10. Wer das Fenster eines nächtlichen Ausfalls sucht, sucht also an der
+falschen Stelle, wenn er bei drei Uhr nachsieht.
+
+Und eine zweite Zahl, die ich nicht hatte und selbst nachgezählt habe:
+
+| VM | Stände auf `hdd_20TB_2` |
+|---|---|
+| 300, 301–306 | **2** (24. und 25.10.) |
+| 307, 308, 309 | **1** (nur 25.10.) |
+
+Die drei mit nur einem Stand sind die, die es am 24.10. noch nicht gab. Das
+schärft `keep-last=2` um eine Stufe: nicht nur „zwei Stände", sondern **eine
+Maschine, die am Tag entsteht, hat bis zur nächsten Nacht gar keinen**. Am
+Abend des 24.10., als ich db-3 abgeschaltet und nicht zurückbekommen habe,
+existierte von db-2 und db-3 in keiner Sicherung des Wirts ein Stand — und in
+der NGC-eigenen auch nicht. (Die Beobachtung stammt von der Sicherungs-Sitzung,
+die Zahlen habe ich nachgezählt.)
+
+Das heißt:
 
 **Der Fall „alle Datenbankknoten gleichzeitig weg", den ich oben als ungemessen
 und offen aufgeschrieben habe, läuft in Wahrheit jede Nacht** — in seiner
@@ -1091,13 +1116,22 @@ ein harter Schnitt sind drei Fälle, nicht zwei.** Meine sechs Fälle oben sind
 alle der dritte (`qm stop`), der nächtliche Lauf ist der zweite, und der erste
 ist in dieser Reihe nie gemessen worden.
 
-**Eine Frage, die ich ausdrücklich offen lasse, statt sie zu beantworten:** am
-Morgen des 24.10. lag die Datenbank von 02:45 bis 09:30. Der Sicherungslauf
-beginnt um 03:00 und hält dabei Maschinen an. Das sind zwei Dinge in derselben
-Nacht, und der Neustart von db-1 um 02:45:03 liegt **vor** dem Lauf — es passt
-also nicht zusammen, und ich habe es nicht gemessen. Wer den Vorfall aufklären
-will, sollte den Sicherungslauf trotzdem als Beteiligten in Betracht ziehen,
-bevor er anderswo sucht.
+**Eine Frage, die ich ausdrücklich offen lasse, statt sie zu beantworten** — und
+sie hat jetzt ein Datum. Am Morgen des 24.10. lag die Datenbank von 02:45 bis
+09:30. Der Sicherungsstand von **VM 303 (db-1) trägt 04:44:45**, selbst
+nachgesehen (`qemu-303-2026_10_24-04_44_45`): der Lauf hat db-1 **mitten im
+Ausfallfenster angehalten und wieder angefahren**.
+
+Was damit entschieden ist: der Lauf kann den Ausfall **nicht ausgelöst** haben.
+Er begann um 02:45, also fast zwei Stunden vorher, und der Neustart von db-1 um
+02:45:03 liegt lange davor.
+
+Was damit **nicht** entschieden ist: ob der Lauf den Zustand **verlängert oder
+verändert** hat. Ein Anhalten und Anfahren mitten in einem Galera-Stillstand ist
+kein neutraler Vorgang, und gemessen hat das niemand. Das Datum steht hier,
+damit wer den Vorfall aufklärt den Lauf aus- oder einschließen kann, statt ihn
+zu übersehen — nicht als Erklärung. (Das Datum hat die Sicherungs-Sitzung
+gefunden, ich habe es nachgesehen.)
 
 ### Was zu `d:\ngc_backup` gehört (Stand 24.10.2026)
 
