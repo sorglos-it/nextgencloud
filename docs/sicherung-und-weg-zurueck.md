@@ -66,7 +66,11 @@ erzeugen kann.
 
 ---
 
-## 2. Die Benutzerdaten haben überhaupt keinen Weg (gemessen)
+## 2. Die Benutzerdaten haben in NGC keinen Weg (gemessen)
+
+> Die Überschrift hieß zuerst „überhaupt keinen Weg“. Das war zu hart: der **Wirt** sichert
+> die Maschinen jede Nacht, die Zeilen liegen also mit. Was NGC selbst nicht kann, steht
+> unverändert unten. Abschnitt 12 hat die Zahlen.
 
 Zwei Stellen im Code sagen einem Admin, wo die MariaDB gesichert wird:
 
@@ -848,6 +852,74 @@ den nächsten Lauf.
 
 ---
 
+## 12. Es gab die ganze Zeit eine andere Sicherung — sie beantwortet eine andere Frage (gemessen)
+
+Dieses Blatt hat zehn Abschnitte lang so gelesen, als hätte die Anlage keinen Rückweg. Das war
+zu hart, und der Hinweis kommt von der Sitzung „Was passiert, wenn ein Rechner ausfällt": der
+Wirt sichert die Maschinen jede Nacht. **Nachgemessen habe ich es selbst**, auf 10.2.3.2, damit
+die Zahlen hier nicht aus zweiter Hand stehen.
+
+```
+/etc/pve/jobs.cfg    mode stop   schedule 03:00
+                     prune-backups keep-last=2   storage hdd_20TB_2
+```
+
+| VM | Stände | Größe je Stand |
+|---|---|---|
+| 300 (Vorlage), 301–306 | **2** — 24. und 25.10. | 0,3 bis 1,2 GB |
+| 307, 308, 309 | **1** — nur 25.10. | 0,6 bis 0,9 GB |
+
+Die drei mit einem Stand sind die, die es am 24.10. noch nicht gab. **Eine Maschine, die am Tag
+entsteht, hat bis zur nächsten Nacht keinen Stand** — db-2 und db-3 waren an dem Abend, an dem
+ich hier gemessen habe, in keiner Sicherung des Wirts, und in meiner auch nicht (Abschnitt 11).
+
+### Was das an diesem Blatt ändert, und was nicht
+
+**Berichtigt:** die Überschrift von Abschnitt 2 — „die Benutzerdaten haben überhaupt keinen
+Weg" — gilt für NGC und nicht für den Rechner, auf dem NGC läuft. Die Zeilen in `ngc_user`,
+`ngc_blob` und `ngc_session` liegen in der nächtlichen VM-Sicherung mit. Was fehlte, war **kein**
+Rückweg, sondern **ein Rückweg der Anlage**: NGC selbst kann seine Daten nicht sichern, und die
+beiden Code-Stellen, die auf `ngc-db backup` zeigen, nennen weiter ein Programm, das es nicht
+gibt. Dieser Teil bleibt unverändert gemessen.
+
+**Zwei verschiedene Fragen, und das ist der Kern:** eine VM-Sicherung holt **Maschinen** zurück.
+Dieses Werkzeug holt eine **Anlage auf andere Maschinen** zurück. Was in Abschnitt 6 und 9 steht
+— eine App lief aus der Sicherung auf einer frischen VM wieder, die dieser Anlage nie gehört hat
+— macht keine Nacht um vier Uhr. Umgekehrt holt mein Werkzeug keine Maschine zurück, es setzt
+eine voraus.
+
+**Und `keep-last=2` ist das Argument, das ich mir nicht ausgedacht habe, sondern das die
+Einstellung des Wirts hergibt:** zwei Stände. Für einen Fehler, der erst nach drei Tagen
+auffällt, ist die VM-Sicherung kein Rückweg. Eine Sicherung, die aufgehoben wird, ist einer.
+
+### `mode stop` — was es über meine eigenen Messungen sagt
+
+Der Lauf **hält jede Maschine an** und fährt sie wieder an, jede Nacht. Bei den NGC-VMs
+geschieht das nicht um 03:00, sondern gegen **04:40** — der Auftrag beginnt um drei und arbeitet
+sich erst durch die Container des Wirts (einer davon 65 GB).
+
+Daraus zwei Berichtigungen an mir selbst:
+
+1. **„Die Anlage übersteht einen sauberen gleichzeitigen Stopp" war nie offen** und ist nicht
+   mein Verdienst. Das passiert jede Nacht. Offen bleibt genau der **unsaubere** gleichzeitige
+   Verlust, und dort greift `safe_to_bootstrap: 0` auf allen drei Knoten (Abschnitt 8).
+2. **Meine Messungen liefen auf einer Anlage, die wenige Stunden vorher sauber durchgestartet
+   war.** Das entwertet keine davon — aber wer sie wiederholt, soll wissen, dass der Zustand
+   „läuft seit Tagen" auf dieser Anlage gar nicht vorkommt.
+
+### Ein Datum zu einer offenen Frage, ausdrücklich ohne Erklärung
+
+Die Datenbank lag am Morgen des 24.10. von 02:45 bis 09:30. Der Sicherungsauftrag beginnt um
+03:00, und **die Sicherung von VM 303 (db-1) an diesem Morgen trägt den Zeitstempel 04:44:45** —
+sie fällt also mitten in das Fenster und hat db-1 dabei angehalten und wieder angefahren.
+
+Das ist ein Datum und **keine Erklärung**: der Ausfall begann um 02:45, mehr als eine Stunde
+**vor** dem Lauf, er kann ihn nicht ausgelöst haben. Ob der Lauf den Zustand verlängert oder
+verändert hat, habe ich nicht gemessen. Wer den Vorfall aufklärt, soll den Lauf aus- oder
+einschließen können, statt ihn zu übersehen — deshalb steht der Zeitstempel hier.
+
+---
+
 ## Was gemessen und was abgewogen ist
 
 **Gemessen** (Lauf, Zahl, Ausstiegscode):
@@ -865,6 +937,10 @@ den nächsten Lauf.
   das Nichtanlaufen der Uhr samt Gegenprobe mit angehaltenem Nachbarn.
 - Abschnitt 7 ganz, einschließlich des zweiten Laufs mit der Prüfung (180 s) und der
   Gegenprobe, dass sie bei einem einzigen Byte greift.
+- Abschnitt 12 ganz — der Sicherungsauftrag des Wirts, die Stände je VM (2 für 300–306, 1 für
+  307–309), `mode stop`, die Zeitstempel gegen 04:40 und der von VM 303 am 24.10. um 04:44:45.
+  Von mir auf 10.2.3.2 gemessen; der **Hinweis**, überhaupt dort nachzusehen, kommt von der
+  Sitzung „Was passiert, wenn ein Rechner ausfällt".
 - Abschnitt 11 ganz — dass `60-ngc.cnf` in keiner Sicherung stand (am `etc-ngc.tar` von 18:21
   gegengeprüft), dass zwei Datenbankknoten gefehlt hatten, der neue Lauf über sieben Maschinen
   (186 s, 453 MB gegen 227 KB) und das Aufräumen danach mit dem Dienst unverändert.
@@ -907,6 +983,10 @@ den nächsten Lauf.
   zurückkamen und der Container nicht, ist gemessen; **warum** gerade der jüngere Container
   nicht anläuft, ist die naheliegende Erklärung und kein Beweis, und ein `podman rm` mit
   Neuanlegen ist nicht gefahren.
+
+**Offen und ausdrücklich ohne Erklärung:** ob der nächtliche Lauf etwas mit dem
+Datenbank-Ausfall vom Morgen des 24.10. zu tun hat. Der Zeitstempel steht in Abschnitt 12, der
+Ausfall begann über eine Stunde vorher, und mehr habe ich dazu nicht gemessen.
 
 **Nicht gemessen und nicht abgewogen, sondern eine Entscheidung für Thomas:**
 
