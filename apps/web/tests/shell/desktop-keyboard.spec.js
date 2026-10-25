@@ -106,7 +106,9 @@ test("the list is one tab stop and the arrow keys walk every tile of it", async 
   // And the next Tab is past the list, not one tile further into it.
   await shell.keyboard.press("Tab");
   expect(want).not.toContain(await active(shell));
-  expect(await active(shell)).toBe("Hell");
+  // The first control under "Aussehen", which since docs/gestaltung.md point 7
+  // is the third design choice and the default one.
+  expect(await active(shell)).toBe("Wie das System");
 
   // Exactly one tile is reachable by Tab at any moment; the others are not.
   expect(await shell.locator("#smlist .smitem").evaluateAll((is) =>

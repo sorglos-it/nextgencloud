@@ -141,25 +141,37 @@ test("a refused open says the sentence of its code, not the words of the error",
     await expect(t.frame.getByRole("alert")).not.toContainText("fake-link");
   });
 
-test("a refused open also says the reason on the desktop's own strip", async ({ shell }) => {
+test("a refused open also says the reason the shell knows, over the app's window", async ({ shell }) => {
   await shell.evaluate(() => {
     window.__ngcTest.openFails = "Nicht bestätigt. Die App wurde nicht geöffnet.";
   });
   const t = await terminal(shell);
-  // THE STRIP BELONGS TO THE SHELL, and that is the point of this case:
+  // THE REASON BELONGS TO THE SHELL, and that is the point of this case:
   // telling the app is not enough. Measured on 23.10.2026, the terminal that
   // was installed on the Debian machine had been built before there was a
   // reason to pass on, so it showed its own sentence and nothing else - while
   // the shell knew the reason all along.
-  await expect(shell.getByRole("status")).toHaveText(
+  //
+  // WHERE it is said moved with docs/gestaltung.md point 4: this reason
+  // belongs to the Terminal, so it stands over the Terminal's own window and
+  // not in the strip at the bottom edge, which is left for what no app owns.
+  // The strip stays empty here, and that is asserted rather than assumed -
+  // otherwise this case would pass on a shell that said it in both places.
+  const win = shell.locator(".win").filter({ has: shell.locator(".titlebar .t", { hasText: "Terminal" }) });
+  await expect(win.locator(".winback [role=alert]")).toHaveText(
     "Terminal: Nicht bestätigt. Die App wurde nicht geöffnet.",
   );
-  // AND IT WAITS FOR THE PERSON. The class is what says so: desktop.notice
-  // clears a strip of any other level by itself after NOTICE_MS, and measured
-  // on 23.10.2026 it did - the reason was gone before it had been read.
-  await expect(shell.getByRole("status")).toHaveClass("status error");
-  // The window stands and the app keeps its own sentence as well: the strip is
-  // beside it, not instead of it.
+  await expect(shell.locator(".status")).toHaveText("");
+  // AND IT WAITS FOR THE PERSON. That rule did not move with the place: an
+  // error waits and the other two levels take themselves away. Measured on
+  // 23.10.2026 the reason was gone before it had been read, so the popup
+  // still has to be there after longer than the eight seconds those two get.
+  await expect(win.locator(".winback")).toHaveCount(1);
+  // The window stands and the app keeps its own sentence as well: the shell's
+  // words are over it, not instead of it - one button takes them away and the
+  // app's own sentence is underneath.
+  await win.getByRole("button", { name: "Meldung schließen" }).click();
+  await expect(win.locator(".winback")).toHaveCount(0);
   await expect(t.frame.getByRole("alert")).toContainText("Nicht bestätigt.");
 });
 
