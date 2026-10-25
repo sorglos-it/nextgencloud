@@ -203,3 +203,161 @@ Wortlaut sich dadurch ändert, ist das der Befund.
   erreichen kann, und sage bei jeder Zahl, welche Schicht das war.
 - **Die Behebung der ersten Anfrage.** Daran arbeitet eine eigene Sitzung. Hier
   stehen nur Zahlen.
+
+---
+
+# Gemessen
+
+## Fall A — gemessen am 25.10.2026, 10:52–10:55 UTC
+
+**Maschinen-Stopp** (`qm stop`) von db-2 (308) und db-3 (309) gleichzeitig,
+db-1 (303) blieb stehen. Werkzeug: `tools/ausfall-mehrheit.sh`.
+
+| Frage | erwartet | gemessen |
+|---|---|---|
+| (a) Oberfläche | ja, unverändert | **200 in 0,016 s** — unverändert |
+| (b) Anmeldung, 40 in Folge | nein | **0/40 gut, 40× `503`** |
+| (b) erste Anfragen, einzeln | Zeitablauf mehrfach, evtl. 10 s | **5,019 · 5,019 · 0,693 · 5,020 · 0,544 s** — alle `503` |
+| lesen auf db-1 | **nein** (gegen die andere Erwartung) | **nein: `ERROR 1047`**, wortgleich zum INSERT |
+| schreiben auf db-1 | nein | **nein: `ERROR 1047`** |
+| Verbund | fällt auf 1, verliert Primary | **genau so**: `size=1`, `non-Primary`, `Initialized` |
+| laufende Apps | laufen | **laufen**, unverändert |
+| sagt die Anlage es ehrlich? | ja, aus dem Code | **ja, am Wortlaut belegt** |
+| Selbstfang | **nein, von Hand** | **ja — in unter 30 s, ohne Zutun** |
+
+### 1. Die Erwartung „lesen geht noch" ist falsch, und zwar wortgleich falsch
+
+Das war der Auftrag: nachmessen statt übernehmen. Auf db-1, während die
+Mehrheit weg war:
+
+```
+SELECT 1 (ohne Tabelle) : 1
+SELECT count(*) FROM ngc.ngc_app : ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+INSERT INTO messung.nachtrag …   : ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+```
+
+Lesen und Schreiben scheitern **mit demselben Fehler und demselben Wortlaut**.
+Es gibt in dieser Anlage keinen Lesebetrieb bei verlorener Mehrheit, und das
+liegt nicht am Quorumverlust als solchem, sondern an `wsrep_dirty_reads = OFF`
+— einer Einstellung, die vor dem Schalten nachgesehen und oben
+festgeschrieben ist. Wer die Trennung „lesen ja, schreiben nein" haben will,
+muss sie **einschalten**; sie ist kein Naturgesetz des Verbunds. Ob sie
+eingeschaltet werden *soll*, ist eine Abwägung und steht unten, nicht hier.
+
+### 2. Der Befund, den niemand bestellt hat: `SELECT 1` geht weiter
+
+`SELECT 1` antwortet auch ohne Quorum mit `1`, weil es keine Tabelle anfasst.
+Das ist die übliche Lebensprobe. **Eine Überwachung, die mit `SELECT 1` fragt,
+meldet diesen Knoten als gesund, während er keine einzige Zeile hergeben
+kann.** Das ist kein Fehler dieser Anlage — es ist eine Falle für jede
+Überwachung, die noch gebaut wird, und darum steht sie hier.
+
+### 3. Die Anlage ist ehrlich — am Wortlaut, nicht nur am Code
+
+Der schwerere Befund, auf den der Auftrag gezielt hat, ist **nicht**
+eingetreten. Jede der 45 Anfragen bekam:
+
+```
+HTTP 503  {"status":"error","code":"E_UNREACHABLE","message":"Dienst nicht erreichbar."}
+```
+
+Kein „Anmeldung fehlgeschlagen", kein `500`, kein leerer Zustand. Und das
+Journal trennt die beiden Gründe, die man leicht in einen Topf wirft:
+
+```
+api-1  WARN the database did not come free in time … reason=db-busy count=1 since=1 retry-after=5
+api-1  WARN the database could not be reached     reason=db-unreachable count=1 since=1
+api-1  WARN callers were turned away … busy=1 unreachable=2 new-busy=1 new-unreachable=2
+```
+
+**Eine Einschränkung, damit das nicht zu gut klingt.** `login/start` kann
+diesen Fehler nicht mit einem Anmeldefehler verwechseln, weil es **gar keinen
+hat**: derselbe Aufruf mit einem Namen, den es nicht gibt, antwortet im
+gesunden Betrieb ebenfalls mit `200` und einem Nonce — absichtlich, damit die
+Antwort nicht verrät, ob ein Name existiert. Die Stelle, an der sich „Datenbank
+weg" und „falsches Kennwort" wirklich treffen könnten, ist `login/finish`, und
+die braucht einen Passkey auf einem Gerät. **Diese Messung reicht bis
+`login/start`, und für den Rest kann ich nur den Code lesen**
+(`login.js:449` entscheidet am Feld `code`, nicht am Ausgang). Das ist Stufe
+„am Wortlaut der API belegt", nicht „im Browser gesehen".
+
+### 4. Die erste Anfrage: das Muster von gestern wiederholt sich nicht so, wie ich dachte
+
+Gestern: erste `503` nach 5,03 s, zweite `200` in 0,03 s. Heute, fünf einzeln:
+
+```
+1. 5,019 s    2. 5,019 s    3. 0,693 s    4. 5,020 s    5. 0,544 s
+```
+
+**Meine Erwartung war in einem Punkt falsch:** ich hatte bei zwei abwesenden
+Knoten rund 10 s erwartet, weil der Treiber sie der Reihe nach anlaufen müsste.
+Das tut er nicht — die Obergrenze bleibt **ein** Zeitablauf von 5,02 s. Richtig
+war, dass die Delle nicht nach der ersten Anfrage vorbei ist: sie kommt
+wieder, unregelmäßig, zwischen 0,54 s und 5,02 s. Wer nur die vierzig zählt,
+sieht „40× 503" und verliert genau diese Streuung — und sie ist der Unterschied
+zwischen „fünf Sekunden einmal" und „fünf Sekunden immer wieder".
+
+Die Zahl für die Sitzung, die daran arbeitet: **5,019 / 5,019 / 0,693 / 5,020 /
+0,544 s**, alle mit `503` und `E_UNREACHABLE`, bei **zwei** abwesenden Knoten
+und **keinem** gesunden. Gebaut habe ich daran nichts.
+
+### 5. Der Selbstfang: meine Erwartung war falsch, und das ist die gute Nachricht
+
+Ich hatte Handarbeit erwartet, weil db-3 gestern nach einem Maschinen-Stopp
+`NRestarts=71` brauchte und nicht zurückkam. Gemessen:
+
+```
++30s  wsrep_cluster_size=3  wsrep_cluster_status=Primary  wsrep_local_state_comment=Synced
+db-2: NRestarts=0   „Server db-2 synced with group"   Min available from gcache: 1949
+db-3: NRestarts=0   „Server db-3 synced with group"   Min available from gcache: 1404
+```
+
+Beide Knoten kamen **beim ersten Versuch** zurück, in unter 30 Sekunden, über
+den gcache (also ohne vollen Abgleich), und der Verbund war wieder vollständig
+und Primary. `safe_to_bootstrap: 0` und `seqno: -1` auf beiden — niemand musste
+bootstrappen.
+
+Das stellt den schweren Befund von gestern in ein anderes Licht, und zwar ohne
+ihn zu widerlegen: **zwei gleichzeitig abgeschaltete Knoten, die zu einem
+non-Primary-Überlebenden zurückkommen, fangen sich von selbst.** Der Fall, der
+gestern nicht zurückkam, war ein *einzelner* Knoten zu einem *gesunden*
+Verbund. Was die beiden unterscheidet, ist mit dieser einen Messung **nicht**
+geklärt — es kann der gcache sein, der hier noch reichte, es kann die Länge des
+Ausfalls sein (hier gut 90 Sekunden, gestern länger). Das ist eine offene
+Frage, keine Erklärung, und ich schreibe sie als offene Frage hin.
+
+### 6. Zwei Zeilen im Journal, die nicht zur Anmeldung gehören
+
+```
+api-1  WARN housekeeping failed error="Error 1047 … WSREP has not yet prepared node"
+api-1  WARN trust list could not be read error="Error 1205 (HY000): Lock wait timeout exceeded"
+```
+
+Die Hintergrundarbeit scheitert mit — erwartbar. Interessant ist die
+**zweite**: `1205`, ein ganz anderer Fehler als `1047`. Bei verlorener Mehrheit
+laufen also nicht alle Wege in denselben Fehler, und `httpapi.Fault` fängt
+`1205` nur deshalb richtig, weil sein letzter Arm **alles** Unbenannte zu
+`E_UNREACHABLE` macht. Das ist hier ein Glücksfall und kein Entwurf: eine
+Liste benannter Fehler hätte `1205` nicht enthalten. Befund, nicht Schaden.
+
+Nebenbei, ohne Deutung: api-2 zählte `unreachable=17`, api-1 `unreachable=2` —
+die beiden APIs sahen denselben Ausfall unterschiedlich oft.
+
+### 7. Was Fall A nicht beantwortet
+
+(c), (d) und (e) sind **nicht gemessen**. Sie hängen hinter einer Anmeldung,
+die mit `503` endet — es gibt keine Sitzung, mit der man eine App-Liste holen
+oder eine App öffnen könnte. Dass sie „nein" sind, folgt aus (b) und aus der
+Tatsache, dass dieselbe Datenbank sie trägt; es ist **abgeleitet, nicht
+gemessen**, und steht darum in keiner Zahlenspalte.
+
+Was dagegen gemessen ist: **die laufenden Apps liefen durch.** Die Container
+auf svc-1 und svc-2 waren vorher, während und nachher dieselben. Eine App, die
+läuft, braucht die Datenbank nicht — wer drin ist, bleibt drin.
+
+Dabei ist mir etwas aufgefallen, das nicht zu diesem Auftrag gehört und das ich
+nicht weiterverfolgt habe: **svc-1 trägt `ngc-uhr-ad8c00e2` *und*
+`ngc-terminal-439982dd`, svc-2 trägt `ngc-terminal-439982dd`** — derselbe
+Terminal-Container erscheint auf beiden Knoten. Das sieht nach dem Rest aus,
+den Punkt 74 beschreibt (ein Container bleibt nach einer Neuinstallation auf
+dem alten Knoten stehen). Gemessen ist nur die Liste der Namen, nichts weiter.
