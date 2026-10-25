@@ -361,3 +361,172 @@ nicht weiterverfolgt habe: **svc-1 trägt `ngc-uhr-ad8c00e2` *und*
 Terminal-Container erscheint auf beiden Knoten. Das sieht nach dem Rest aus,
 den Punkt 74 beschreibt (ein Container bleibt nach einer Neuinstallation auf
 dem alten Knoten stehen). Gemessen ist nur die Liste der Namen, nichts weiter.
+
+## Fall B — gemessen am 25.10.2026, 10:59–11:24 UTC
+
+Fünf **Dienst-Stopps** (`systemctl stop`), je 180 s, keine Maschine
+abgeschaltet. Werkzeug: `tools/ausfall-dienst.sh`. Bei jedem Fall ist
+nachgewiesen, dass die Maschine weiter antwortet (`ping`) — sonst wäre es ein
+Maschinen-Stopp gewesen und keine der Zahlen würde tragen.
+
+| Fall | Dienst-Stopp | erste fünf Anfragen, einzeln | 40 in Folge | Vergleich: Maschinen-Stopp (24.10.) |
+|---|---|---|---|---|
+| B1 | `ngc-api` auf **api-2** | `200` 0,024 · **`500`** 0,026 · `200` 0,032 · `200` 0,024 · **`500`** 0,027 | **34/40**, 6× `500` | erste `503` nach **5,03 s**; 31/40 mit `500` (Punkt 90) |
+| B2 | `ngc-api` auf **api-1** | **alle fünf `200`**, 0,029–0,036 s | **40/40** | Oberfläche ganz weg, Browser-Verbindungsfehler |
+| B3 | `mariadb` auf **db-1** | **alle fünf `200`**, 0,024–0,056 s | **40/40** | erste `503` nach **5,03 s** (db-3) |
+| B4 | `ngc-controller` auf **svc-1** | alle fünf `200`, 0,020–0,044 s | 40/40 | — |
+| B5 | `nginx` auf **store** | alle fünf `200`, 0,019–0,033 s | 40/40 | — |
+
+### B1 — der wichtigste Befund: die 5 Sekunden und die `500` sind zwei verschiedene Fehler
+
+Gestern lagen sie übereinander und sahen wie ein Fehler aus. Der Dienst-Stopp
+trennt sie:
+
+- **Der Zeitablauf fällt weg, vollständig.** Erste Anfrage **0,024 s** statt
+  5,03 s. Damit ist gemessen, woran die fünf Sekunden liegen: **am stummen
+  Knoten**, nicht am Umschalten. Ein `RST` kommt sofort, ein verfallenes Paket
+  erst nach Ablauf der Frist — und der Anrufer kann die beiden nicht
+  unterscheiden.
+- **Die `500` bleibt.** 6 von 40 Anmeldungen bekamen weiter `HTTP 500`, und
+  nicht in den ersten Sekunden, sondern **über die ganzen drei Minuten
+  verstreut**. Was der Benutzer dabei sieht, ist keine NGC-Antwort, sondern die
+  nackte Apache-Seite:
+
+```
+HTTP 500   <html><head><title>500 Proxy Error</title></head><body><h1>Proxy Error</h1>
+           The proxy server could not handle t…
+```
+
+Das ist der Befund von Punkt 90 noch einmal, und er ist jetzt schärfer: **er
+hat nichts mit Zeitabläufen zu tun.** Der Lastverteiler trägt
+`retry=5 … failontimeout=On` — eine abgelehnte Verbindung ist *kein*
+Zeitablauf, also greift `failontimeout` nicht, und `retry=5` holt das totgesagte
+Mitglied alle fünf Sekunden zurück in die Reihe. Jede Anfrage, die dabei auf
+das tote Mitglied fällt, endet als Apache-`500`. Es gibt keine Lebensprobe, die
+das Mitglied draußen hielte, solange es tot ist. **Und nichts davon steht im
+Fehlerprotokoll**: `journalctl -u apache2` und `/var/log/apache2/error.log`
+haben über die ganze Zeit keine neue Zeile geschrieben — wie am 24.10.
+
+Die Zahlen für die Sitzung, die daran arbeitet, mit der Art des Stopps bei
+jeder: Dienst-Stopp api-2 → erste `200` in **0,024 s**, 6/40 mit `500`.
+Maschinen-Stopp api-2 (24.10.) → erste `503` nach **5,03 s**, 31/40 mit `500`.
+Gebaut habe ich daran nichts.
+
+### B2 — api-2 ist doch nicht nur Zierde
+
+Diesen Fall kann der Maschinen-Stopp nicht zeigen, und er korrigiert ein Urteil
+von gestern. `ngc-api` auf api-1 aus, `apache2` auf api-1 nachgewiesen weiter
+`active`: **40/40 Anmeldungen gut, alle fünf ersten `200`, keine einzige
+`500`.** Direkt geprüft: `api-1:7443` antwortet nicht mehr, `api-2:7443`
+antwortet mit `400` (das heißt „lebt").
+
+Gestern stand hier „für die Erreichbarkeit ist api-2 **Zierde**". Das bleibt
+richtig — fällt die *Maschine* api-1, ist alles weg. Aber es ist jetzt genauer
+zu fassen: **api-2 trägt die API wirklich, sobald der Eingang lebt.** Der
+zweite API-Server ist keine Zierde, er hängt nur am selben einzigen Eingang.
+Das ist der erste Beleg dafür, dass die Lastverteilung ihren Zweck erfüllt.
+
+**Eine Asymmetrie, die ich nicht erklären kann.** In B1 war das tote Mitglied
+api-2 und 6 von 40 Anfragen endeten mit `500`. In B2 war das tote Mitglied
+api-1 selbst und **keine einzige**. Beide Male hing ein totes Mitglied im
+selben Lastverteiler. Warum das eine Mal 6 und das andere Mal 0 — dafür habe
+ich keine gemessene Erklärung, nur Vermutungen (das tote Mitglied ist in B2 der
+eigene Rechner, ein `RST` über `lo` ist noch schneller). **Das ist eine offene
+Frage und keine Erklärung**, und sie gehört zu derselben Baustelle wie Punkt 90.
+
+### B3 — der Dienst-Stopp ist bei der Datenbank wirklich der mildere Fall
+
+Hier hat die Erwartung in beiden Hälften gehalten, und die zweite ist die
+wichtige.
+
+**Der Ausfall:** alle fünf ersten Anfragen `200` in 0,024–0,056 s, 40/40 gut.
+**Keine Delle.** Gestern bekam die erste Anfrage nach dem Maschinen-Stopp eines
+DB-Knotens `503` nach 5,03 s. Der Verbund trug die Lücke sauber: db-2 schrieb
+eine ordentliche `View`-Änderung mit `members(2)` und blieb `Primary`, und keine
+der beiden APIs schrieb überhaupt eine Zeile ins Journal — sie haben den
+Ausfall nicht gemerkt.
+
+**Die Rückkehr:** über **IST**, nicht SST.
+
+```
+WSREP: ####### IST current seqno initialized to 2291
+WSREP: Receiving IST... 100.0% (53/53 events) complete.
+WSREP: 2.0 (db-1): State transfer from 1.0 (db-2) complete.
+WSREP: Shifting JOINER -> JOINED -> SYNCED (TO: 2343)
+```
+
+53 Ereignisse, in derselben Sekunde fertig, `NRestarts=0`, Verbund nach 30 s
+wieder `size=3 Primary`. Gestern brauchte db-3 nach dem Maschinen-Stopp 71
+Versuche und kam nicht zurück, jeder Versuch mit vollem Abgleich.
+
+**Das ist der Satz, für den dieser Fall gefahren wurde:** der geordnete Austritt
+ist der Grund. Wer `systemctl stop mariadb` sagt, tritt aus dem Verbund aus und
+kommt über die Lücke wieder herein; wer die Maschine ausschaltet, verschwindet
+und muss sich neu einsortieren. Damit ist die schlechte Rückkehr von gestern
+eine Eigenschaft **des harten Stopps** — und das ändert, was man dagegen tut:
+ein geordnetes Herunterfahren vor jedem Maschinen-Stopp ist billiger als jede
+Reparatur am Wiederanlauf. Dass die beiden Knoten in Fall A *auch* nach einem
+harten Stopp von selbst zurückkamen, steht daneben und ist nicht erklärt (siehe
+Fall A, Punkt 5).
+
+### B4 — meine Erwartung war falsch, und sie war von Anfang an falsch
+
+Erwartet hatte ich: `podman` läuft weiter, der Container der Uhr auch, nur
+verwalten kann ihn niemand mehr. Gemessen:
+
+```
+vorher   Container svc-1: ngc-terminal-439982dd ngc-uhr-ad8c00e2
+während  Container svc-1: KEINE
+nachher  Container svc-1: ngc-terminal-439982dd ngc-uhr-ad8c00e2
+```
+
+**Der Dienst-Stopp nimmt die Container mit.** Für die Apps auf svc-1 ist er
+also *nicht* milder als der Maschinen-Stopp, sondern gleich hart. Die Container
+hängen am `ngc-controller` und nicht an einem eigenen `podman`-Dienst.
+
+Und der Fehler war mein eigener, nicht der der Anlage: in der Tabelle „die
+Anlage vorher" oben steht für svc-1 **nur** `ngc-controller` — kein
+`podman.service`. Meine eigene Vorher-Messung hat die Erwartung schon
+widerlegt, bevor ich sie geschrieben habe; ich hatte „podman" aus dem Blatt von
+gestern übernommen, statt meine eigene Zeile zu lesen. Das ist genau der
+Fehler, gegen den die Vorher-Messung da ist.
+
+Die Anlage selbst hat es dabei **nicht** gemeldet: 40/40 Anmeldungen gut,
+Oberfläche `200`. Ob die Oberfläche die Uhr in diesen drei Minuten als „läuft"
+oder als „läuft nicht" angezeigt hätte, ist **nicht gemessen** — das sitzt
+hinter einer Anmeldung. Die gefährliche Variante („läuft", obwohl kein Container
+da ist) bleibt damit offen.
+
+### B5 — der Laden: Ausgang wie erwartet, der Weg dorthin nicht messbar
+
+Login und Oberfläche unberührt (40/40, `200`), und der Katalog stand vorher,
+während und nachher unverändert in der Datenbank: `seq=7`, 1116 Byte. Der
+Laden ist für den laufenden Betrieb entbehrlich — bestätigt.
+
+**Was ich nicht messen konnte, obwohl ich es im Erwartungsteil versprochen
+habe:** dass der Dienst-Stopp ein sofortiges „refused" gibt statt eines
+Zeitablaufs. Von diesem PC aus scheitert `curl` schon gegen den **gesunden**
+Laden — das ist die Falle, die am 24.10. schon aufgeschrieben wurde (beide
+Windows-`curl` brechen den Handshake ab). Beide Zustände kommen darum als Code
+`000` zurück, und der einzige Unterschied ist die Zeit:
+
+```
+Laden gesund : 000 in 0,0097 s   (abgebrochener Handshake, bekannte Falle)
+Laden aus    : 000 in 2,039 s
+Laden wieder : 000 in 0,0082 s
+```
+
+Zu unterscheiden sind die Zustände also schon, aber **„refused" ist damit nicht
+belegt** — nur „zwei Größenordnungen langsamer". Dieselbe 2,0-s-Zahl ist auch
+in B1 und B2 gegen die abgeschalteten APIs gemessen worden, was für eine
+abgelehnte Verbindung mit Wiederholung spricht; bewiesen ist es nicht. Wer das
+sauber will, muss von einem Linux-Knoten aus messen, nicht von hier.
+
+### Was Fall B gar nicht beantwortet
+
+**(e) — eine neue App einrichten — ist in keinem der fünf Fälle gemessen.**
+Es braucht eine Anmeldung mit Passkey, und die reicht diese Messung nicht.
+Dasselbe gilt für (c) und (d): dass die Container liefen, ist am Knoten
+gemessen (`pgrep` auf `conmon`), nicht in der Oberfläche gesehen. Für B4 ist
+das der entscheidende Unterschied, und er ist oben ausdrücklich als offen
+vermerkt.
