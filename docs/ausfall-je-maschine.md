@@ -969,6 +969,68 @@ Versuche keine Selbstheilung sind, sondern Last — der Knoten war zu dem
 Zeitpunkt ohnehin nicht im Verbund, das Anhalten ändert an der Anlage nichts und
 ist mit einem `start` rückgängig.
 
+## Der Vorfall vom 24.10.2026, 02:45 bis 09:30 — was ich erwarte
+
+Geschrieben am 25.10.2026, **bevor ich ein einziges Protokoll dieses Fensters
+geöffnet habe**. Was ich zu diesem Zeitpunkt über den Vorfall weiß, stammt
+ausschließlich aus Nebenbemerkungen anderer Sitzungen und aus zwei Zahlen, die
+mir bei anderen Messungen untergekommen sind:
+
+- „die Datenbank lag von 02:45 bis 09:30" (mehrfach berichtet, nie belegt)
+- `journalctl --list-boots` auf db-1 zeigte mir gestern: ein Start endete
+  **02:44:50**, der nächste begann **02:45:03**
+- der Sicherungsstand `qemu-303-2026_10_24-04_44_45` — der Lauf hielt db-1
+  mitten im Fenster an
+- damals war db-1 der **einzige** Datenbankknoten, `wsrep_cluster_size 1`
+
+### Was ich erwarte
+
+**1. Auslöser: ein Neustart von db-1 um 02:45, nicht ein Absturz.** Die dreizehn
+Sekunden zwischen 02:44:50 und 02:45:03 sehen nach einem geordneten Neustart aus
+und nicht nach einem Stromverlust — bei einem harten Schnitt fehlt die
+Journalspitze, wie ich es am 24.10. bei meinem eigenen `qm stop` gemessen habe.
+Wer ihn ausgelöst hat, weiß ich nicht; ich erwarte eine Paketaktualisierung oder
+einen Neustart von Hand.
+
+**2. Die eigentliche Ursache: der einzelne Galera-Knoten durfte sich nicht
+hochziehen.** Das ist meine Haupterwartung. Bei einem **sauberen**
+Herunterfahren schreibt Galera den Stand in `grastate.dat` — und dann
+entscheidet, was dort steht. Steht `safe_to_bootstrap: 0`, wartet der Knoten
+auf einen Verbund, den es nicht gibt, und `mariadb` bleibt in `activating`
+hängen. Genau dieses Bild habe ich am 24.10. abends bei db-3 gesehen.
+
+**3. Die Anlage sah dabei aus wie am Mittag bei meinem db-1-Fall:** Oberfläche
+`200`, Anmeldung `E_UNREACHABLE` / „Dienst nicht erreichbar.", Apps liefen
+weiter. Also sechs Stunden lang eine Anlage, die sich meldet und nichts kann.
+
+**4. Das Ende um 09:30 war eine Hand, kein Selbstfang.** `galera_new_cluster`
+oder ein gesetztes `safe_to_bootstrap: 1`. Ich erwarte **nicht**, dass er sich
+nach Stunden von selbst gefangen hat.
+
+**5. Der Sicherungslauf um 04:44:45 hat nichts geändert.** Er hielt eine
+Maschine an, die ohnehin nicht arbeitete, und fuhr sie wieder an — und der
+Knoten lief danach in dieselbe Wand. Erwartung: ein weiterer gescheiterter
+Startversuch im Protokoll, mehr nicht.
+
+### Woran meine Erwartung scheitern kann
+
+- **Die Protokolle sind weg.** db-1 ist seitdem mehrfach neu gestartet
+  (mein `qm stop`, der Cipher-Neustart). Ob `journalctl` den 24.10. noch hat,
+  weiß ich nicht. Wenn nicht, ist der Fall nicht aufklärbar, und das ist dann
+  das Ergebnis.
+- **Es war gar kein Galera-Problem**, sondern etwas davor — ein Dateisystem,
+  das nicht einhängt, ein Netz, das fehlt. Dann liegt die Ursache früher.
+- **Der Neustart um 02:45 war nicht geordnet.** Dann ist Punkt 1 falsch und
+  mit ihm die Begründung in Punkt 2.
+
+### Was dieser Fall NICHT beantworten wird
+
+Ob die Anlage **heute** denselben Vorfall noch hätte. Sie hat seit dem 24.10.
+drei Datenbankknoten, und ich habe gemessen, dass der Verlust eines einzelnen
+nicht einmal eine langsame Anmeldung kostet. Dieser Fall ist Forensik an einer
+Anlage, die es so nicht mehr gibt — sein Wert liegt darin, ob der Mechanismus
+noch da ist, nicht ob das Ereignis sich wiederholt.
+
 ## Was offen bleibt
 
 **Der Ausfall aller drei Datenbankknoten gleichzeitig ist ungemessen — und was
