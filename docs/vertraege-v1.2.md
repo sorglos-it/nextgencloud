@@ -35,12 +35,54 @@ die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 46 | 81 |
-| überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
-| offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **57** | **93** |
+| gilt | 35 | 49 | 84 |
+| überholt / erledigt durch einen späteren Punkt | 0 | 7 | 7 |
+| offen, wartet auf Thomas | 1 | 11 | 12 |
+| **Einträge** | **36** | **67** | **103** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **105**.
+
+Diese vier Zeilen sind am 24.10.2026 aus den Tabellen selbst **gezählt** und nicht
+weitergeschrieben. Wer anhängt, zählt hier mit — `tools/check-buch.sh` prüft die Nummern,
+diese Zahlen prüft es nicht.
+
+**Und wer anhängt, liest die nächste freie Nummer in der Tafel der Reihe B nach, nicht am
+Dateiende.** Am 24.10.2026 haben sich daran drei Sitzungen gestossen: eine Nummer war in der
+Tafel schon vergeben, während der Abschnitt dazu noch in einem offenen PR lag. Dieser Punkt hier
+hiess deshalb kurz 76, dann 81 und dann 82, bevor er 83 wurde.
+
+**Und eine Nummer vorzuhalten geht nicht**, so verlockend es ist: wer die naechste Nummer
+ueberspringt, um einer fremden offenen Nummer auszuweichen, reisst ein Loch, und
+`tools/check-buch.sh` weist das zu Recht ab („a log has no holes"). Zwei Zweige, die
+gleichzeitig dieselbe naechste freie Nummer nehmen, sind damit unvermeidlich — **wer als
+Zweiter zusammenfuehrt, nummeriert um.** Vorher laesst sich das nicht aufteilen, und die
+Reihenfolge entscheidet nicht die Sitzung, sondern Thomas.
+
+**Am Abend des 24.10.2026 waren es vier**, und das ist der Beleg dafuer, dass die Pruefung diese
+Klasse von Fehler nicht sehen kann. Nachgemessen an den Zweigen selbst, nicht aus zweiter Hand —
+und waehrend diese Aufstellung entstand, kamen die 83 und die 84 auf `main` von **zwei weiteren**
+Sitzungen, die in keiner Zeile davon stehen:
+
+| | Punkt 83 heisst dort |
+|---|---|
+| `origin/main` | es gibt keinen Punkt 83 |
+| Zweig `ausfall` (PR 140) | „Dreimal am selben Tag haelt die Anlage die Auskunft" — **und 84 dazu** |
+| Zweig `sicherung` (PR 142) | „Der Weg zurueck geht — er bleibt an einem Systembenutzer haengen" |
+| Zweig `terminal-fault-race` (PR 144) | „Ein flatternder Pruffall, der an der Vorrichtung lag" |
+
+`check-buch.sh` liest jede Datei nur **gegen sich selbst**, also waren alle Zweige gruen und das
+Zusammenfuehren ergaebe trotzdem mehrere Punkte 83. Daraus der Zusatz zur Regel, und er ist
+nicht beilaeufig: **wer umnummeriert, holt vorher `origin/main` neu, liest die hoechste Nummer in
+dieser Tafel und nimmt die naechste freie — nicht blind die naechste Zahl.** Mit vier Zweigen
+sind 83 und 84 schon vergeben, und wer blind auf die naechste Zahl ausweicht, hat die Kollision
+nur verschoben. Dieser Punkt hier ist genau so von 83 auf 85, dann 86 und dann auf **87**
+gewandert — jedes Mal, weil `main` die Nummer vor ihm bekam, und jedes Mal von Sitzungen,
+mit denen darueber kein Wort gewechselt wurde. Fuenf Umnummerierungen an einem Abend sind
+kein Missgeschick, sondern der Preis dafuer, dass ein Buch nur hinten waechst - und sie
+kosten jedes Mal auch die Durchsicht aller Verweise, nicht nur die Ueberschrift. Daraus zwei Regeln, die beide
+Arbeit sparen: **in der Tafel nachsehen**, und **Nummern anderer Sitzungen erst zitieren, wenn
+sie auf `main` sind** — `check-buch.sh` fängt einen Verweis auf einen Punkt, den es noch nicht
+gibt, aber erst nach dem Schreiben.
 
 > **Diese Aufstellung ist stehengeblieben, und das steht hier, statt sie zu erraten.** Sie zählt
 > die Reihe B bis Punkt 74. Gemessen am 24.10.2026 mit `tools/check-buch.sh`: die Datei trägt
@@ -174,8 +216,12 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **95**.
 | 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
 | 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
 | 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
-| 85 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
-| 86 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
+| 85 | Ein flatternder Prüffall, der an der Vorrichtung lag – und das Flattern stand in der Zahl | gilt | Messung |
+| 86 | Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat – das nächste OPEN darauf verschwindet lautlos | gilt – **Wettrennen im Code, nicht behoben**; der Testfehler daneben ist behoben | Messung |
+| 87 | Der Weg zurück geht – er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt | gilt – auf einer eigenen Wegwerf-Maschine gefahren, eine App lief wieder | Messung |
+| 88 | Der Galera-Verkehr lief ohne Cipher-Beschränkung – die Vorlage war richtig, die Anlage nicht | gilt – an allen drei Knoten behoben, rollend, Verbund durchgehend vollständig | Sicherheit |
+| 89 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
+| 90 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -5993,7 +6039,562 @@ eine andere Sitzung gemessen hat.
 
 Herkunft: Prüfrunde über die Nähte des Fensters 19.–24.10.2026, Zweig `pruefrunde-naehte`.
 
-## Punkt 85: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
+---
+=======
+## Punkt 85: Ein flatternder Prüffall, der an der Vorrichtung lag — und das Flattern stand in der Zahl
+
+Gemessen am 24.10.2026 als root, in WSL (Debian, Go 1.27), Zweig `terminal-fault-race` auf
+`main` (f77143c). Aufgefallen ist es in der CI: Lauf 40105559326, Prüfung „controller cases that
+need root", Zweig `ausfall` — ein Zweig, der **keine Zeile Go anfasst**. Derselbe Satz war im
+`main`-Lauf davor (40102495746) grün.
+
+**Herkunft:** der rote Lauf kommt aus der Sitzung, die den Ausfall je Maschine gemessen hat
+(CI-Lauf 40105559326; ihr eigener Punkt stand bei diesem Zweig noch in einem offenen Vorschlag). Dass die **Vorrichtung** des Falls schuld ist und nicht der
+Produktionscode, hat die Sitzung „Sichern und wiederherstellen" zuerst gesagt. Welche Stelle der
+Vorrichtung es ist, weicht von ihrer Lesart ab, und beides steht unten: sie hielt das endende
+`exit` der Eingabe für den Gewinner des Rennens, gemessen gewinnt es, weil **gar kein Fehler
+entstand**.
+
+```
+terminal_test.go:665: exit 0 although the channel broke, after 2.002541317s, stderr ""
+--- FAIL: TestAFaultEndsTheTerminalAtOnce (2.00s)
+```
+
+**Die Flatterquote, vor jeder Änderung:** 30 Läufe, je `-count=1`, **23 grün, 7 rot — 23 %**.
+Jeder rote Lauf bei 2,003 s.
+
+### Die Zahl sagt schon, dass es nicht die Grenze war
+
+Der Fall hat zwei Riegel: `code == 0` und `took > faultWithin`, und `faultWithin` ist **5 s**.
+Gerissen ist der erste, bei 2,0035 s. **2,0035 s ist `LastWord`**, die zwei Sekunden, die eine
+sauber beendete Eingabe der Shell für ihr letztes Wort lässt — nicht die Grenze des Falls. Der
+Lauf war also kein „zu langsame Maschine" und kein „die Störung wurde verschluckt", sondern ein
+Lauf, in dem **gar nichts kaputtgegangen ist**.
+
+### Was wirklich entschied: eine Lesegrenze des Pseudoterminals
+
+Die Attrappe `errWriter` lässt den **ersten** Schreibvorgang durch und scheitert erst vom zweiten
+an. Die ganze Ausgabe dieses Laufs ist aber das Echo der beiden getippten Zeilen. Ob dieses Echo
+in **einem** oder in **zwei** Lesevorgängen bei `pumpOut` ankommt, ist ein Rennen zwischen
+`pumpIn`, das den zweiten Tastenrahmen schreibt, und `pumpOut`, das das Pseudoterminal liest.
+
+Ein mitzählender Schreibkanal an derselben Stelle, 10 Läufe, sagt es ohne Deutung:
+
+```
+code=1 nach  1,8 ms     Schreibvorgänge=2  Größen=[16 2]
+code=0 nach  2,0035 s   Schreibvorgänge=1  Größen=[18]
+```
+
+16 + 2 = 18. Im roten Lauf kamen beide Echos in **einem** Lesevorgang, der Pumpenlauf schrieb
+**einmal** — und dieser eine Schreibvorgang **gelang**. Danach schläft die Shell 30 s, es kommt
+nichts mehr, die saubere Eingabe bekommt ihre zwei Sekunden `LastWord`, und `0` ist darauf die
+**richtige** Antwort.
+
+### Also: der Fall war falsch, der Code war recht
+
+Nichts in `pumpOut`, `runShell` oder `run` wirft einen Schreibfehler weg. Geändert ist nur die
+Vorrichtung: der Kanal ist jetzt **weg** und nicht wackelig (`brokenChannel` scheitert bei
+**jedem** Schreibvorgang), und der Fall prüft **zuerst**, dass die Shell überhaupt geschrieben hat
+— sonst sähe ein Lauf ohne jede Ausgabe wieder wie ein verschluckter Fehler aus. Die Spanne, die
+der Fall entscheidet, bleibt unberührt: 30 s Schlaf gegen 5 s Grenze.
+
+**Danach:** 30 Läufe, **30 grün, 0 rot.**
+
+### Zwei Kontrollmutanten, wie `messen.md` sie verlangt
+
+| Mutant | Eingriff (per `-overlay`, keine Datei im Baum verbogen) | Erwartung | 30 Läufe |
+|---|---|---|---|
+| muss sterben | in `pumpOut` kann `werr != nil` nie zutreffen (der Schreibfehler wird verschluckt) | rot | **0 grün, 30 rot** |
+| muss leben | der lokale Lesepuffer heißt `raw` statt `buf` | grün | **30 grün, 0 rot** |
+
+Der sterbende Mutant meldet dabei `exit 0 after 2 writes into a channel that was gone` — der Fall
+kann einen verschluckten Fehler jetzt von „es wurde nichts geschrieben" unterscheiden, und das ist
+der Unterschied, der ihm vorher fehlte.
+
+### Was das über solche Fälle sagt
+
+Dieser Fall ist zum **zweiten** Mal an einer Zahl gescheitert, die nicht seine Entscheidung war:
+am 23.10.2026 waren Schlaf und Grenze dieselbe Sekunde, jetzt war die Attrappe auf einen
+**zweiten** Schreibvorgang angewiesen. Beide Male war der Code recht. **Eine Attrappe, die erst
+beim n-ten Mal kaputtgeht, macht die Stückelung eines Datenstroms zum Teil der Zusicherung** — und
+die Stückelung eines Pseudoterminals gehört dem Kern, nicht dem Prüfsatz. Wer „der Kanal ist weg"
+meint, baut einen Kanal, der von Anfang an weg ist, und belegt mit einem Zähler, dass die gemeinte
+Stelle überhaupt erreicht wurde.
+
+### Die naheliegende andere Reparatur flattert ebenfalls — gemessen, nicht vermutet
+
+Vorgeschlagen war, die Eingabe mit `holdOpen` offen zu halten und das `exit` zu streichen, damit
+das saubere Ende von `pumpIn` das Rennen nicht gewinnen kann. Das lässt `errWriter` aber, wie es
+ist — und damit bleibt die Stückelung die Entscheiderin. Dieselbe Sonde, 5 Läufe:
+
+```
+code=1 nach    1,7 – 2,4 ms   Schreibvorgänge=2  Größen=[10 2]     3 von 5
+code=1 nach   30,0 s          Schreibvorgänge=2  Größen=[12 2]     2 von 5
+```
+
+Der zweite Schreibvorgang — und damit der Fehler — kommt in diesen zwei Läufen erst, als `sleep
+30` fertig ist und das Pseudoterminal **ein zweites Mal** etwas herausgibt. Der Fall wäre dort rot,
+jetzt am Zeitriegel (30 s gegen `faultWithin` von 5 s) statt an `code == 0`. Die Datei hält dieses
+Mittel schon seit 18.10.2026 als erfolglos fest; was hier dazukommt, ist die Zahl.
+
+**Also gehört die Reparatur an den Schreibkanal, nicht an die Eingabe:** solange die Attrappe einen
+**zweiten** Schreibvorgang braucht, entscheidet die Stückelung, und man verschiebt nur, welcher
+Riegel reißt. Nur fünf Läufe, und das ist wenig — als Beleg, dass dieses Mittel das Flattern nicht
+beendet, reichen sie, weil es schon zweimal rot war.
+
+**Nicht gemessen und darum offen:** warum der Lauf auf einem GitHub-Runner häufiger oder seltener
+stückelt als hier. Die 23 % gelten für diese Maschine; dass es dieselbe Ursache ist, folgt aus der
+Fehlerzeile (`code == 0` bei 2,003 s), nicht aus einer gemessenen Quote dort.
+
+---
+
+## Punkt 86: Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat — und das nächste OPEN darauf verschwindet lautlos
+
+**Woher das kommt.** Die Linux-Prüfung „-race (Linux goroutines)“ wurde immer wieder rot, ohne
+dass etwas kaputt war, und einmal ist derselbe Commit (`97945b6`) bei der Wiederholung ohne jede
+Änderung grün geworden. Eine Prüfung, die gelegentlich ohne echten Fehler rot wird, ist
+schlimmer als keine Prüfung (`tools/recovery-ci.sh`) — also war zu messen, nicht zu drehen.
+
+**Was gemessen ist.** Die Laufliste der Prüfung, 200 Einträge gelesen, davon **90 abgeschlossene
+Läufe** (ohne abgebrochene). In **12 von 90 = 13 %** war die Aufgabe `-race` rot wegen zweier
+Fälle des Pakets `apps/server-controller/classes/link`: `TestFramesAfterOwnCloseAreDropped`
+(10×) und `TestChannelNumberFreeOnlyAfterBothCloses` (2×). Vier weitere rote `-race`-Läufe
+gehören woanders hin: `TestAOneTimeCodeReachesNoLog` (`users`), `TestAFaultEndsTheTerminalAtOnce`
+und zweimal `TestNormalCloseGivesTheNumberBackAtOnce` (Terminal), dazu ein Lauf (40114506408), in
+dessen Protokoll keine `--- FAIL`-Zeile zu finden war und der hier **nicht untersucht** ist.
+
+**Und 13 % ist eine Untergrenze, keine Quote.** Die erste Fassung dieses Punktes nannte 9 von 90
+= 10 %, und das war zu niedrig gezählt. `gh run list` zeigt je Lauf nur den **letzten Versuch**:
+ein Lauf, den jemand mit `gh run rerun --failed` wiederholt hat, steht dort als `success`, und der
+rote erste Versuch ist aus der Liste verschwunden. Nachgemessen über die API
+(`runs/<id>/attempts/1`): von den 90 Läufen sind **6 wiederholt** worden, und in **vier** davon
+war Versuch 1 in der Aufgabe `-race` rot — dreimal an genau diesen beiden Fällen (40119921187 und
+40087877366 mit `TestFramesAfterOwnCloseAreDropped` nach 30,06 bzw. 30,07 s, 40109214083 mit
+`TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s), einmal an einem Terminal-Fall. Diese
+drei fehlten in der ersten Zählung.
+
+Daraus folgt zweierlei. Erstens: wer das Flattern aus der Laufliste zählt, zählt zu niedrig, und
+zwar um so mehr, je fleissiger wiederholt wird. Zweitens, und das ist der unangenehmere Teil:
+**eine Wiederholung löscht den Beleg aus der Liste.** Ein roter Lauf, den niemand wiederholt hat,
+steht darin; ein roter Versuch unter einem wiederholten Lauf ist nur über die API zu finden, und
+nur, wenn man weiß, dass man danach suchen muss. 13 % ist also das, was sich **nachweisen** lässt,
+nicht das, was war.
+
+**Der eine Lauf, der das Flattern beweist.** Lauf 40109214083 auf Commit `97945b6` ist
+`run_attempt` **2** und grün; Versuch 1 desselben Laufs, derselbe Commit, derselbe Baum, ist rot
+mit `TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s. Dazwischen lag nichts als
+`gh run rerun --failed`. Das ist der Nachweis an einem unveränderten Baum und stärker als jede
+Statistik: der Zweig, auf dem es auffiel, ändert **keine** Codedatei (nur `docs/` und
+`tools/*.sh`) und kann die Ursache nicht sein. Berichtigt am 24.10.2026: hier stand erst, der
+einzige echte Lauf auf diesem Commit sei grün gewesen — das war falsch gelesen, weil die
+Laufliste den roten Versuch 1 nicht zeigt, und es hätte den eigenen Befund geschwächt.
+
+**Auf dieser Maschine ist nichts geflattert.** In WSL (Debian, go1.27.2, `-race`): 3000 Läufe der
+beiden Fälle auf **einem** Prozessorkern, 500 Läufe mit allen Kernen, 20 Läufe des ganzen Pakets
+auf zwei Kernen — **0 Fehlschläge**. Die natürliche Flatterquote hier ist 0 %, und damit war der
+Beweis einer Besserung durch Wiederholen allein nicht zu führen. Gemessen wurde deshalb **durch
+Einspritzen**: eine Verzögerung an genau der Stelle, an der das Wettrennen vermutet wurde, und
+dann der Vergleich der Fehlermeldung mit der aus der CI.
+
+**Zur Nummer, und was mit ihr geschehen ist.** Dieser Punkt hat die 83 getragen, dann die 84,
+dann die 85, und trägt jetzt die **86**. Dreimal umgeschrieben, jedes Mal, weil ein anderer Zweig
+zuerst zusammengeführt wurde: PR 139 nahm die 83, PR 143 die 84, PR 144 die 85. Gemessen am 24.10.2026 an den
+offenen Pull Requests, bevor 139 herein kam: `main` endete bei 82, die **83 war von fünf Zweigen
+beansprucht** (PR 139, 142, 143, 144 und dieser) und die 84 von PR 140. PR 139 ist zuerst
+zusammengeführt worden und hat die 83 bekommen; die vier anderen stehen seitdem alle auf Konflikt
+und schreiben ebenfalls um.
+
+Ein Ausweichen nach oben war vorher nicht möglich. Auf einem Zweig, der von `main` geschnitten
+ist, wäre die 85 ein Loch über 83 und 84 gewesen, und genau das weist der Riegel mechanisch ab
+(ausprobiert: „no chapter carries these numbers, although they lie between 19 and 85: 83 84“).
+Solange `main` bei 82 endete, war die 83 auf diesem Zweig die einzige Nummer, die den Riegel grün
+ließ. Das ist die Regel des Buches und kein Versehen: eine Nummer lässt sich nicht
+vorreservieren, **wer zweitens zusammenführt, schreibt um**, und bis dahin hält jeder Zweig seine
+Reihe lückenlos.
+
+Die Vorhersage von damals ist zweimal eingetreten, und das ist der Grund, warum sie hier
+stehenbleibt. In der Fassung mit der 84 stand: „die 84 ist nicht sicher, PR 140 beansprucht sie
+ebenfalls, und PR 142, 143 und 144 greifen nach demselben Umschreiben danach“. Genau so kam es,
+zweimal hintereinander — PR 143 nahm die 84, PR 144 die 85. Die **86** ist jetzt die nächste freie
+Nummer und aus demselben Grund genauso unsicher: **PR 140 und 142 stehen noch offen**. Wer zuerst
+herein kommt, bekommt die Zahl; die übrigen schreiben um. Verweise auf diesen Punkt gibt es keine,
+das Umschreiben kostet also zwei Zeilen — das Kapitel und die Zeile in der Reihe-B-Tabelle. Drei
+Umschreibungen für einen Punkt sind der Preis dafür, dass die Reihe am Dateiende wächst und der
+Riegel nur die eigene Datei sieht.
+
+**Was die Bauart des Riegels dabei zeigt.** `tools/check-buch.sh` erzwingt Lückenlosigkeit
+**innerhalb einer Datei** und kann fremde Zweige nicht sehen. Damit drängt er jede parallel
+laufende Sitzung auf dieselbe nächste Nummer und zeigt die Kollision erst beim Zusammenführen.
+Fünf Zweige auf einer Nummer ist die vorhersehbare Folge davon, nicht die Unaufmerksamkeit von
+fünf Sitzungen. Hier nur als Beobachtung notiert; was daraus folgt, ist eine Frage der
+Koordination und steht nicht in diesem Punkt.
+
+### Es sind zwei Fehler, nicht einer
+
+Die Protokolle zeigen zwei Erscheinungen mit ganz verschiedenen Laufzeiten:
+
+| Erscheinung | Laufzeit | Meldung | Läufe |
+|---|---|---|---|
+| A | 0,03–0,05 s | `the handler was called 2 times and came back 1 times` | 4 |
+| B | 30,04–30,08 s | `waiting for 4 on channel 1: ...`, dazu `Run did not end` | 8 |
+
+Die 8 sind 5 aus der Laufliste und 3 aus verdeckten ersten Versuchen. **B ist also die Mehrheit,
+zwei Drittel** — und B ist der Fehler, der hier nicht behoben wird.
+
+**A ist ein Testfehler.** Der Fall liest `opened` und `back` unmittelbar nach `waitFor`, also
+sobald `Run` zurück ist. Das Ende von `Run` ist aber **nicht** das Ende der Handler: die Goroutine
+eines Kanals (`channels.run`) hat hinter dem Handler noch die CLOSE-Buchung zu erledigen, und
+`back.Add(1)` steht im Handler dahinter. Wer die Zähler dort liest, liest zu früh. Der Kommentar
+im Nachbarfall sagte sogar ausdrücklich das Gegenteil („Counted once the tunnel is over, so that
+no handler is still on its way“) — er war falsch.
+
+*Beweis:* 50 ms zwischen `c.send` der CLOSE und der Buchung dahinter, eingespritzt in
+`channels.finish`. Der Fall fällt sofort mit **genau** der CI-Meldung
+(`the handler was called 2 times and came back 1 times`, 0,08 s). Mit der Behebung in diesem
+Commit ist er bei derselben Einspritzung **grün**.
+
+**B ist ein Wettrennen im Code.** `channels.finish` schreibt die CLOSE dieser Seite und setzt
+`ch.closed = true` **erst, nachdem der Schreibvorgang zurück ist**. Die API kann die CLOSE in
+dieser Lücke schon gelesen und beantwortet haben. Trifft ihre CLOSE für dieselbe Nummer in der
+Lücke ein, dann setzt `channels.route` nur `ch.peer` und gibt die Nummer **nicht** frei
+(`if ch.closed { c.drop(ch) }` greift nicht). Das unmittelbar folgende OPEN der API für diese
+Nummer fällt dann in den Zweig „nach der eigenen CLOSE wird alles verworfen“ und wird **lautlos
+weggeworfen** — kein Kanal, keine Antwort, kein Fehler. Die API wartet auf einen Kanal, der nie
+kommt.
+
+*Beweis:* eine **einmalige** Verzögerung von 2 s an derselben Stelle, aber nur für Kanal 1 (damit
+die Antwort auf den Merker nicht mitverzögert wird). Der Fall fällt nach **30,08 s** mit
+`Run did not end`, `waiting for 4 on channel 1: ... opPing: use of closed network connection` und
+`failed to write msg: use of closed network connection` — Zeile für Zeile die Meldung aus der CI.
+Mit der Behebung von A ist er bei dieser Einspritzung **weiter rot**, wie es sein muss: A und B
+sind zwei Fehler, und hier ist nur A behoben.
+
+**Dass die Zahl 30 zweimal vorkommt, hat das Lesen verdeckt.** `answer` im Test (die Schranke
+eines Lesevorgangs der API) und `WriteTimeout` im Code sind beide 30 s. Eine Meldung nach 30,06 s
+sagt darum nicht, welche der beiden Schranken abgelaufen ist, und die erste Lesart („der Test
+dreht den Zeitablauf zu knapp“) war deshalb naheliegend und falsch.
+
+### Was das für den Betrieb heißt
+
+Nicht nur ein Testproblem. Eine API, die eine Kanalnummer wiederverwendet, sobald sie die CLOSE
+dieser Seite gelesen und ihre eigene gesendet hat — und genau das erlaubt der Vertrag, „CLOSE
+gesendet und empfangen“ — kann ihr OPEN verlieren. Kein Absturz, keine Lücke in der Sicherheit:
+ein hängender Kanal, auf den niemand antwortet. Die Buchhaltung des Controllers läuft dem
+Vertrag nach, statt ihm zu folgen.
+
+### Warum B hier nicht behoben ist
+
+Der naheliegende Griff — `ch.closed = true` **vor** den Schreibvorgang setzen — ist falsch.
+`finish` hält beim Setzen noch nicht die Schreibsperre des Tunnels (`t.mu` wird erst in
+`c.send` genommen). Zwischen dem Setzen und dem Nehmen der Sperre könnte `route` die Nummer
+freigeben, ein neuer Kanal entstehen und **dessen** erster Rahmen vor der CLOSE des alten auf die
+Leitung gehen. Dann wäre aus einem verlorenen OPEN eine falsche Reihenfolge auf der Leitung
+geworden, und das ist schlimmer.
+
+Was es wirklich braucht, ist eine dritte Zustandsstufe („meine CLOSE ist dem Tunnel übergeben“),
+die unter derselben Sperre gesetzt wird, die die Reihenfolge auf der Leitung hält — oder die
+Entscheidung, ein OPEN für eine Nummer, deren CLOSE der Gegenseite schon da ist, nicht zu
+verwerfen. Beides rührt den Schließweg an, der an drei Stellen Sperren in festgelegter Reihenfolge
+nimmt, und gehört in eine eigene, geprüfte Änderung. Der Befund ist hier wichtiger als der grüne
+Lauf.
+
+### Die rote Aufgabe auf `main` hatte eine andere Ursache
+
+Geprüft, wie im Auftrag verlangt: Lauf **40097136329** auf `main` war in der Aufgabe
+„check.sh + counted test run“ rot, und das war **nicht** dieses Flattern. Im Protokoll steht
+`buch: these points have a chapter but no row in the Reihe-B table of contents: 75 76 77 78 79 80
+81` — `tools/check-buch.sh` hat fehlende Tabellenzeilen gemeldet, deterministisch und zu Recht.
+Auf dem heutigen `main` (f77143c) ist `bash tools/check-buch.sh` grün
+(64 Punkte, 19–82). Zwei verschiedene Ursachen, zwei verschiedene Aufgaben.
+
+### Flatterquote vorher und nachher
+
+| | vorher | nachher |
+|---|---|---|
+| CI, Aufgabe `-race`, 90 abgeschlossene Läufe | mindestens 12 rot (13 %), davon 4 × A und 8 × B | **unvermessen** — braucht neue Läufe |
+| hier, 3000 Läufe auf einem Kern, `-race` | 0 | 0 |
+| hier, 500 Läufe, `-race` | 0 | 0 |
+| hier, Einspritzung A (50 ms) | **rot** (0,08 s) | **grün** |
+| hier, Einspritzung B (2 s, einmalig) | **rot** (30,08 s) | **rot** (unverändert) |
+
+### Was ungemessen bleibt
+
+- **Die CI-Quote nach der Änderung.** Sie ist erst nach genug neuen Läufen zu haben. Erwartet
+  wird, dass die 4 Erscheinungen vom Typ A verschwinden und die 8 vom Typ B bleiben — also
+  **ein Drittel** des nachweisbaren Flatterns, nicht alles. Wer diese Prüfung jetzt für still
+  hält, irrt. Und wer sie nachzählt, muss die Versuche mitzählen (`runs/<id>/attempts/1`), sonst
+  sieht sie stiller aus, als sie ist.
+- **Das natürliche Eintreten von B.** Hier nie gesehen, nur durch Einspritzen erzwungen. Warum
+  es auf einem 4-Kern-Runner unter `-race` mit über zwanzig gleichzeitig laufenden Paketen in
+  etwa jedem zwanzigsten Lauf auftritt und auf dieser Maschine in 3000 Läufen nie, ist nicht
+  gemessen.
+- **Ob B über die Tests hinaus schon einmal zugeschlagen hat.** Keine Spur in einem Protokoll
+  einer echten Anlage gesucht; die API im Betrieb verwendet Nummern vielleicht gar nicht so
+  schnell wieder.
+- **Die anderen roten `-race`-Läufe**, soweit sie nicht hierher gehören: `TestAOneTimeCodeReachesNoLog`
+  (`users`) und Lauf 40114506408 sind hier **nicht untersucht**. Die Terminal-Fälle
+  (`TestAFaultEndsTheTerminalAtOnce`, `TestNormalCloseGivesTheNumberBackAtOnce`) sind es
+  inzwischen, aber von anderer Hand: **Punkt 85** hat sie gemessen, und dort lag es an der
+  Vorrichtung des Falls (eine Lesegrenze des Pseudoterminals) und nicht am Produktionscode.
+
+Verwandt: **Punkt 69** (die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt) —
+dieselbe Prüfung, dieselbe Frage, diesmal nicht „zählt sie?“, sondern „sagt sie die Wahrheit?“.
+**Punkt 70** ist der andere Fund in diesem Paket, ebenfalls unter Last.
+
+**Punkt 85** ist der nächste Verwandte und am selben Tag entstanden: auch dort ein flatternder
+Fall, der die Prüfung ohne echten Fehler rot machte, auch dort an einem Zweig aufgefallen, der
+keine Zeile Go anfasst. Der Vergleich ist der Ertrag. Dort lag **alles** an der Vorrichtung des
+Falls, und mit ihrer Behebung ist das Flattern weg. Hier liegt die Hälfte der Erscheinungen an der
+Vorrichtung (A, behoben) und zwei Drittel der Läufe an einem Wettrennen im Produktionscode
+(B, **nicht** behoben) — die Prüfung flattert also weiter, und das ist kein Rest von A.
+Zwei flatternde Fälle am selben Tag, zwei verschiedene Antworten auf dieselbe Frage: wer von der
+Vorrichtung des einen auf die des anderen schliesst, hält einen offenen Befund für erledigt.
+
+---
+
+## Punkt 87: Der Weg zurück geht — er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt
+
+Gemessen am 24.10.2026 auf einer eigenen Wegwerf-Maschine: VM 310 `ngc-sicherung-probe`,
+10.2.3.220, Vollklon der Proxmox-Vorlage 300, zweite Platte mit `mkfs.ext4 -O encrypt` auf
+`/var/lib/ngc/apps`, podman 5.4.2 wie auf svc-1. Diese Maschine hat der Anlage nie gehört.
+Sie ergänzt Punkt 81, der sagt, was gesichert wird; dieser sagt, was davon zurückkommt.
+
+**Was gemessen ist.** Aus der Sicherung von svc-1 zurückgelegt: `/etc/ngc` samt Modi, die
+`state.db`, die Datenordner beider Apps. Die Datenbank **öffnete** — der Controller las beide
+App-Zeilen und fasste beide Apps an. Dann stand er an einer Wand:
+
+```
+WARN the runtime directory of an app could not be made, it stays off
+     app=org.sorglos.terminal
+     err="runtime: no system user for this container
+          user: unknown user ngc-terminal-439982dd"
+```
+
+Der **Systembenutzer** einer App und ihr verschlüsselter Datenordner werden von
+`install/activate.go` angelegt und von sonst nichts; `node.Restore` sucht den Benutzer und legt
+keinen an. Ohne diesen Schritt bleibt nach einer Wiederherstellung **jede** App für immer aus,
+und das Einzige im Produkt, das es richtigstellt, ist ein Admin, der die App neu aus dem Laden
+einrichtet — für Zeilen, die in der Sicherung schon dastanden.
+
+**Nicht zu verwechseln mit einem Ausfall.** Die Sitzung „Was passiert, wenn ein Rechner
+ausfällt" hat den anderen Weg gemessen — ihre Messung, in ihrem eigenen Papier: nach einem Neustart
+kommen die App-Container auf svc-1 und svc-2 eine Sekunde nach dem Controller von selbst wieder.
+Der Unterschied ist genau dieser Benutzer — bei einem Ausfall ist er noch da, bei einer
+Wiederherstellung auf eine neue Maschine nicht.
+
+Mit `tools/sicherung-zurueck` (ruft `runtime.EnsureUser` und `runtime.EnsureData`, die Funktionen
+des Produkts selbst) ging es weiter, Ausstiegscode 0. Die fscrypt-Schlüsselkennungen auf 310 sind
+danach **bitgleich** mit denen auf svc-1 — der Schlüssel der App-Daten reist allein in
+`controller.json` mit. Und dann lief eine App wieder:
+
+```
+ngc-terminal-439982dd   localhost/ngc-terminal:1.0.0   Up About a minute
+```
+
+Ohne API, ohne Laden, ohne Admin, allein aus der Sicherung.
+
+**Drei Dinge, die dabei mitgemessen wurden.**
+
+1. **Ein Controller startet nicht ohne API-Verweis.** Mit `apis: []` antwortet er „Die
+   Konfiguration dieses Servers fehlt oder ist unvollständig." Eine Wiederherstellung lässt sich
+   also nicht erst einmal offline prüfen; man muss die API-Adresse totlegen (hier
+   `wss://127.0.0.1:7443`), und das muss man wissen, weil die zurückgespielte `controller.json`
+   den `noiseKey` des alten Rechners trägt — eine zweite Maschine damit an der echten API wäre
+   svc-1 ein zweites Mal.
+2. **`app-daten.tar` ist Klartext.** Punkt 81 und ein früherer Stand dieses Blattes behaupteten
+   das Gegenteil. Beim Sichern läuft der Dienst, also liegt der Schlüssel jeder App im
+   Schlüsselbund des Kerns und root liest die Ordner durch ihn hindurch: 1419 ELF-Köpfe und die
+   dpkg-Listen des Containers, im Klartext gezählt. Sicherheitsfolge: dieser Teil ist der
+   empfindlichste der ganzen Sicherung, weil er der einzige ist, der ohne jeden Schlüssel
+   aufgeht. Stabilitätsfolge: dieselbe Tatsache rettet die App-Daten über einen Verlust des
+   dbKey hinweg.
+3. **Der Datenordner einer App ist auch podmans Container-Lager.** Die Terminal-App kam zurück
+   und lief, die Uhr nicht: `crun: mount devpts to dev/pts: Invalid argument`, obwohl Abbild,
+   Daten und Benutzer da sind und die Container-Konfigurationen beider Apps an dieser Stelle
+   gleich sind. Unterschied: der Terminal-Container lief beim Sichern seit drei Stunden, der
+   Uhr-Container seit sieben Minuten. Der zurückgespielte Zustand trägt auch eine kaputte Zeit
+   (`Exited (0) 292 years ago`). Gegenprobe mit angehaltenem Terminal-Container: die Uhr startet
+   genauso nicht, es ist also kein Gedränge um `devpts`.
+
+**Was nicht gemessen ist.** Die Ursache des Uhr-Fehlers — dass ein `tar` im Betrieb für die
+**Daten** eine Sicherung und für das **Container-Objekt** eine Momentaufnahme ist, die
+schiefgehen kann, ist die naheliegende Erklärung und kein Beweis. Ein `podman rm` mit Neuanlegen
+aus dem vorhandenen Abbild ist nicht gefahren. Die Kopplung einer neuen Maschine ist nicht
+gefahren: sie braucht einen angemeldeten Admin, und mit einer alten `controller.json` wäre sie
+svc-1 ein zweites Mal. Das Zurückspielen der MariaDB ist nicht gefahren.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob `node.Restore` den Systembenutzer und den Datenordner **selbst** anlegen soll, statt dass
+  ein eigenes Werkzeug es tut. Das wäre die bessere Anlage und die größere Änderung: ein
+  Controller, der beim Hochfahren Systembenutzer anlegt, tut mehr als heute.
+- Ob eine Sicherung die Container-Lager der Apps überhaupt mitnehmen soll. Nimmt sie sie nicht
+  mit, ist nach jeder Wiederherstellung eine Neueinrichtung nötig; nimmt sie sie mit, kann ein
+  Container so zurückkommen, wie die Uhr zurückkam.
+- Ob die Wegwerf-Maschine stehen bleibt. Sie trägt eine Klartextkopie der App-Daten von svc-1
+  und dessen `controller.json`; solange sie steht, ist sie so empfindlich wie svc-1 selbst.
+
+**Nachtrag vom selben Tag, und er korrigiert den Vorschlag dieses Punktes.** „Mehrere
+Verwahrstellen für den Schlüssel, eine für die Daten" war zu schwach; die Sitzung „Was
+passiert, wenn ein Rechner ausfällt" hat nachgemessen, woran es wirklich hängt:
+`/etc/ngc/db-keys` sind **224 Byte**, die eine **285 MB** große Datenbank aufschließen. Was sie
+gefährlich macht, ist nicht ihr Ort, sondern dass sie alles aufschließen und in eine
+Textnachricht passen — zwei Ordner auf derselben Platte sind deshalb keine Trennung, sondern
+dieselbe Maschine, dasselbe Konto, dieselben Rechte.
+
+`tools/sicherung.sh` nimmt daraufhin **zwei Ziele** und verweigert ohne das zweite den Dienst;
+ein Lauf, der Daten und Schlüssel an einen Ort schreiben soll, bricht ab (drei Fälle gemessen,
+Code 2, keine Ordner bleiben liegen). Der Lauf mit getrennten Zielen: `ok`, 313 s, **348 MB
+Daten gegen 75 KB Schlüssel** für fünf Rechner — klein genug für einen Passwortmanager, was
+das Argument praktisch macht und nicht nur richtig. Und geprüft, ob die Trennung eine ist: alle
+18 Geheimnisse aus dem Schlüssel-Ordner gegen den Daten-Ordner gesucht, **0 von 18** gefunden.
+Die Wortfunde (`dbKey`, `PRIVATE KEY`) sind Feldnamen im NGC-Programm und Fehlermeldungen in
+`libapt-private.so` des Grundabbilds, keine Schlüssel.
+
+**Und die Ausnahme ist geschlossen, gefahren und nicht beschlossen.** `app-daten.tar` war
+Klartext und der einzige Teil der Sicherung, der ohne jeden Schlüssel aufging. Die Sitzung, der
+Thomas die Sicherungsform übergeben hat, entschied: verschlüsselt, bevor die Daten die Maschine
+verlassen, mit einem Schlüssel, der nicht mitfährt — und mit drei Bedingungen, deren dritte
+verlangt, dass der Weg zurück erst einmal gegangen ist. Thomas hat eine Maschine gegeben, also
+ist er gegangen.
+
+`tools/sicherung.sh` erzeugt jetzt je Rechner und Lauf einen eigenen Schlüssel (32 Byte,
+`openssl rand`), legt ihn **nur** in den Schlüssel-Ordner (45 Byte je Rechner) und
+verschlüsselt den Datenordner mit AES-256-CTR, bevor er die Maschine verlässt. Der Schlüssel
+reist über ssh-stdin in eine Datei mit Modus 0600 und wird `shred`-et — nie als Argument, denn
+ein Argument steht in `ps`. Der Klartext wird nirgends eine Datei: `tar` schreibt in `openssl`.
+Lauf über alle fünf Maschinen: `ok`, **473 s** gegen 313 s ohne Verschlüsselung.
+
+Auf **VM 311**, einem Klon der Vorlage, der der Anlage nie gehört hat: `tar` auf die Datei,
+Entschlüsseln mit leerem und mit falschem Schlüssel — jedes Mal
+`This does not look like a tar archive`. Mit dem Schlüssel aus dem Schlüssel-Ordner: **6720
+Dateien**. Danach der ganze Weg — `/etc/ngc` aus dem Schlüssel-Ordner, `state.db` aus dem
+Daten-Ordner, `sicherung-zurueck`, entschlüsseln (2 s für 199 MB) — und dann:
+
+```
+org.sorglos.terminal   localhost/ngc-terminal:1.0.0   Up 45 seconds
+org.sorglos.uhr        localhost/ngc/uhr:1.0.0        Up 45 seconds
+```
+
+**Beide Apps**, ohne eine einzige Warnung des Controllers. Damit öffnet kein Teil dieser
+Sicherung mehr ohne Schlüssel, und die Anlage läuft trotzdem daraus wieder an.
+
+Was AES-256-CTR **nicht** gibt, und das steht dabei statt vorausgesetzt zu werden: eine
+Beglaubigung. Es ist Vertraulichkeit; was ein verändertes Byte fängt, ist die sha256 im
+Verzeichnis, auf der Maschine genommen und hier gegengerechnet.
+
+**Und die Prüfsummen liegen jetzt bei den Schlüsseln**, nicht neben den Daten — wieder ein
+Gedanke derselben Sitzung: eine Liste neben ihren Dateien fängt einen Unfall, aber wer im
+Daten-Ordner schreiben darf, ändert die Datei und die Zeile darüber. Gemessen mit einem
+angehängten Byte: der Daten-Ordner allein trägt **keine einzige** Prüfsumme mehr, mit
+`summen.txt` aus dem Schlüssel-Ordner fällt es als `FAILED` auf. Damit gilt für beide Hälften
+derselbe Satz: wer nur die Daten hat, kann sie weder lesen noch unbemerkt ändern.
+
+Nebenbefund: die Uhr, die beim ersten Weg zurück **nicht** mitkam, lief diesmal. Einziger
+Unterschied zwischen den Läufen ist das Alter ihres Container-Objekts beim Sichern (sieben
+Minuten gegen Stunden). Das stützt die Erklärung weiter oben in diesem Punkt und beweist sie nicht — und
+der Beweisversuch ist an der eigenen Vorrichtung gescheitert: ein von Hand mit `setpriv`
+angelegter Container bekommt nicht das Netz, das der Controller als root einrichtet
+(`pasta failed ... Permission denied`), also sagt sein Scheitern nichts über den des Produkts.
+Der Beweis braucht einen Container, der über die **Einrichtung** entsteht, und damit eine Anlage,
+in der man eine App einrichten darf.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.
+
+---
+
+## Punkt 88: Der Galera-Verkehr lief ohne Cipher-Beschränkung — die Vorlage war richtig, die Anlage nicht
+
+Gemessen und behoben am 24.10.2026 an den drei Datenbankknoten der verteilten Anlage, auf
+Thomas' Anweisung. Der Befund ist **nicht meiner**: die Sitzung „Release 0.2.1 veröffentlichen"
+hat ihn beim Bau von db-2 und db-3 gefunden und mir gemeldet, weil sie ihn nicht anfassen wollte,
+solange an db-1 gemessen wurde.
+
+**Was gemessen war.** `apps/server-db/templates/galera.cnf` auf `main` ist seit dem 17.10.2026
+richtig: `socket.ssl_cipher=ECDHE-ECDSA-AES256-GCM-SHA384`, die TLS-1.2-Schreibweise, mit
+`TestTheClusterCipherIsATLS12ListAndNotASuite` dahinter. Die **laufende** Anlage war es nicht.
+Auf allen drei Knoten stand in `/etc/mysql/mariadb.conf.d/60-ngc.cnf` der TLS-1.3-Suite-Name
+`TLS_AES_256_GCM_SHA384` — geschrieben von *ulh*, nicht von diesem Repo —, und eine
+`99-erstlauf-galera.cnf` setzte `wsrep_provider_options` ohne Cipher neu. Darum stand MariaDB
+nicht still, sondern lief **ohne jede Cipher-Beschränkung**: `show variables like
+"wsrep_provider_options"` zeigte auf allen drei `socket.ssl_cipher =` leer.
+
+Die 99-Datei enthält nichts weiter als diese eine Zeile (auf db-1 und db-3 nachgesehen), also
+war sie gefahrlos aus dem Weg zu nehmen.
+
+**Was getan wurde, rollend, einer nach dem anderen.** Ausgangslage auf allen drei:
+`wsrep_cluster_size 3`, `Primary`, `Synced` — **und `safe_to_bootstrap: 0`**, weshalb niemals
+zwei gleichzeitig: zwei von drei halten das Quorum, der neu gestartete tritt über IST wieder
+ein. Je Knoten beide Dateien als `.vor-cipher-2111` beiseitegelegt (nichts gelöscht), den Wert
+wortgleich mit der Vorlage gesetzt, die 99-Datei zur Seite, `systemctl restart mariadb`.
+
+| Knoten | Neustart | danach |
+|---|---|---|
+| db-3 (10.2.3.218) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-2 (10.2.3.217) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-1 (10.2.3.212) | Code 0, 4 s | `active`, Verbund 3, `Primary`, `Synced`, Cipher gesetzt |
+
+Der Verbund war nach jedem Schritt vollständig, von einem anderen Knoten aus gegengeprüft.
+`ngc_blob` 15 Zeilen und `ngc_user` 1 Zeile nach dem Neustart von db-1 unverändert.
+
+**Und die Liste beißt — das ist der Teil, der sonst fehlt.** Dass eine Variable einen Wert
+zeigt, ist kein Nachweis. Gegen den Galera-Anschluss 4567 von db-3 nach db-1, mit dem
+Knotenzeugnis, TLS 1.2 angeboten:
+
+| angeboten | Antwort |
+|---|---|
+| nur `AES128-GCM-SHA256` | `alert handshake failure` |
+| nur eine CBC-Suite (`ECDHE-ECDSA-AES256-SHA384`) | `alert handshake failure` |
+| `ECDHE-ECDSA-AES256-GCM-SHA384` | **`New, TLSv1.2, Cipher is ECDHE-ECDSA-AES256-GCM-SHA384`** |
+| alles anbieten | der Server wählt genau diese Suite |
+
+Ohne Knotenzeugnis scheitern **alle** TLS-1.2-Versuche, auch der erlaubte: Galera verlangt ein
+Client-Zeugnis, und dieser Probelauf konnte „Cipher abgelehnt" und „Zeugnis fehlt" nicht
+trennen. Erst mit dem Zeugnis des Knotens ist es eine Messung. Unter TLS 1.3 hat Galera keinen
+Hebel: dort handelt der Anschluss von selbst `TLS_AES_256_GCM_SHA384` aus, gemessen.
+
+**Was nicht gemessen ist:** die Gegenrichtung, dass ohne die Liste eine AES-128- oder CBC-Suite
+durchkommt. Das ist am 17.10.2026 gemessen worden und steht im Kommentar der Vorlage; ich habe
+den schwachen Zustand nicht wiederhergestellt, um es nachzustellen — dafür hätte ein laufender
+Knoten zurückgedreht werden müssen.
+
+**Die Anlage darüber läuft unverändert:** `ngc-api` und die Controller aktiv, die Oberfläche
+antwortet mit `HTTP 200`, und in den vier Minuten nach dem letzten Neustart keine Fehlerzeile und
+keine Tunnelzeile in den Protokollen der drei Controller — die Tunnel sind also nie
+abgerissen.
+
+**Ein Befund der Ausgangslage, und er ist nicht meiner.** Dass alle drei Knoten
+`safe_to_bootstrap: 0` tragen, habe ich beim Messen gesehen; was es bedeutet, hat die Sitzung
+„Was passiert, wenn ein Rechner ausfällt" auf jedem Knoten einzeln nachgelesen und
+eingeordnet — **ihre Messung, ihre Überlegung**: fallen alle drei unsauber **zugleich** weg
+(Stromausfall, Neustart des Wirts), darf kein Knoten den Verbund von selbst hochziehen, weil
+keiner weiß, ob er den neuesten Stand hat. Die Anlage steht dann, bis jemand
+`galera_new_cluster` fährt.
+
+Daraus ihr Satz, den ich übernehme, weil er die Rangfolge betrifft: **der Umbau auf drei Knoten
+hat auch etwas weggenommen.** Am Mittag trug der einzelne Knoten `safe_to_bootstrap: 1` und fing
+sich nach einem harten Schnitt in vier Sekunden allein. Jetzt übersteht die Anlage den Verlust
+eines Knotens, ohne dass ein Benutzer es merkt — und sie steht, wenn alle zugleich weg sind. Der
+häufige Fall ist gelöst, der seltene war es vorher. Das ist kein Vorwurf an den Umbau, sondern
+der Grund, warum mein Lauf rollend ging und niemals zwei Knoten gleichzeitig angefasst hat.
+
+**Nachtrag: die Kopien sind weg, und das Aufräumen hat zwei Lücken gefunden.** Auf Thomas'
+Anweisung je Knoten die `60-ngc.cnf.vor-*` und die beiden `99-erstlauf-galera.cnf`-Kopien
+gelöscht (db-1 sechs Dateien, db-2 und db-3 je vier), danach auf allen drei `mariadb active`,
+`Verbund 3`, `Synced`. **Vorher** gesichert, und dabei kam heraus: `/etc/mysql/mariadb.conf.d`
+stand in **keiner** Sicherung, obwohl `60-ngc.cnf` allein `wsrep_cluster_address`,
+`wsrep_node_name`, `wsrep_node_address`, `wsrep_sst_auth` und die Pfade der
+`file_key_management` trägt — ein Datenbankknoten hätte sich daraus nicht wieder aufbauen
+lassen. Und der Lauf von 18:21 kannte nur fünf Maschinen, weil ich fünf genannt hatte; db-2 und
+db-3 fehlten ganz. Beides in `docs/sicherung-und-weg-zurueck.md`, Abschnitt 11; das Werkzeug
+nimmt die Datei jetzt mit, zu den Schlüsseln, weil `wsrep_sst_auth` eines ist. Und der eigentliche Posten: dass *ulh* diesen Wert überhaupt schreibt und eine 99-Datei
+darüberlegt, gehört dort behoben, sonst bringt die nächste Neuinstallation ihn zurück. Die
+Release-Sitzung hat ihren Teil daran bereits berichtigt.
+
+Herkunft: `docs/sicherung-und-weg-zurueck.md` nennt die Messreihe nicht — dieser Punkt steht für
+sich, weil er nicht zur Sicherung gehört, sondern nur an einem Abend an derselben Anlage anfiel.
+
+## Punkt 89: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
 
 Dies ist kein neuer Einzelbefund, sondern das Muster über drei, die am 24.10.2026 unabhängig
 voneinander an verschiedenen Stellen gemessen wurden. Es steht hier zusammen, weil es dreimal
@@ -6047,7 +6648,7 @@ dreimal etwas erst beim gezielten Hinsehen aufgefallen ist.
 
 Herkunft: `docs/ausfall-je-maschine.md` für die Fälle 1 und 2, Punkt 78 für Fall 3.
 
-## Punkt 86: Ein fehlendes Mitglied des Lastverteilers wird dem Benutzer als `HTTP 500` zugestellt — und nichts schreibt es auf
+## Punkt 90: Ein fehlendes Mitglied des Lastverteilers wird dem Benutzer als `HTTP 500` zugestellt — und nichts schreibt es auf
 
 Gemessen am 24.10.2026 zwischen 13:57 und 14:07 UTC an der verteilten Anlage, api-2 (VMID 302) mit
 `qm stop` abgeschaltet und wieder angefahren. Der Fall ist der harmloseste der sechs Ausfälle und
@@ -6110,12 +6711,10 @@ das `::` der Weg aller neun ist, steht damit nicht fest. Belegt ist, dass es im 
   wirkt sofort; das Erste ist richtiger und liegt beim Netz.
 - Ob Apache den Fehlschlag eines Mitglieds ins Fehlerprotokoll schreiben soll (`LogLevel
   proxy:info` genügt dafür). Heute ist der Ausfall nur aus dem Zugriffsprotokoll zu erschließen,
-  und das ist dieselbe Gestalt wie Punkt 86: die Auskunft ist da, der Anlass fehlt.
+  und das ist dieselbe Gestalt wie Punkt 90: die Auskunft ist da, der Anlass fehlt.
 
 Zum Vergleich, weil es im selben Lauf gemessen wurde und die Messlatte setzt: der Ausfall der
 **Datenbank** (db-1) wird mit eigenem Code `E_UNREACHABLE`, eigener Meldung „Dienst nicht
 erreichbar." und einer Journalzeile mit Zähler beantwortet. Dieselbe Anlage kann es also.
 
 Herkunft und die ganze Messreihe aller sechs Maschinen: `docs/ausfall-je-maschine.md`.
-=======
----

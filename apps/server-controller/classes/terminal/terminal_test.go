@@ -647,6 +647,34 @@ func TestTheShellsExitCodeComesBack(t *testing.T) {
 // carries. The guard is in the code and is RIGHT; it is unmeasured, and that
 // is said here instead of being left to look measured.
 //
+// THE FIXTURE WAS THE FLAKE until 24.10.2026, and this is the second time this
+// case decided on a number that was not the decision. It used errWriter, which
+// lets the FIRST write through and only fails from the second on - and the
+// whole output of this run is the echo of the two typed lines. Whether that
+// echo reaches pumpOut in ONE read or in TWO is a race between pumpIn writing
+// the second keys frame and pumpOut reading the pseudo terminal, and nothing
+// about the terminal depends on it.
+//
+// Measured on 24.10.2026 as root, 30 runs of the unchanged case: 23 green, 7
+// red - 23 %. A counting writer in the same place says what the two outcomes
+// are, 10 runs:
+//
+//	code=1 after  1.8 ms      writes=2  sizes=[16 2]
+//	code=0 after  2.0035 s    writes=1  sizes=[18]
+//
+// Sixteen plus two is eighteen: the red run is the one where the two echoes
+// arrived in a single read, so the pump wrote ONCE - and that one write
+// SUCCEEDED. Nothing broke in that run, so nothing was swallowed either: the
+// input had ended cleanly, the shell got its LastWord of two seconds, and 0 is
+// the right answer to that. The red was the CASE being wrong, not the code, and
+// the giveaway was in the number all along - 2.0035 s is LastWord, not the five
+// seconds of faultWithin.
+//
+// So the channel here is GONE, not flaky: brokenChannel fails every write. And
+// the count is checked first, because a run in which the shell wrote nothing at
+// all would otherwise look exactly like a swallowed error (the hollow green of
+// messen.md, read backwards).
+//
 // What it does NOT nail is the sentence: a broken output channel comes back as
 // the error of the write, which is no errCut, so sentence() gives it the
 // default - "Die Shell ließ sich nicht starten.", although it did start.
@@ -657,16 +685,38 @@ func TestAFaultEndsTheTerminalAtOnce(t *testing.T) {
 	goodEnv(t)
 	in := append(keys([]byte("sleep 30\n")), keys([]byte("exit\n"))...)
 	var errOut bytes.Buffer
+	out := &brokenChannel{err: errors.New("the channel ended")}
 	start := time.Now()
-	code := run(context.Background(), bytes.NewReader(in),
-		&errWriter{err: errors.New("the channel ended")}, &errOut, time.Minute)
+	code := run(context.Background(), bytes.NewReader(in), out, &errOut, time.Minute)
 	took := time.Since(start)
+	if out.n == 0 {
+		t.Fatalf("the shell wrote nothing in %v, so this run never reached the broken channel: "+
+			"it measures a wall in front of the fault, not the fault (stderr %q)", took, errOut.String())
+	}
 	if code == 0 {
-		t.Fatalf("exit 0 although the channel broke, after %v, stderr %q", took, errOut.String())
+		t.Fatalf("exit 0 after %d writes into a channel that was gone, after %v, stderr %q",
+			out.n, took, errOut.String())
 	}
 	if took > faultWithin {
 		t.Fatalf("it took %v: the fault waited for the shell instead of ending the terminal (it sleeps 30s, so a wait cannot come back before that)", took)
 	}
+}
+
+// brokenChannel is a channel that is GONE: every write fails, and it counts
+// them so a case can tell "the write broke" apart from "there was no write".
+// errWriter above is the other shape - a channel that ends while the shell is
+// still answering - and the two are not interchangeable: a fixture that needs a
+// SECOND write makes the number of reads of a pseudo terminal part of the
+// decision, which is what flattered TestAFaultEndsTheTerminalAtOnce 7 times in
+// 30 runs (see there).
+type brokenChannel struct {
+	n   int
+	err error
+}
+
+func (w *brokenChannel) Write(b []byte) (int, error) {
+	w.n++
+	return 0, w.err
 }
 
 // faultWithin is how long the terminal may take to end on a broken channel.

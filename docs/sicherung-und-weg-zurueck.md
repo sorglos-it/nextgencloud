@@ -1,7 +1,8 @@
 # Sicherung und der Weg zurück
 
-Gemessen am 24.10.2026 an der verteilten Anlage `ngc.mein.lan` (10.2.3.210–.215),
-Stand `17b9895` (origin/main). Messregeln: `Z:\GitHub\claude-md\messen.md`.
+Gemessen am 24.10.2026 an der verteilten Anlage `ngc.mein.lan` (10.2.3.210–.215) und am
+selben Tag auf einer eigenen Wegwerf-Maschine (VM 310, `10.2.3.220`, aus der Proxmox-Vorlage
+300 geklont), Stand `17b9895` (origin/main). Messregeln: `Z:\GitHub\claude-md\messen.md`.
 
 Dieses Blatt trennt streng: **gemessen** heißt, ein Lauf hat die Zahl geliefert und sie steht
 daneben. **Abgewogen** heißt, es ist aus Gemessenem geschlossen und niemand hat es ausgeführt.
@@ -163,7 +164,25 @@ Gleich, beide. **Damit ist belegt: wer `/etc/ngc/controller.json` eines Service-
 verliert, verliert die Daten jeder App auf dieser Maschine endgültig** — und wer die Datei
 hat, hat die Daten jeder App dieser Maschine.
 
-### Die MariaDB hat dieselbe Falle, ein zweites Mal (gemessen)
+### Eine Berichtigung, und sie geht in die andere Richtung (gemessen)
+
+Dieses Blatt hat zuerst behauptet, das `tar` eines App-Datenordners trage lesbare **Namen** und
+verschlüsselte **Inhalte**. Das ist falsch, und die Wiederherstellung hat es gezeigt: beim
+Sichern **läuft der Dienst**, also liegt der Schlüssel jeder App im Schlüsselbund des Kerns, und
+root liest die Ordner durch ihn hindurch. Gezählt im `tar` von svc-1: 1419 ELF-Köpfe und die
+dpkg-Listen des Containers, im Klartext zu lesen.
+
+Zwei Folgen, die beide zählen:
+
+- **Sicherheit:** `app-daten.tar` ist der empfindlichste Teil der ganzen Sicherung, weil er der
+  einzige ist, der **ohne jeden Schlüssel** aufgeht. Er gehört genauso weggeschlossen wie
+  `etc-ngc.tar` — und das ist der Teil, den man beim Wort „verschlüsselte Datenordner" gerade
+  nicht erwartet. `tools/sicherung.sh` sagt es jetzt in diesen Worten in jedem `inhalt.txt`.
+- **Stabilität:** dieselbe Tatsache ist die Rettung. Die Daten der Apps überleben einen Verlust
+  des dbKey, solange dieses `tar` existiert, und sie lassen sich ohne Schlüssel zurücklegen —
+  gemessen, beide Apps kamen damit auf eine frische Maschine.
+
+### Die MariaDB hat dieselbe Falle, ein drittes Mal (gemessen)
 
 Die Tabellen sind zwangsverschlüsselt (`innodb_encrypt_tables = FORCE`), der Schlüssel kommt
 aus `/etc/ngc/db-keys/keyfile.key` + `keys.enc` (file_key_management, aes_ctr). Die
@@ -199,7 +218,8 @@ entgegengesetzte Richtungen:
 
 Was ein neuer Rechner braucht, damit die Anlage ihn wieder annimmt — aus dem Code gelesen
 (`node/main.go` `pair`, `pairing.Do`, `config.SaveController`) und am laufenden Stand der
-Anlage gegengehalten, **aber nicht ausgeführt** (siehe Abschnitt 6):
+Anlage gegengehalten. Die Schritte 1, 4 und 5 sind in Abschnitt 6 **gefahren**, die Schritte 2
+und 3 nicht — die brauchen einen angemeldeten Admin:
 
 1. **`controller.json` muss schon da sein, vollständig.** `pair` lädt sie als Erstes und
    bricht ohne sie ab. Name, Rollen, Datenbankpfad, `dbKey`, `releaseKey` stehen darin und
@@ -210,16 +230,19 @@ Anlage gegengehalten, **aber nicht ausgeführt** (siehe Abschnitt 6):
 3. **Die Kopplung erzeugt einen neuen Noise-Schlüssel und setzt `node` auf leer** — der neue
    Rechner gehört zunächst zu niemandem. Erst wenn ein Admin seinen öffentlichen Schlüssel in
    die Vertrauensliste schreibt, ist er ein Knoten (`msgListAgain` sagt das dem Admin).
-4. **Die Apps kommen von allein wieder** — wenn `state.db` und `dbKey` zusammenpassen: die
-   Zeilen stehen in `state.db`, die Pakete holt die Installation aus dem Laden, Container und
-   App-Benutzer baut `node.Restore` neu.
+4. **Die Apps kommen fast von allein wieder** — und an dem „fast" hängt der ganze Abschnitt 6:
+   die Zeilen stehen in `state.db`, aber der **Systembenutzer** jeder App und ihr
+   verschlüsselter Datenordner werden nur von der Einrichtung angelegt, nicht von
+   `node.Restore`. Ohne diesen Schritt bleibt jede App aus. Gemessen, nicht geschlossen.
 5. **Die Daten der Apps kommen nur mit dem alten `dbKey` wieder.** Mit einem neuen Schlüssel
    sind die mitgenommenen Ordner Geheimtext ohne Schlüssel.
 
-Der entscheidende Satz daraus: **der Weg zurück braucht kein neues Programm.** Ein Controller
-öffnet, was an dem Pfad in seiner `controller.json` liegt — und dass eine *Kopie* sich öffnen
-lässt, ist in Abschnitt 4 auf einer fremden Maschine gemessen. Was fehlt, ist nicht ein
-`restore`-Kommando, sondern **das Einsammeln** und **eine festgenagelte Reihenfolge**.
+Der entscheidende Satz daraus: **der Weg zurück braucht fast kein neues Programm.** Ein
+Controller öffnet, was an dem Pfad in seiner `controller.json` liegt — und dass eine *Kopie*
+sich öffnen lässt, ist in Abschnitt 4 auf einer fremden Maschine gemessen. Gefehlt haben drei
+Dinge, und nur das letzte ist ein Programm: **das Einsammeln** (`tools/sicherung.sh`), **eine
+festgenagelte Reihenfolge** (Abschnitt 6) und **der Systembenutzer samt Datenordner jeder App**
+(`tools/sicherung-zurueck`).
 
 Eine Warnung, die in jede Reihenfolge gehört und aus der Messung fällt: `state.Open` **spielt
 Migrationen in die Datei, die es öffnet**. Eine Sicherung, die man „nur mal ansieht", ist
@@ -228,33 +251,135 @@ danach nicht mehr der Stand, der sie war. Immer auf einer Kopie der Kopie arbeit
 
 ---
 
-## 6. Was fehlt — und was dieses Blatt deshalb nicht behauptet
+## 6. Der Weg zurück, wirklich gegangen
 
-**Noch nie ausgeführt, auf keiner Maschine:**
+Thomas hat eine Maschine freigegeben, also ist der Weg nicht beschrieben, sondern gefahren.
+**VM 310 `ngc-sicherung-probe`, 10.2.3.220**, Vollklon der Proxmox-Vorlage 300, zweite Platte mit
+`mkfs.ext4 -O encrypt` auf `/var/lib/ngc/apps`, podman 5.4.2 — dieselbe Fassung wie auf svc-1.
+Diese Maschine hat der Anlage nie gehört.
 
-1. Eine Sicherung zurückspielen. Weder `state.db` noch `mariabackup --prepare` +
-   Wiedereinspielen noch ein App-Datenordner.
-2. Einen neuen Rechner mit einem *alten* `controller.json` koppeln und in die Vertrauensliste
-   aufnehmen. Schritt 2 und 3 aus Abschnitt 5 brauchen einen **angemeldeten Admin in der
-   Oberfläche**; ein Skript kann das nicht sein, und wer es nachstellt, misst seine eigene
-   Vorrichtung (dieselbe Grenze, die `tools/erstlauf-verteilt.sh` in ihrem Kopf nennt).
-3. Ob ein fscrypt-Datenordner überhaupt aus einem `tar` zurückgelegt werden kann. Beim Lesen
-   lief der Dienst, der Kern hatte den Schlüssel — `tar` hat deshalb lesbare **Namen** und
-   verschlüsselte **Inhalte** mitgenommen. Das ist vermutlich nicht die Form, die man
-   zurücklegt, und es ist nicht geprüft.
+**Eine Vorsichtsmaßnahme, und sie ist keine Nebensache:** in der zurückgespielten
+`controller.json` habe ich `apis` auf `wss://127.0.0.1:7443/tunnel` gesetzt. Schlüssel und
+TLS-Abdruck blieben unverändert aus der Sicherung. Grund: die Datei trägt den `noiseKey` von
+svc-1, und eine zweite Maschine, die sich damit bei der echten API meldet, wäre svc-1 ein zweites
+Mal. Das ist die erste Regel jeder Wiederherstellung, und sie steht in keiner Anleitung:
+**erst die API-Adresse totlegen, dann starten.**
 
-**Dafür fehlt eine eigene Maschine.** An der laufenden Anlage wird das nicht geübt: dort
-läuft eine eingerichtete Terminal-App, mehrere Sitzungen arbeiten gleichzeitig daran, und
-eine Wiederherstellung schreibt genau die Dateien, an denen sie arbeiten. Die alte Einzel-VM
-.208 ist aus und gehört nicht dieser Sitzung.
+### Was zurückgespielt wurde, und was dabei herauskam
 
-Punkt 75 der Verträge stellt dieselbe Frage von der anderen Seite und schlägt eine **neue**
-Maschine aus Release und Anleitung vor. Das ist genau die Maschine, die dieser Befund braucht —
-die drei offenen Punkte oben sind der Grund, sie nicht nur für den Erstlauf zu bauen.
+| Schritt | Ergebnis |
+|---|---|
+| `etc-ngc.tar` ausgepackt, Modi erhalten | `controller.json` 0600 root, `trust-anchor.json` 0644 — wie auf svc-1 |
+| `state.db` nach `/var/lib/ngc/controller/` | Prüfsummen der drei Dateien gegen `inhalt.txt`: alle **OK** |
+| Controller mit `apis: []` gestartet | **abgewiesen**: „Die Konfiguration dieses Servers fehlt oder ist unvollständig." Ein Controller lässt sich nicht ohne API-Verweis starten — man kann eine Wiederherstellung also nicht erst einmal offline prüfen |
+| Controller mit totem API-Ziel gestartet | **die Datenbank öffnete.** Beide App-Zeilen gelesen, beide Apps angefasst |
 
-**Die Bitte an Thomas:** eine Wegwerf-Maschine (eine VM reicht, Debian wie die anderen), auf
-der die drei Punkte oben wirklich gefahren werden dürfen. Erst danach darf in diesem Repo ein
-Satz stehen, der mit „wiederhergestellt" anfängt.
+Und dann stand er genau an einer Wand:
+
+```
+WARN the runtime directory of an app could not be made, it stays off
+     app=org.sorglos.terminal
+     err="runtime: no system user for this container
+          user: unknown user ngc-terminal-439982dd"
+```
+
+**Der Systembenutzer der App fehlt.** Er steht in keiner Sicherung, und beim Zurückspielen legt
+ihn nichts an: `runtime.EnsureUser` und `runtime.EnsureData` werden von der **Einrichtung**
+gerufen (`install/activate.go`) und von sonst nichts. `node.Restore` sucht den Benutzer und legt
+keinen an. Ohne diesen Schritt bleibt nach einer Wiederherstellung **jede** App für immer aus,
+und das Einzige im Produkt, das es richtigstellt, ist ein Admin, der die App neu aus dem Laden
+einrichtet — eine Runde über das Netz, mit Lizenz und Paket, für zwei Zeilen, die in der
+Sicherung schon dastanden.
+
+**Das gilt für die Wiederherstellung und NICHT für einen Ausfall**, und die Verwechslung wäre
+teuer: wer diesen Befund als „Apps kommen nicht von allein zurück" liest, baut einen Schritt
+ein, den es nicht braucht. Die Sitzung „Was passiert, wenn ein Rechner ausfällt" hat den anderen
+Weg gemessen — ihre Messung, nicht meine: nach einem Ausfall und Neustart kommen die
+App-Container auf svc-1 und svc-2 **eine Sekunde** nach dem Start des Controllers von selbst
+wieder, mit `pragma integrity_check` vorher und nachher ok. Der Unterschied ist genau der
+Systembenutzer: bei einem Ausfall ist er noch da, bei einer Wiederherstellung auf eine neue
+Maschine nicht. `node.Restore` kann mit dem einen umgehen und mit dem anderen nicht.
+
+### Das Stück, das die Wand wegnimmt
+
+`tools/sicherung-zurueck` ruft für jede App-Kennung die beiden Funktionen des Produkts selbst —
+nicht nachgebaut, sondern dieselben, damit die Antwort auf „was ist der Benutzer einer App"
+nicht an zwei Stellen steht. Gelaufen auf 310:
+
+```
+org.sorglos.terminal     Benutzer ngc-terminal-439982dd (uid 999, gid 989)
+org.sorglos.terminal     Datenordner /var/lib/ngc/apps/org.sorglos.terminal, verschluesselt, leer
+org.sorglos.uhr          Benutzer ngc-uhr-ad8c00e2 (uid 995, gid 987)
+org.sorglos.uhr          Datenordner /var/lib/ngc/apps/org.sorglos.uhr, verschluesselt, leer
+sicherung-zurueck: ok                                        Ausstiegscode 0
+```
+
+**Und die Schlüsselkennungen stimmen.** Der Kern von 310 hält jetzt für die beiden Ordner
+genau die Kennungen, die der Kern von svc-1 hält:
+
+```
+310:    060244942f4faf1dd8453e6ab359558e   a26b3623dc61f8e1a3693dc0667aaa32
+svc-1:  060244942f4faf1dd8453e6ab359558e   a26b3623dc61f8e1a3693dc0667aaa32
+```
+
+Bitgleich, auf einer anderen Maschine, allein aus dem dbKey der Sicherung. Damit ist der Kreis
+geschlossen: der Schlüssel der App-Daten reist in `controller.json` mit und nirgends sonst.
+
+### Eine App lief wieder
+
+Daten aus `app-daten.tar` in die vorbereiteten Ordner (110 MB und 89 MB, je unter einer
+Sekunde), dann der Controller:
+
+```
+ngc-terminal-439982dd   localhost/ngc-terminal:1.0.0   Up About a minute
+```
+
+**Die Terminal-App läuft auf einer Maschine, die diese Anlage nie gesehen hat** — ohne API, ohne
+Laden, ohne Admin, allein aus der Sicherung. Das ist der Weg zurück, und er geht.
+
+### Was nicht zurückkam
+
+Die Uhr nicht. Ihr Abbild ist da (`localhost/ngc/uhr:1.0.0`, 85,6 MB), ihre Daten sind da, ihr
+Benutzer ist da — aber der Container startet nicht:
+
+```
+crun: mount `devpts` to `dev/pts`: Invalid argument
+```
+
+Die Container-Konfigurationen der beiden Apps sind an dieser Stelle **gleich** (beide mounten
+`devpts` mit `newinstance`, beide ohne `terminal`), und auf svc-1 laufen beide. Es ist also keine
+Eigenschaft der App. Was die beiden unterscheidet, ist ihr Alter: der Terminal-Container lief
+beim Sichern seit drei Stunden, der Uhr-Container seit sieben Minuten — er war am 24.10. um 12:25
+angelegt worden, meine Sicherung entstand 12:32. Der zurückgespielte Zustand trägt auch eine
+kaputte Zeit (`Exited (0) 292 years ago`). Gegenprobe gefahren: mit angehaltenem
+Terminal-Container startet die Uhr genauso nicht, es ist also kein Gedränge um `devpts`.
+
+**Was daraus gemessen folgt:** der Datenordner einer App ist nicht nur ihre Daten, er ist auch
+podmans Container-Lager. Ein `tar` davon im laufenden Betrieb ist für die **Daten** eine
+Sicherung und für das **Container-Objekt** eine Momentaufnahme, die schiefgehen kann. Abbild und
+Daten überlebten, das Container-Objekt der jüngeren App nicht.
+
+**Was daraus geschlossen, nicht gemessen ist:** der Ausweg ist, den Container wegzuwerfen und
+neu anlegen zu lassen. Das kann heute nur die Einrichtung (`install/activate.go`) — `node.Restore`
+startet vorhandene Container und legt keine an. Also: Daten ja, Container womöglich nein, und
+dann braucht es den Admin. Ein `podman rm` und ein Neuanlegen aus dem vorhandenen Abbild habe ich
+**nicht** gefahren.
+
+### Was weiter offen ist, und warum
+
+**Eine neue Maschine in die Vertrauensliste bringen.** `pair` braucht einen Kopplungscode, den
+die Oberfläche einem angemeldeten Admin zeigt; danach muss ein Admin den öffentlichen Schlüssel
+listen. Ein Skript kann dieser Admin nicht sein, und wer es nachstellt, misst seine eigene
+Vorrichtung — dieselbe Grenze, die `tools/erstlauf-verteilt.sh` in ihrem Kopf nennt. Die fünf
+Schritte in Abschnitt 5 bleiben damit gelesen und nicht gefahren. Mit einer alten
+`controller.json` habe ich bewusst **nicht** gekoppelt: das wäre svc-1 ein zweites Mal an
+derselben API.
+
+**Die MariaDB zurückspielen.** `mariabackup --prepare` und das Wiedereinspielen auf einem leeren
+Knoten sind nicht gefahren. Der Grund ist nicht Vorsicht, sondern Reihenfolge: eine Sitzung hat
+heute Nachmittag db-1 absichtlich abgeschaltet, und wie dieser Knoten von Hand zurückkommt
+wird dort gemessen. Zweimal denselben Ausfall zu erzeugen wäre Verschwendung — ihre Messung
+steht in Abschnitt 8, und sie fällt anders aus, als die Frage erwartet hat.
 
 ---
 
@@ -264,9 +389,12 @@ Satz stehen, der mit „wiederhergestellt" anfängt.
 kann, je Rechner einen Ordner, mit `inhalt.txt` darin, das zu jeder Datei sagt, *was* sie ist
 und *ohne was* sie wertlos ist.
 
-Es baut die Wiederherstellung **nicht**. Es schließt die Lücke, die in Abschnitt 1 steht: dass
-heute der eine Teil gesichert wird, den die Anlage ohnehin wiederbekäme, und kein einziger,
-den sie nicht wiederbekäme.
+Es baut die Wiederherstellung **nicht** — die braucht fast kein Programm, nur eine Reihenfolge
+(Abschnitt 6). Es schließt die Lücke, die in Abschnitt 1 steht: dass heute der eine Teil
+gesichert wird, den die Anlage ohnehin wiederbekäme, und kein einziger, den sie nicht
+wiederbekäme. Das zweite Stück, `tools/sicherung-zurueck`, ist das eine Programm, das wirklich
+fehlte — warum, steht in Abschnitt 6, und es ist aus einer Messung entstanden und nicht aus
+einer Vermutung.
 
 Gegen die Anlage gefahren, einmal, mit allen fünf Maschinen:
 
@@ -290,6 +418,10 @@ Was dabei herauskam:
 | svc-1 | 10 KB | 122 KB | — | 201 MB |
 | svc-2 | 10 KB | 118 KB | — | 112 MB |
 
+Und noch einmal um 14:05, nachdem das Skript seinen eigenen Transport zu prüfen gelernt hat
+(Abschnitt 8): `sicherung: ok`, Ausstiegscode 0, **180 s** statt 25 — das ist der Preis der
+Prüfung und er ist genannt, nicht versteckt.
+
 Die Controller sind während ihrer Sicherung gelaufen und liefen danach weiter
 (`systemctl is-active` vor und nach jedem Lauf: `active`), die Datenbank ebenso. Auf den
 Maschinen blieb nichts zurück: das Skript legt nur `/var/tmp/ngc-sicherung-lauf` an und löscht
@@ -303,20 +435,489 @@ trägt es je Maschine getrennt.
 
 ---
 
+## 8. Eine Sicherung, die niemand aufmacht, ist keine (gemessen)
+
+Dieser Abschnitt steht hier, weil eine andere Sitzung ihn mir geschenkt hat, und er trifft
+dieses Skript selbst.
+
+**Der Befund ist ihrer.** Die Sitzung „Was passiert, wenn ein Rechner ausfällt" hat am
+24.10.2026 einen logischen Dump der MariaDB gezogen und eine **47-KB-Datei** bekommen, die
+wie eine Sicherung aussah und keine war: null Tabellen, kein Benutzer. Binärdaten über
+ssh-stdout in eine Datei auf Windows werden verbogen; mit `scp` ging es. Es fiel nur auf, weil
+jemand die Sicherung **aufgemacht** hat statt ihre Größe anzusehen.
+
+**Und das ist genau der Weg, den `tools/sicherung.sh` benutzt**: jeder Teil kam über
+`ssh … cat` als Binärstrom auf eine Windows-Platte. Dass im Lauf von 12:32 nichts verbogen
+war, ist belegt — ich hatte die `sha256` von Hand verglichen und die Wiederherstellung in
+Abschnitt 6 lief aus genau diesen Dateien. Aber „ich habe nachgesehen" ist keine Eigenschaft
+eines Werkzeugs.
+
+Also prüft das Skript sich jetzt selbst. Jeder Teil wird **auf** der Maschine geschrieben, dort
+mit `sha256sum` gemessen, geholt und hier gegengerechnet. Stimmt es nicht, wird die Datei
+**gelöscht** und die Lücke in `inhalt.txt` und im Ausstiegscode benannt — eine Sicherung, die
+still falsch ist, ist schlimmer als eine, die fehlt.
+
+Gemessen, in beide Richtungen, gegen eine 1-MB-Datei auf der Probemaschine:
+
+| Fall | Antwort |
+|---|---|
+| unverändert geholt | `gleich` |
+| ein einzelnes Byte angehängt | **greift**, Datei gelöscht, danach nicht mehr da |
+
+Und der ganze Lauf noch einmal gegen alle fünf Maschinen, mit der Prüfung drin:
+
+```
+sicherung: ok          Ausstiegscode 0, Dauer 180 s
+```
+
+**Was es kostet:** 25 s vorher, 180 s jetzt. Der Preis ist, dass jeder Teil zweimal geschrieben
+wird — einmal auf der Maschine, einmal hier — und dass ein `tar` nicht mehr durchgestreamt
+wird. Ein Strom hat keine Prüfsumme, und ein laufendes Verzeichnis zweimal zu tarren gibt zwei
+verschiedene Tars. 155 Sekunden für die Gewissheit, dass die Sicherung die Sicherung ist, sind
+nach Thomas' Rangfolge keine Frage.
+
+### Der Weg zurück von db-1, gemessen — von einer anderen Sitzung
+
+Die Frage aus Abschnitt 6 („wie kommt ein einzelner Galera-Knoten von Hand zurück") hat eine
+Antwort, die ich nicht erwartet habe: **es gibt keine Schrittfolge, er kam allein zurück.**
+
+Gemessen von derselben Sitzung, db-1 aus von 13:46 bis 13:51 UTC, **nicht von mir**:
+
+- Der ganze Weg zurück war `qm start 303` und vier Sekunden warten: 13:47:16
+  „Starting mariadb.service", 13:47:20 „WSREP: Recovered cluster id", „Server db-1 synced with
+  group", „ready for connections". Danach `wsrep_cluster_size 1`, Primary, über drei Minuten im
+  Halbminutentakt nachgeprüft. **Kein einziger Befehl von Hand**; `galera_new_cluster` lag
+  bereit und war nicht nötig.
+- Und es war ein harter Schnitt — `qm stop` ist in Proxmox der Stecker. Belegt an der fehlenden
+  Journalspitze: letzter Eintrag des vorigen Starts 13:37:00, obwohl die Maschine 13:45:51
+  nachweislich noch antwortete. Alles dazwischen lag nicht auf der Platte.
+- Die **Bedingung** ist kein Befehl und keine Datei, die man hinlegt, sondern ein Zustand:
+  `grastate.dat` mit `safe_to_bootstrap: 1` und `seqno: -1`. Ein Knoten, der weiß, dass er der
+  letzte war, zieht sich selbst hoch.
+
+**Was daraus ausdrücklich NICHT folgt:** dass db-1 sich immer fängt. Der Stillstand von heute
+früh (02:45 bis 09:30) hing an `safe_to_bootstrap: 0`, und was den Unterschied macht, ist
+**offen**. Diesen Fall hat niemand erzeugt, und ich übernehme für ihn keine Zeilen — sonst
+stände hier ein Weg, den niemand gegangen ist. Wer ihn braucht, stellt ihn selbst her.
+
+### Eine Berichtigung an meinem eigenen Hinweis
+
+Ich hatte der Sitzung geschrieben, eine MariaDB-Sicherung brauche `/etc/ngc/db-keys`. Das gilt
+für `mariabackup`, das physische Werkzeug — es kopiert die verschlüsselten Tabellen über den
+Dateisystemweg, und ohne die Schlüsseldateien ist das Geheimtext (Abschnitt 4). Für einen
+**logischen** Dump gilt es nicht: der liest über die Datenbank entschlüsselt aus und braucht
+die Dateien nicht. Dafür ist er die Form, die diese Anlage bewusst nicht schreibt, weil ein
+zurückgespielter Dump Code ausführen kann (`register.go` sagt es an der Stelle, die keinen
+macht).
+
+---
+
+## 9. Zwei Ordner auf einer Platte sind keine Trennung (gemessen)
+
+Abschnitt 4 endet mit „mehrere Verwahrstellen für den Schlüssel, eine für die Daten". Das war
+richtig und zu schwach, und die Schärfung kommt wieder von der Sitzung „Was passiert, wenn ein
+Rechner ausfällt" — **ihre Messung**:
+
+```
+/etc/ngc/db-keys   keyfile.key 64 B, keys.enc 96 B, sst.pass 64 B  =  224 Byte
+/var/lib/mysql                                                     =  285 MB
+```
+
+**224 Byte schließen 285 MB auf.** Was sie gefährlich macht, ist nicht ihr Ort, sondern dass sie
+alles aufschließen **und in eine Textnachricht passen**. Zwei Ordner auf derselben Platte sind
+damit die Form, die wie Trennung aussieht und keine ist: dieselbe Maschine, dasselbe Konto,
+dieselben Rechte — wer den einen liest, liest den anderen. Mein eigener Vorschlag „zwei Orte"
+war genau diese Form.
+
+### Was das Werkzeug jetzt tut
+
+`tools/sicherung.sh` nimmt **zwei Ziele** und verweigert ohne das zweite den Dienst. Die
+Schlüssel gehen nicht in den Daten-Ordner, und ein Lauf, der beides an einen Ort schreiben
+soll, bricht ab und sagt warum. Gemessen, alle drei Fälle, und nichts bleibt liegen:
+
+| Aufruf | Antwort |
+|---|---|
+| ohne `-schluessel` | Aufruf wiederholt, Code 2, keine Ordner angelegt |
+| Daten und Schlüssel derselbe Ordner | **abgebrochen**, Code 2, mit den 224 Byte als Begründung |
+| Schlüsselordner **im** Datenordner | **abgebrochen**, Code 2 — ein Ordner darin ist ein Ordner |
+
+Der Lauf gegen alle fünf Maschinen danach: `sicherung: ok`, Ausstiegscode 0, 313 s.
+
+| | Größe | Inhalt |
+|---|---|---|
+| Daten-Ordner | 348 MB | `state.db` je Controller, `mariadb.tar`, `app-daten.tar` |
+| **Schlüssel-Ordner** | **75 KB** | `etc-ngc.tar` je Rechner, 10–20 KB, plus eine Notiz je Rechner |
+
+75 KB für fünf Rechner. Damit ist das Argument der anderen Sitzung nicht nur richtig, sondern
+praktisch: **das passt als Anhang in einen Passwortmanager**, und der Daten-Ordner darf dann
+liegen, wo Platz ist. Der Schlüssel-Ordner ist in den Notizen ausdrücklich als *Durchfuhr*
+bezeichnet — hinein, in den Passwortmanager, von der Platte löschen.
+
+### Ist es wirklich eine Trennung? An den Werten geprüft, nicht an den Wörtern
+
+Ein `grep` nach dem Wort `dbKey` findet im Daten-Ordner sieben Dateien, nach `BEGIN` drei, nach
+`PRIVATE KEY` zwei. Das sieht nach einem Leck aus und ist keines — und der Unterschied ist
+genau der zwischen einem Wort und einem Wert:
+
+- `dbKey`, `noiseKey`, `signKey` in `app-daten.tar` sind **Feldnamen im NGC-Programm selbst**:
+  das Abbild der App trägt `/usr/lib/ngc/ngc-uhr` beziehungsweise den Controller, und die
+  JSON-Namen stehen als Zeichenketten darin.
+- `PRIVATE KEY` steht in `libapt-private.so` des Grundabbilds — eine Fehlermeldung von
+  OpenSSL, kein Schlüssel. Die Dateiliste nennt nur `.so`-Dateien.
+- `keyfile.key` und `keys.enc` in `mariabackup.log` und `mariadb.tar` sind die **Pfade** in
+  `backup-my.cnf`, nicht die Dateien.
+- `dbKey` in den `inhalt.txt` und im `LIESMICH.txt` ist mein eigener Text, der das Wort erklärt.
+
+Die Messung, die zählt, sucht deshalb nach den **Werten**: alle 18 Geheimnisse aus dem
+Schlüssel-Ordner (vier `dbKey`, die `noiseKey`, `signKey`, `storeKey`, `secretKey`,
+`challengeKey` und das Datenbank-Kennwort), je die ersten 24 Zeichen, gegen den ganzen
+Daten-Ordner:
+
+```
+18 Geheimnisse aus dem Schluessel-Ordner gelesen
+0 von 18 Geheimnissen stehen im DATEN-Ordner.
+```
+
+**Null von achtzehn.** Die Trennung ist eine. Der ausgepackte Prüfordner ist danach wieder
+gelöscht.
+
+### Die Ausnahme ist keine mehr: `app-daten.tar.enc` (gemessen)
+
+Thomas hat Ort **und** Maschine gegeben, also ist die Entscheidung der anderen Sitzung nicht nur
+übernommen, sondern gefahren. `tools/sicherung.sh` verschlüsselt die App-Daten jetzt, **bevor
+sie die Maschine verlassen**, und ihre drei Bedingungen sind je an einer Stelle erfüllt:
+
+1. **Der Schlüssel ist ein neues Geheimnis und liegt bei den Schlüsseln.** Einer je
+   **Maschine** und je Lauf, 32 Byte aus `openssl rand`, als `app-daten.schluessel` (45 Byte)
+   im Schlüssel-Ordner dieses Rechners. Ein Schlüssel für svc-1 öffnet svc-2 nicht.
+2. **Er fährt nicht mit.** Im Daten-Ordner steht kein Byte davon; die `inhalt.txt` dort nennt
+   die Datei, die fehlt, und den Befehl, der sie braucht. Auf die Maschine kommt der Schlüssel
+   über **ssh-stdin** in eine Datei mit Modus 0600 und wird am Ende `shred`-et — nie als
+   Argument, denn ein Argument steht in `ps` für jeden Benutzer dieser Maschine. Der Klartext
+   wird überhaupt keine Datei: `tar` schreibt in `openssl`, `openssl` schreibt den Geheimtext.
+3. **Der Weg zurück ist gegangen** — das ist der Rest dieses Abschnitts.
+
+Der Lauf gegen alle fünf Maschinen: `sicherung: ok`, Ausstiegscode 0, **473 s** (gegen 313 s
+ohne Verschlüsselung; 600 000 PBKDF2-Runden und AES über 310 MB kosten diese 160 Sekunden).
+
+| | Größe |
+|---|---|
+| Daten-Ordner | 348 MB, davon `app-daten.tar.enc` 201 MB und 112 MB |
+| Schlüssel-Ordner | 106 KB — `etc-ngc.tar` je Rechner plus zwei `app-daten.schluessel` à 45 Byte |
+
+### Geht es ohne den Schlüssel auf? Vier Versuche auf einer fremden Maschine
+
+**VM 311 `ngc-krypto-probe`, 10.2.3.221**, wieder ein Klon der Vorlage 300, die dieser Anlage
+nie gehört hat:
+
+| Versuch | Antwort |
+|---|---|
+| `tar -tf app-daten.tar.enc` | `This does not look like a tar archive` |
+| entschlüsseln mit leerem Schlüssel | `This does not look like a tar archive` |
+| entschlüsseln mit einem **falschen** 32-Byte-Schlüssel | `This does not look like a tar archive` |
+| entschlüsseln mit `app-daten.schluessel` aus dem Schlüssel-Ordner | **6720 Dateien**, Pfade ab `var/lib/ngc/apps/` |
+
+### Und dann liefen beide Apps
+
+Der ganze Weg, auf 311, in dieser Reihenfolge: `/etc/ngc` aus dem **Schlüssel**-Ordner,
+`state.db` aus dem **Daten**-Ordner, `tools/sicherung-zurueck` für Systembenutzer und leere
+verschlüsselte Datenordner (Ausstiegscode 0), dann die App-Daten mit dem getrennten Schlüssel
+entschlüsselt und hineingelegt — **2 Sekunden** für 199 MB. Die fscrypt-Kennungen des Kerns
+sind wieder bitgleich mit denen von svc-1. Dann der Controller:
+
+```
+org.sorglos.terminal   localhost/ngc-terminal:1.0.0   Up 45 seconds
+org.sorglos.uhr        localhost/ngc/uhr:1.0.0        Up 45 seconds
+```
+
+**Beide.** Und der Controller hat dabei keine einzige Warnung geschrieben.
+
+Damit ist Bedingung 3 erfüllt: eine Anlage läuft aus einer Sicherung wieder an, deren Daten
+ohne den getrennt verwahrten Schlüssel nicht aufgehen. Kein Teil der Sicherung öffnet mehr ohne
+Schlüssel — die Ausnahme aus Abschnitt 4 ist geschlossen.
+
+### Und die Uhr kam diesmal mit (gemessen)
+
+In Abschnitt 6 kam die Uhr **nicht** zurück (`crun: mount devpts`), und die Vermutung dort war:
+ihr Container-Objekt war sieben Minuten vor der Sicherung angelegt worden, der des Terminals
+drei Stunden. Diesmal lief sie. Dieselbe Maschine aus derselben Vorlage, dieselbe
+podman-Fassung, dasselbe Vorgehen — der einzige Unterschied ist, dass diese Sicherung Stunden
+nach der Einrichtung der Uhr entstand.
+
+Das ist eine **zweite Messung zur selben Frage und noch kein Beweis**: belegt ist, dass derselbe
+Weg einmal mit und einmal ohne die Uhr endete, und dass das Alter des Container-Objekts das
+einzige ist, was sich zwischen den beiden Läufen geändert hat. Es stützt die Erklärung aus
+Abschnitt 6 und ersetzt sie nicht: wer sie beweisen will, legt einen Container an und sichert
+eine Minute später.
+
+Was unverändert gilt: der Datenordner einer App ist auch podmans Container-Lager, und ein `tar`
+im Betrieb ist für die Daten eine Sicherung und für das Container-Objekt eine Momentaufnahme.
+
+---
+
+### Die Prüfsummen gehören zu den Schlüsseln (gemessen)
+
+Der letzte Satz des vorigen Abschnitts — „was ein verändertes Byte fängt, ist die sha256 im
+Verzeichnis" — war nur halb richtig, und die andere Sitzung hat die Hälfte benannt: er gilt
+für einen **Unfall**, eine kaputte Platte, eine abgebrochene Übertragung. Er gilt nicht für
+jemanden, der im Daten-Ordner schreiben darf — der ändert die Datei **und** die Zeile darüber.
+Dann beweist die Liste, was der letzte Schreiber wollte.
+
+Dieselbe Rechnung wie bei den 224 Byte: die Liste ist ein paar Kilobyte, also gehört sie dorthin,
+wo die Schlüssel liegen. `tools/sicherung.sh` schreibt sie jetzt als `summen.txt` in den
+Schlüssel-Ordner je Rechner; im Daten-Ordner bleibt die **Beschreibung** jeder Datei und der
+Satz, wo die Summen stehen. Eine Beschreibung ohne Prüfsumme ist etwas wert, eine Prüfsumme ohne
+Vertrauen nicht. Laufzeit kostet es nichts — anders als eine zweite Krypto-Schicht, gegen die
+auch die andere Sitzung ausdrücklich ist.
+
+Gemessen, mit einem angehängten Byte in `app-daten.tar.enc`:
+
+| | Antwort |
+|---|---|
+| Daten-Ordner allein | **0 Prüfsummen darin** — es gibt nichts zu vergleichen |
+| mit `summen.txt` aus dem Schlüssel-Ordner | `app-daten.tar.enc: FAILED`, `state.db: OK` |
+
+Damit gilt für beide Hälften derselbe Satz: **wer nur die Daten hat, kann sie weder lesen noch
+unbemerkt ändern.**
+
+Eine Kleinigkeit, die beim ersten Lauf auffiel und gleich mit eingebaut ist: `summen.txt` hat
+zwei Abschnitte (Daten-Ordner und Schlüssel-Ordner), und ein `sha256sum -c` über die ganze
+Liste in einem der beiden Ordner meldet die jeweils andere Hälfte als fehlend. Das ist kein
+Befund, und die Datei sagt es jetzt selbst.
+
+### Der Beweis zur Uhr geht so nicht (gemessen, und das ist das Ergebnis)
+
+Die andere Sitzung hat vorgeschlagen, die Erklärung aus Abschnitt 6 zu beweisen, solange VM 311
+steht: einen Container anlegen und eine Minute später sichern. Versucht, auf 311, mit demselben
+Abbild und demselben App-Benutzer wie die laufende Uhr. Das frische Objekt kam schon vor jeder
+Sicherung nicht hoch:
+
+```
+Error: unable to start container "e6ab1486...": pasta failed with exit code 1:
+  Couldn't open network namespace /run/ngc/ngc-uhr-ad8c00e2/netns/netns-cf6e0642-...:
+  Permission denied
+```
+
+Das ist **nicht** der Fehler, um den es geht (`crun: mount devpts`), sondern eine Grenze meiner
+eigenen Vorrichtung: ein Container, den ich mit `setpriv` von Hand anlege, hat nicht das Netz,
+das der Controller als root einrichtet. Ein Scheitern meines Containers sagt damit nichts über
+den des Produkts — das wäre wieder eine Messung der eigenen Vorrichtung, und diesmal hätte sie
+sogar rot ausgesehen.
+
+**Also bleibt es bei „gestützt und nicht bewiesen", und jetzt ist auch gemessen, warum der
+Beweis nicht billig ist:** er braucht einen Container, der so entsteht, wie das Produkt ihn
+macht — über die Einrichtung, mit dem Controller als root. Das heißt: eine Anlage, in der man
+eine App einrichten darf, und das ist die laufende. Die Probe-Container sind wieder weg; beide
+Apps auf 311 liefen danach unverändert weiter (`Up 18 minutes`).
+
+---
+
+## 10. Die erste Sicherung an einem Ort, der bleibt (gemessen)
+
+Thomas hat `d:\ngc_backup` für die Daten genannt. Den zweiten Pfad hat er zweimal versprochen
+und nicht genannt, also habe ich ihn selbst gesetzt — er ist ohnehin nur die Durchfuhr:
+`d:\ngc_schluessel-durchfuhr`, ein Ordner, der nach dem Umzug in den Passwortmanager wieder
+verschwindet.
+
+Je Lauf ein Unterordner mit Zeitstempel, in **beiden** Zielen. Das war keine Vorliebe: das
+Werkzeug verweigert ein Ziel, das schon da ist, und in `d:\ngc_backup` lagen die zwei Dateien
+der Ausfall-Sitzung. So bleiben die unberührt (nachgesehen, Größen unverändert) und zwei Läufe
+können sich nicht ins Gehege kommen.
+
+```
+sicherung: ok                 Ausstiegscode 0, Dauer 307 s
+Daten      353 MB   d:\ngc_backup\2026-10-24T1821Z
+Schluessel   80 KB   d:\ngc_schluessel-durchfuhr\2026-10-24T1821Z
+```
+
+Alle Prüfsummen gegengerechnet, je Hälfte in ihrem eigenen Ordner, mit genau dem Befehl, den
+`summen.txt` selbst nennt:
+
+| | Daten | Schlüssel |
+|---|---|---|
+| api-1 | 1/1 | 1/1 |
+| api-2 | 0/0 (kein Controller, keine Apps) | 1/1 |
+| db-1 | 3/3 | 1/1 |
+| svc-1 | 2/2 | 2/2 |
+| svc-2 | 2/2 | 2/2 |
+
+### Zwei Fehler im eigenen Werkzeug, beide beim ersten echten Lauf gefunden
+
+**Der erste war meine Ansäge an mich selbst.** Beide Ziele liegen auf `D:`, und die Verweigerung
+aus Abschnitt 9 fängt nur denselben und den verschachtelten Ordner — zwei **Geschwister** auf
+einer Platte gehen durch, und genau das ist die Form, gegen die der ganze Abschnitt argumentiert.
+Verweigern ist hier falsch, denn es ist auch die Form, die die Durchfuhr für einen Moment haben
+**soll**. Also sagt das Werkzeug es jetzt jedes Mal laut, mit dem Satz, was noch zu tun ist:
+
+```
+sicherung: ACHTUNG - Daten und Schluessel liegen auf DEMSELBEN Datentraeger.
+sicherung:   ... Der Schluessel-Ordner ist als Durchfuhr gedacht - nach dem Lauf in
+sicherung:   den Passwortmanager damit, dann den Ordner loeschen. Erst danach
+sicherung:   ist diese Sicherung eine.
+```
+
+Gefragt wird das Gerät (`stat -c %d`) und nicht der Laufwerksbuchstabe: ein Buchstabe sagt
+nichts über eine Einhängung. Wo `stat` nicht antwortet, steht nichts — eine Warnung, die nicht
+gemessen werden kann, ist keine Zeile wert.
+
+**Der zweite ist peinlicher und das bessere Beispiel.** Der Hinweis, den ich eine Stunde vorher
+in `summen.txt` geschrieben hatte, lautete `grep "[*]" summen.txt | sha256sum -c -`. Diese Zeile
+enthält das Muster, das sie empfiehlt — der Hinweis prüfte sich selbst mit und kam als kaputte
+Prüfsummenzeile zurück. Jede Gegenrechnung war dadurch **genau eine Zeile zu kurz**:
+
+```
+api-1   Daten: 1 von 2 ok      svc-1   Daten: 2 von 3 ok
+```
+
+Aufgefallen ist es in der Sekunde, in der jemand die Liste **gegen die Dateien gehalten** hat
+statt sie zu lesen — dieselbe Regel, die dieses Blatt der Ausfall-Sitzung verdankt (Abschnitt 8),
+diesmal gegen meinen eigenen Text. Das Muster fragt jetzt nach 64 Hex-Ziffern am Zeilenanfang,
+was kein Satz dieser Datei sein kann; der fehlerhafte Lauf ist gelöscht und neu geschrieben, und
+die Tabelle oben ist der neue.
+
+### Was jetzt noch zu tun ist, und es ist nicht meine Arbeit
+
+Die 80 KB aus `d:\ngc_schluessel-durchfuhr` gehören in den Passwortmanager, und danach
+gehört der Ordner gelöscht. **Solange er dort steht, ist diese Sicherung keine** — wer die
+Platte lesen kann, hat beide Hälften. Das steht in seinem `LIESMICH.txt`, es steht in jeder
+`inhalt.txt`, und das Werkzeug sagt es bei jedem Lauf. Mehr kann ein Skript dazu nicht tun.
+
+---
+
+## 11. Zwei Lücken, die das Aufräumen gefunden hat (gemessen)
+
+Thomas hat angewiesen, die alten Konfigurationskopien von den drei Datenbankknoten wegzuräumen
+(fünf Fassungen derselben Datei je Knoten, aus vier Sitzungen). Beim Nachsehen, was danach
+überhaupt noch da ist, fielen zwei Dinge auf — und das ist der Grund, warum Löschen die Reihenfolge
+„erst sichern, dann wegräumen" braucht und nicht umgekehrt.
+
+### `/etc/mysql` stand in keiner Sicherung
+
+`tools/sicherung.sh` nahm `/etc/ngc` mit und `/etc/mysql/mariadb.conf.d` nicht. Was dort allein
+steht, auf db-1 nachgelesen:
+
+```
+wsrep_cluster_address=gcomm://db-1...,db-2...,db-3...
+wsrep_node_name=db-1
+wsrep_node_address=10.2.3.212
+wsrep_sst_method=mariabackup
+wsrep_sst_auth=sst:<geheim>
+file_key_management_filename=/etc/ngc/db-keys/keys.enc
+file_key_management_filekey=FILE:/etc/ngc/db-keys/keyfile.key
+```
+
+Davon steht in `/etc/ngc` **nichts**. Gegenprobe am `etc-ngc.tar` von db-1 aus dem Lauf von
+18:21: 18 Dateien, `60-ngc.cnf` ist keine davon. **Ein Datenbankknoten hätte sich aus dieser
+Sicherung nicht wieder aufbauen lassen** — die Daten waren da, die Verdrahtung nicht.
+
+Das Werkzeug nimmt die Datei jetzt mit, und zwar **zu den Schlüsseln**: `wsrep_sst_auth` ist das
+Konto, mit dem ein eintretender Knoten die ganze Datenbank kopiert. Es gehört damit auf dieselbe
+Seite wie `db-keys`, nach derselben Regel wie alles andere dort.
+
+### Und die Sicherung hatte zwei Knoten nicht gesehen
+
+Der Lauf von 18:21 ging gegen fünf Maschinen, weil ich fünf genannt hatte. Die Anlage hat
+seit heute **sieben**: db-2 und db-3 sind dazugekommen, von einer anderen Sitzung gebaut. Sie
+standen in keiner Sicherung, und nichts hat es gesagt — das Werkzeug sichert, was man ihm nennt.
+
+Daraus eine Einschränkung, die in den Kopf des Skripts gehört und nicht in meinen Kopf: **eine
+Sicherung, deren Maschinenliste von Hand kommt, ist so aktuell wie die Liste.** Die Liste aus
+der Anlage selbst zu holen wäre besser (die Vertrauensliste kennt die Knoten), ist aber nicht
+gebaut — ein Werkzeug, das sich seine Ziele selbst sucht, sichert eines Tages einen Rechner, von
+dem niemand wusste, dass er dazugehört, und das ist eine Entscheidung und kein Handgriff.
+
+### Der neue Lauf, und dann das Aufräumen
+
+```
+sicherung: ok                 Ausstiegscode 0, Dauer 186 s, sieben Maschinen
+Daten      453 MB   d:\ngc_backup\2026-10-24T2016Z
+Schluessel 227 KB   d:\ngc_schluessel-durchfuhr\2026-10-24T2016Z
+```
+
+Darin je Datenbankknoten ein `mariadb-cnf.tar` (30 bis 41 KB), und die 453 MB gegen 353 MB sind
+die beiden neuen Datenbankknoten mit je 51 MB.
+
+Erst danach gelöscht, je Knoten die `60-ngc.cnf.vor-*` und die beiden
+`99-erstlauf-galera.cnf`-Kopien — auf db-1 sechs Dateien, auf db-2 und db-3 je vier. Geblieben
+sind die zwölf Dateien, die im Lauf stehen. Danach auf allen drei: `mariadb active`, `Verbund 3`,
+`Synced`.
+
+Dass die gelöschten Fassungen in diesem einen Lauf noch mitgesichert sind, ist kein Zufall: das
+`mariadb-cnf.tar` von db-1 trägt sie alle sechs. Wer sie wirklich nie wieder sehen will, nimmt
+den nächsten Lauf.
+
+---
+
 ## Was gemessen und was abgewogen ist
 
-**Gemessen** (Lauf, Zahl, Ausstiegscode): Abschnitt 0 ganz; Abschnitt 1 die Spalte „wo er
-liegt" und die Abwesenheit von `ngc-db`; Abschnitt 2 ganz (Zeilenzahlen,
-`mariabackup` 1 s / 49 MB / Datenbank weiter aktiv); Abschnitt 3 die Kommandoliste;
-Abschnitt 4 ganz (vier Öffnungsversuche, vier dbKey-Fingerabdrücke, zwei fscrypt-Kennungen,
-`grep` über neun `.ibd`); Abschnitt 7 ganz.
+**Gemessen** (Lauf, Zahl, Ausstiegscode):
 
-**Abgewogen** (aus Gemessenem geschlossen, nicht ausgeführt): Abschnitt 1 die Spalte „in der
-Sicherung?" für die Teile, die nachweislich nirgends eingesammelt werden — dass sie *fehlen*
-ist gemessen, dass sie beim Zurückspielen *gebraucht* werden ist geschlossen; Abschnitt 4 der
-Unterabschnitt zur Aufbewahrung; Abschnitt 5 ganz — die fünf Schritte sind aus dem Code
-gelesen und gegen den Stand der Anlage gehalten, **gefahren ist keiner**.
+- Abschnitt 0 ganz — Rollen, Dienste und Ankerstände je Maschine am laufenden Dienst.
+- Abschnitt 1 die Spalte „wo er liegt" und die Abwesenheit von `ngc-db`.
+- Abschnitt 2 ganz — Zeilenzahlen, `mariabackup` 1 s / 49 MB, Datenbank danach weiter aktiv.
+- Abschnitt 3 die Kommandoliste des Controllers.
+- Abschnitt 4 ganz — vier Öffnungsversuche, vier dbKey-Fingerabdrücke, zwei fscrypt-Kennungen
+  nachgerechnet, `grep` über neun `.ibd`, und die Berichtigung zum Klartext im `app-daten.tar`
+  (1419 ELF-Köpfe gezählt).
+- Abschnitt 6 fast ganz — die zurückgespielte Konfiguration und Datenbank, die Abweisung bei
+  `apis: []`, die Wand am fehlenden Systembenutzer, der Lauf von `tools/sicherung-zurueck`, die
+  bitgleichen fscrypt-Kennungen auf einer fremden Maschine, die **laufende Terminal-App**, und
+  das Nichtanlaufen der Uhr samt Gegenprobe mit angehaltenem Nachbarn.
+- Abschnitt 7 ganz, einschließlich des zweiten Laufs mit der Prüfung (180 s) und der
+  Gegenprobe, dass sie bei einem einzigen Byte greift.
+- Abschnitt 11 ganz — dass `60-ngc.cnf` in keiner Sicherung stand (am `etc-ngc.tar` von 18:21
+  gegengeprüft), dass zwei Datenbankknoten gefehlt hatten, der neue Lauf über sieben Maschinen
+  (186 s, 453 MB gegen 227 KB) und das Aufräumen danach mit dem Dienst unverändert.
+- Abschnitt 10 ganz — der Lauf an den benannten Ort (307 s, 353 MB gegen 80 KB), alle
+  Prüfsummen je Hälfte gegengerechnet, und die zwei Fehler im eigenen Werkzeug: die fehlende
+  Warnung bei zwei Geschwisterordnern auf einer Platte und der Hinweis in `summen.txt`, der
+  sich selbst mitgeprüft hat.
+- Abschnitt 9 ganz — die drei Verweigerungen, der Lauf mit getrennten Zielen (313 s, 348 MB
+  gegen 75 KB), die Suche nach den 18 Werten im Daten-Ordner, der Lauf mit Verschlüsselung
+  (473 s, 106 KB Schlüssel), die vier Entschlüsselungsversuche auf VM 311 und **beide Apps,
+  die danach dort liefen**. Die 224 Byte gegen 285 MB sind die Messung der Sitzung „Was
+  passiert, wenn ein Rechner ausfällt". Dazu die Prüfsummen-Liste im Schlüssel-Ordner: dass
+  der Daten-Ordner allein keine einzige Prüfsumme mehr trägt und dass die Liste aus dem
+  Schlüssel-Ordner ein angehängtes Byte als `FAILED` fängt, ist gemessen; der Gedanke dazu
+  ist der der anderen Sitzung.
+- Abschnitt 8 ganz — die beiden Fälle der Transportprüfung sind meine Messung; der
+  47-KB-Dump und die Wiederkehr von db-1 in vier Sekunden sind die Messung der Sitzung „Was
+  passiert, wenn ein Rechner ausfällt" und stehen hier mit ihr als Herkunft. Ebenso in
+  Abschnitt 6 die Wiederkehr der App-Container **nach einem Ausfall** — ihre Messung, die meine
+  ergänzt und sie gegen eine falsche Lesart schützt.
 
-**Weder noch, sondern eine Entscheidung für Thomas:** ob dbKeys bei einer Neuinstallation
-vorgegeben werden dürfen (Ende von Abschnitt 4), und ob eine Wegwerf-Maschine für die drei
-offenen Punkte aus Abschnitt 6 bereitsteht.
+**Abgewogen** (aus Gemessenem geschlossen, nicht ausgeführt):
+
+- Abschnitt 1 die Spalte „in der Sicherung?" für die Teile, die nachweislich nirgends
+  eingesammelt werden — dass sie *fehlen* ist gemessen, dass sie beim Zurückspielen *gebraucht*
+  werden ist für `/etc/ngc` und `state.db` inzwischen gemessen (Abschnitt 6) und für die
+  MariaDB weiterhin geschlossen.
+- Abschnitt 4 der Unterabschnitt zur Aufbewahrung — in Abschnitt 9 geschärft und dort zum
+  Teil gemessen.
+- Abschnitt 5 die Schritte 2 und 3 — Kopplungscode und Eintrag in die Vertrauensliste. Die
+  brauchen einen angemeldeten Admin in der Oberfläche; Schritt 1, 4 und 5 sind gefahren.
+- Abschnitt 9 die Erklärung, **warum** die Uhr beim ersten Lauf fehlte und beim zweiten
+  mitkam: zwei Läufe mit entgegengesetztem Ende sind gemessen, das Alter des Container-Objekts
+  als Ursache ist gestützt und nicht bewiesen — und der Versuch, es zu beweisen, ist an der
+  eigenen Vorrichtung gescheitert, was dort als Ergebnis steht und nicht als Panne.
+- Abschnitt 8 der Unterschied zwischen `safe_to_bootstrap: 1` und `0` — **nicht einmal
+  abgewogen, sondern offen**: den zweiten Fall hat niemand erzeugt, und es stehen bewusst keine
+  Zeilen dafür hier.
+- Abschnitt 6 die Ursache des Uhr-Fehlers und der Ausweg daraus. Dass Abbild und Daten
+  zurückkamen und der Container nicht, ist gemessen; **warum** gerade der jüngere Container
+  nicht anläuft, ist die naheliegende Erklärung und kein Beweis, und ein `podman rm` mit
+  Neuanlegen ist nicht gefahren.
+
+**Nicht gemessen und nicht abgewogen, sondern eine Entscheidung für Thomas:**
+
+1. Ob die dbKeys bei einer Neuinstallation **vorgegeben** werden dürfen. Ohne das kann
+   „dieselbe Maschine wiederherstellen" nicht funktionieren — und mit `tools/sicherung-zurueck`
+   ist jetzt gezeigt, dass alles andere daran hängt und sonst nichts.
+2. Ob `tools/sicherung-zurueck` ein eigenes Werkzeug bleiben soll oder ob `node.Restore` den
+   Benutzer und den Datenordner selbst anlegen soll. Das Zweite wäre die bessere Anlage und die
+   größere Änderung: ein Controller, der beim Start Systembenutzer anlegt, tut beim Hochfahren
+   mehr als heute, und das ist eine Entscheidung über die Form und nicht über eine Zahl.
+3. Ob die beiden Code-Stellen auf `ngc-db backup` zeigen dürfen, solange es das nicht gibt.
+4. Ob die Wegwerf-Maschine (VM 310 auf dem Proxmox, 10.2.3.220) stehen bleiben soll. Sie trägt
+   im Moment eine Kopie der App-Daten von svc-1 im Klartext und die `controller.json` von svc-1
+   — solange sie steht, ist sie so empfindlich wie svc-1 selbst.
