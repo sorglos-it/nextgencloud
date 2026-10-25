@@ -223,6 +223,7 @@ gibt, aber erst nach dem Schreiben.
 | 89 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
 | 90 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
 | 91 | Die fünf Sekunden sind zwei eigene Zahlen derselben Länge | gilt – Anwahlfrist auf 1 s, Stufe **Stabilität**, am laufenden System belegt; Vorlagenteil zu Punkt 90 mitgebaut | Entscheidung |
+| 92 | Bei verlorener Mehrheit ist auch das Lesen zu – und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500` | gilt – **schärft Punkt 90**; die Anlage antwortet ehrlich, zwei eigene Erwartungen widerlegt | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6850,3 +6851,109 @@ ist unbelegt — wie in jedem Fall dieses Pakets. `headers_module` und `proxy_ba
 sind auf api-1 als geladen gelesen (25.10.2026). Und ob die neun Fehlschläge vom 24.10.2026
 damit auf null gehen, ist **nicht** nachgemessen: das bräuchte wieder einen Maschinen-Stopp von
 api-2, und der gehört in einen eigenen Lauf.
+## Punkt 92: Bei verlorener Mehrheit ist auch das Lesen zu — und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500`
+
+Am 24.10.2026 ist jede der sechs Maschinen einmal abgeschaltet worden. Zwei
+Fälle blieben offen, und beide sind am 25.10.2026 nachgeholt: **zwei
+Datenbankknoten gleichzeitig** (die Mehrheit fällt) und **der Dienst-Stopp**,
+den die ganze Reihe von gestern nicht enthielt — sie bestand aus sechs
+`qm stop`. Die Erwartungen stehen in einem Stand, der **vor** dem ersten Stopp
+festgeschrieben wurde; das ganze Blatt mit beiden Spalten:
+`docs/ausfall-nachtrag.md`.
+
+**Erstens: „lesen geht noch, schreiben nicht" gilt hier nicht.** Das war die
+Erwartung, die nachzumessen war. Auf dem einzigen überlebenden Knoten, während
+die Mehrheit weg war, scheitern Lesen und Schreiben **mit demselben Fehler und
+demselben Wortlaut**:
+
+```
+SELECT count(*) FROM ngc.ngc_app  ->  ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+INSERT INTO messung.nachtrag …    ->  ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+```
+
+Der Grund ist eine Einstellung dieser Anlage und keine Eigenschaft des
+Verbunds: `wsrep_dirty_reads` steht auf `OFF`. Wer den Lesebetrieb bei
+verlorener Mehrheit haben will, muss ihn einschalten. **Ob er eingeschaltet
+werden soll, ist nicht entschieden** und steht unten.
+
+Dazu ein Befund, den niemand bestellt hat: **`SELECT 1` antwortet weiter mit
+`1`**, weil es keine Tabelle anfasst. Eine Überwachung, die so fragt, meldet
+diesen Knoten als gesund, während er keine einzige Zeile hergeben kann. Das
+ist eine Falle für jede Überwachung, die noch gebaut wird.
+
+**Zweitens: die Anlage antwortet ehrlich.** Der schwerere Befund, auf den der
+Auftrag gezielt hat — „Anmeldung fehlgeschlagen" statt „Dienst nicht
+erreichbar" —, ist **nicht** eingetreten. Alle 45 Anfragen bei verlorener
+Mehrheit bekamen `HTTP 503` mit
+`{"code":"E_UNREACHABLE","message":"Dienst nicht erreichbar."}`, und das
+Journal trennt `db-busy` von `db-unreachable` mit eigenen Zählern. Die Grenze
+dieser Aussage steht im Blatt: `login/start` hat gar keinen Anmeldefehler, mit
+dem sich das verwechseln ließe (derselbe Aufruf mit einem Namen, den es nicht
+gibt, antwortet im gesunden Betrieb ebenfalls mit `200`). Die Stelle, an der
+sich die beiden treffen könnten, ist `login/finish`, und die braucht einen
+Passkey — **dort ist nur der Code gelesen, nichts gemessen.**
+
+**Drittens, und das schärft Punkt 90: die fünf Sekunden und die `HTTP 500` sind
+zwei verschiedene Fehler.** Gestern lagen sie übereinander. Der Dienst-Stopp
+trennt sie, weil ein abgelehnter Verbindungsversuch sofort zurückkommt und ein
+verfallenes Paket erst nach Ablauf der Frist:
+
+| | Maschinen-Stopp api-2 (24.10.) | Dienst-Stopp api-2 (25.10.) |
+|---|---|---|
+| erste Anmeldung | `503` nach **5,03 s** | `200` in **0,024 s** |
+| 40 in Folge | 31/40 mit `500` | **6/40 mit `500`** |
+
+Der Zeitablauf gehört also **dem stummen Knoten** und nicht dem Umschalten. Die
+`500` dagegen **bleibt** — sechs von vierzig, über die ganzen drei Minuten
+verstreut, und was der Benutzer sieht, ist die nackte Apache-Seite
+`500 Proxy Error`, keine NGC-Antwort. Der Lastverteiler trägt
+`retry=5 … failontimeout=On`: eine abgelehnte Verbindung ist kein Zeitablauf,
+also greift `failontimeout` nicht, und `retry=5` holt das tote Mitglied alle
+fünf Sekunden zurück in die Reihe. Eine Lebensprobe, die es draußen hielte,
+gibt es nicht. **Und wieder schreibt der Apache darüber keine Zeile** — weder
+ins Journal noch in `error.log`, über die ganze Zeit.
+
+**Viertens: der geordnete Austritt ist der Grund für die gute Rückkehr.**
+`systemctl stop mariadb` auf db-1: keine Delle (alle fünf ersten Anfragen
+`200` in 0,024–0,056 s, 40/40 gut, keine API schrieb überhaupt eine Zeile), und
+die Rückkehr lief über **IST** — 53 Ereignisse, in derselben Sekunde fertig,
+`NRestarts=0`, Verbund nach 30 s wieder `size=3 Primary`. Gestern brauchte db-3
+nach dem **Maschinen**-Stopp 71 Versuche und kam nicht zurück, jeder Versuch
+mit vollem Abgleich. Daraus folgt eine Handlungsregel, die nichts kostet: **vor
+jedem Maschinen-Stopp den Dienst geordnet herunterfahren** ist billiger als
+jede Reparatur am Wiederanlauf.
+
+**Fünftens: api-2 ist nicht nur Zierde.** Mit `apache2` auf api-1 am Leben und
+nur dessen eigener `ngc-api` aus: **40/40 Anmeldungen gut, keine einzige
+`500`.** Das Urteil von gestern bleibt für die *Erreichbarkeit* richtig — fällt
+die Maschine api-1, ist alles weg —, aber der zweite API-Server trägt die API
+wirklich, sobald der Eingang lebt. Er hängt nur am selben einzigen Eingang.
+
+**Zwei eigene Erwartungen sind widerlegt, und sie stehen im Blatt als
+widerlegt.** Ich hatte bei zwei abwesenden Knoten rund 10 s für die erste
+Anfrage erwartet — es bleibt bei **einem** Zeitablauf von 5,02 s. Und ich hatte
+nach dem db-3-Fall von gestern Handarbeit für die Rückkehr erwartet — beide
+Knoten kamen nach dem harten Stopp **von selbst** in unter 30 s über den gcache
+zurück, `NRestarts=0`. Warum der Fall von gestern nicht zurückkam und dieser
+schon, ist mit einer Messung **nicht** geklärt.
+
+**Was offen bleibt:**
+
+- **Soll `wsrep_dirty_reads` eingeschaltet werden?** Dafür spricht, dass die
+  Oberfläche bei verlorener Mehrheit wenigstens etwas zeigen könnte statt
+  nichts; dagegen, dass sie dann **veraltete Daten** zeigt, ohne es zu wissen,
+  und dass „es geht noch irgendwie" einen Ausfall verdeckt, den jemand beheben
+  muss. Entscheidung für Thomas.
+- **Warum gab der Dienst-Stopp von api-2 sechs `500` und der von api-1 keine?**
+  Beide Male hing ein totes Mitglied im selben Lastverteiler. Offene Frage,
+  dieselbe Baustelle wie Punkt 90.
+- **Warum kam db-3 am 24.10. nicht zurück und die beiden am 25.10. schon?**
+  gcache-Reichweite oder Länge des Ausfalls — nicht gemessen.
+- **(c), (d) und (e) sind in keinem Fall gemessen.** Sie sitzen hinter einer
+  Anmeldung mit Passkey. Für den Dienst-Stopp auf svc-1 ist das die
+  entscheidende Lücke: dort sind die Container nachweislich **mitgefallen**
+  (`KEINE` statt zwei), aber ob die Oberfläche die Uhr in diesen drei Minuten
+  als „läuft" angezeigt hätte, weiß niemand.
+
+Herkunft, beide Erwartungsspalten und alle Rohzahlen: `docs/ausfall-nachtrag.md`.
+Werkzeuge: `tools/ausfall-mehrheit.sh`, `tools/ausfall-dienst.sh`.
