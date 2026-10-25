@@ -2,6 +2,9 @@ package classes
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,11 +18,11 @@ var fixed = time.Date(2026, 10, 24, 11, 30, 0, 0, time.UTC)
 // to stdout, which is the only direction the app's window ever sees.
 func TestZeitAnswersOnStdout(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := answer("zeit", "1.0.0", fixed, &out, &errOut); code != 0 {
+	if code := answer("zeit", "1.0.1", t.TempDir(), fixed, &out, &errOut); code != 0 {
 		t.Fatalf("answer = %d, want 0 (stderr: %q)", code, errOut.String())
 	}
-	if got := out.String(); got != "2026-10-24T11:30:00Z\n" {
-		t.Errorf("stdout = %q, want the time in RFC 3339", got)
+	if got := out.String(); got != "2026-10-24T11:30:00Z\n1\n" {
+		t.Errorf("stdout = %q, want the time in RFC 3339 and the count", got)
 	}
 }
 
@@ -28,7 +31,7 @@ func TestZeitAnswersOnStdout(t *testing.T) {
 // in a log has not seen what the window got.
 func TestZeitAlsoWritesStderr(t *testing.T) {
 	var out, errOut bytes.Buffer
-	answer("zeit", "1.0.0", fixed, &out, &errOut)
+	answer("zeit", "1.0.1", t.TempDir(), fixed, &out, &errOut)
 	if !strings.Contains(errOut.String(), "zeit") {
 		t.Errorf("stderr = %q, want the line that names the action", errOut.String())
 	}
@@ -43,7 +46,7 @@ func TestZeitAlsoWritesStderr(t *testing.T) {
 func TestUnknownActionFails(t *testing.T) {
 	for _, action := range []string{"", "shell", "Zeit", "zeit "} {
 		var out, errOut bytes.Buffer
-		if code := answer(action, "1.0.0", fixed, &out, &errOut); code == 0 {
+		if code := answer(action, "1.0.1", t.TempDir(), fixed, &out, &errOut); code == 0 {
 			t.Errorf("action %q = 0, want a failure", action)
 		}
 		if out.Len() != 0 {
@@ -62,5 +65,50 @@ func TestMainRefusesArguments(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Errorf("stdout = %q, want nothing", out.String())
+	}
+}
+
+// TestTheCountSurvivesInTheDataDirectory is the case the data question of an
+// update rests on: the number this app keeps lies in the data directory and
+// nowhere else, so a new version that is handed the same directory reads what
+// the version before it wrote.
+func TestTheCountSurvivesInTheDataDirectory(t *testing.T) {
+	data := t.TempDir()
+	for want := 1; want <= 3; want++ {
+		var out, errOut bytes.Buffer
+		if code := answer("zeit", "1.0.1", data, fixed, &out, &errOut); code != 0 {
+			t.Fatalf("answer = %d, want 0 (stderr: %q)", code, errOut.String())
+		}
+		lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("stdout = %q, want two lines", out.String())
+		}
+		if lines[1] != strconv.Itoa(want) {
+			t.Errorf("count = %q, want %d", lines[1], want)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(data, countFile))
+	if err != nil {
+		t.Fatalf("the count was not kept: %v", err)
+	}
+	if strings.TrimSpace(string(b)) != "3" {
+		t.Errorf("file = %q, want 3", b)
+	}
+}
+
+// TestTheClockAnswersWithoutAWritableDataDirectory: the count is not worth the
+// clock. A data directory that cannot be written costs the number, says so on
+// the admin's side, and leaves the time standing.
+func TestTheClockAnswersWithoutAWritableDataDirectory(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := answer("zeit", "1.0.1", filepath.Join(t.TempDir(), "gibtsnicht"),
+		fixed, &out, &errOut); code != 0 {
+		t.Fatalf("answer = %d, want 0", code)
+	}
+	if !strings.HasPrefix(out.String(), "2026-10-24T11:30:00Z\n") {
+		t.Errorf("stdout = %q, want the time first", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Zugriffszähler") {
+		t.Errorf("stderr = %q, want the line that names the counter", errOut.String())
 	}
 }

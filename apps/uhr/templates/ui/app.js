@@ -22,6 +22,7 @@
 
   const zeit = document.getElementById("zeit");
   const hinweis = document.getElementById("hinweis");
+  const zaehler = document.getElementById("zaehler");
   const lesen = document.getElementById("lesen");
   const decoder = new TextDecoder();
 
@@ -40,13 +41,22 @@
       // manifest does not carry (appframe.doCall, CODES.FORBIDDEN), so a
       // typo here is a refusal and not a call.
       const bytes = await ngc.call("uhr", "zeit");
-      zeit.textContent = decoder.decode(bytes).trim();
+      // TWO LINES SINCE 1.0.1, read by their number: line one is the time,
+      // line two the number of readings the server kept. A service that sent
+      // only the first line leaves the counter on its dash - an older service
+      // behind a newer window is a state this page survives.
+      const lines = decoder.decode(bytes).trim().split("\n");
+      zeit.textContent = lines[0] ?? "—";
+      zaehler.textContent = lines.length > 1
+        ? lines[1].trim() + "× gelesen, seit die App eingerichtet wurde"
+        : "—";
       hinweis.textContent = "Die Zeit kommt vom Server.";
     } catch (err) {
       // One sentence, and it does not quote err: what went wrong between the
       // window and the service is for the person at the shell, and an app
       // that printed it would be telling itself about this installation.
       zeit.textContent = "—";
+      zaehler.textContent = "—";
       hinweis.textContent = "Der Dienst dieser App hat nicht geantwortet.";
     }
     lesen.disabled = false;
