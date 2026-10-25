@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
-import { CALC, serveApps } from "../fixtures/apps.js";
+import { serveApps } from "../fixtures/apps.js";
 
 // A gallery of the screens docs/gestaltung.md decides about, so the decisions
 // can be looked at instead of read about.
@@ -107,7 +107,8 @@ test("the desktop with no apps on it", async ({ page }) => {
 
 test("a message over the window it belongs to", async ({ page }) => {
   await page.setViewportSize(WIDE);
-  await serveApps(page, [CALC]);
+  // The default list of the stand-in, not a list of this test's own: the
+  // picture needs the Rechner AND the App-Store side by side.
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
