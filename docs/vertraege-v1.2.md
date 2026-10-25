@@ -222,7 +222,8 @@ gibt, aber erst nach dem Schreiben.
 | 88 | Der Galera-Verkehr lief ohne Cipher-Beschränkung – die Vorlage war richtig, die Anlage nicht | gilt – an allen drei Knoten behoben, rollend, Verbund durchgehend vollständig | Sicherheit |
 | 89 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
 | 90 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
-| 91 | Bei verlorener Mehrheit ist auch das Lesen zu – und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500` | gilt – **schärft Punkt 90**; die Anlage antwortet ehrlich, zwei eigene Erwartungen widerlegt | Messung |
+| 91 | Die fünf Sekunden sind zwei eigene Zahlen derselben Länge | gilt – Anwahlfrist auf 1 s, Stufe **Stabilität**, am laufenden System belegt; Vorlagenteil zu Punkt 90 mitgebaut | Entscheidung |
+| 92 | Bei verlorener Mehrheit ist auch das Lesen zu – und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500` | gilt – **schärft Punkt 90**; die Anlage antwortet ehrlich, zwei eigene Erwartungen widerlegt | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -6720,7 +6721,137 @@ erreichbar." und einer Journalzeile mit Zähler beantwortet. Dieselbe Anlage kan
 
 Herkunft und die ganze Messreihe aller sechs Maschinen: `docs/ausfall-je-maschine.md`.
 
-## Punkt 91: Bei verlorener Mehrheit ist auch das Lesen zu — und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500`
+## Punkt 91: Die fünf Sekunden sind zwei eigene Zahlen derselben Länge — der Umschaltweg war gebaut und kam nie zum Zug
+
+Gemessen am 25.10.2026 an der verteilten Anlage, als Nacharbeit zum DB-Fall aus Punkt 89 und zum
+Lastverteiler-Fall aus Punkt 90.
+
+**Der Befund in einem Satz:** der Umschaltweg auf den nächsten Datenbankknoten war vorhanden und
+richtig — `db.nodes` nannte alle drei, und `balancer.Connect`
+(`apps/server-db/classes/mariadb/nodes.go`) nimmt der Reihe nach den nächsten Knoten. Er kam nur
+nie zum Zug, weil **die Frist für den Anwahlversuch EINES Knotens genauso lang war wie die Frist
+für die ganze Anfrage**.
+
+| Zahl | Wo sie steht | Woher sie kommt |
+|---|---|---|
+| 5 s Anwahlfrist je Knoten | `apps/server-db/classes/mariadb/mariadb.go`, `c.Timeout` | **eigene Einstellung**, keine Vorgabe |
+| 5 s Frist der Benutzeranfrage | `apps/server-api/classes/dbwait/dbwait.go`, `UserWait` | **eigene Einstellung** (Punkt 48) |
+
+**Keine der beiden ist eine Vorgabe der Bibliothek, und das ist nachgelesen, nicht vermutet.**
+`mysql.NewConfig()` (`vendor/.../dsn.go`) setzt `Timeout` nicht, und bei `Timeout == 0` überspringt
+`connector.go` Zeile 92 die eigene Frist und gibt `net.Dialer` **gar keine** — die Anwahl fällt
+dann an den Kern. `tcp_syn_retries` ist auf allen sechs Maschinen **6** (gelesen am 25.10.2026),
+also etwa 130 s gegen einen Rechner, der das SYN verwirft. Die eigene Einstellung war also nicht
+das Übel, nur die **Länge** war es. Beide Zahlen sind einstellbar: sie sind Konstanten im Code,
+keine Zeile in `/etc/ngc/*.json`.
+
+**Warum der zweite Aufrufer 0,03 s hatte.** `picker.failed` legt einen Knoten, der abgelehnt hat,
+für `failPause` (30 s) nach hinten. Der erste Aufrufer zahlt die Anwahl, alle folgenden erben die
+Erkenntnis. Das erklärt das „erst scheitert es, dann geht es" aus Punkt 90 **auf demselben
+Muster**, nur an einer anderen Stelle.
+
+**Und eine Beobachtung, die dazugehört:** jeder Datenbankknotenname löst auf api-1 auf **zwei**
+Adressen auf — `db-1.ngc.mein.lan` auf `10.2.3.212` **und** `::` (gelesen am 25.10.2026). Das ist
+derselbe `::`-Satz aus Punkt 80 und 90, jetzt auch im Datenbankweg. Er kostet hier nichts
+Messbares, weil `::` örtlich ist und sofort ablehnt; er teilt aber die Anwahlfrist auf zwei
+Adressen auf.
+
+### Entschieden: die Anwahlfrist wird auf 1 s gekürzt — Stufe **Stabilität**
+
+Nach der Rangfolge **Sicherheit vor Stabilität vor Leistung** gibt **Stabilität** den Ausschlag,
+und die beiden anderen Stufen sind ausdrücklich geprüft:
+
+- **Sicherheit: unberührt.** Es wird nichts gelockert. `SSLProxyVerify require`,
+  `SSLProxyCheckPeerName on`, `c.TLS` gegen die CA der Anlage,
+  `AllowFallbackToPlaintext = false` — alles bleibt, wie es war. Eine kürzere Anwahlfrist kann
+  keine Zertifikatsprüfung schwächen.
+- **Stabilität: das ist der Fall.** Die Anlage hat drei Knoten und benutzt die Reserve nicht. Ein
+  Aufrufer, der neben zwei lebenden Knoten auf einen toten wartet, ist ein Stabilitätsfehler und
+  kein Leistungsfehler.
+- **Leistung: nur die Erscheinung.** Die 5,03 s sind das, was man sieht, nicht der Grund.
+
+**Die Vorsicht, die der Auftrag verlangt, ist eingebaut, und sie liegt in der WAHL der Stelle:**
+gekürzt wird die **Anwahl**, nicht die Antwort. Alles nach dem Accept — TLS-Handschlag,
+Anmeldung, das `SET` — steht weiter unter `connectDeadline` (10 s, `nodes.go`) und
+`ReadTimeout` (60 s) des Treibers. Ein Knoten, der nur **langsam** ist, wird dadurch nicht zu
+einem toten; aufgegeben wird nur ein Knoten, der das SYN überhaupt nicht beantwortet.
+
+**Nachgewiesen am laufenden System, 25.10.2026 auf api-2 (10.2.3.211).** Kein Knoten wurde
+angehalten — weder Dienst noch Maschine: eine eigene nftables-Tabelle `messung5s` verwarf nur
+`10.2.3.218:3306` (db-3), die Härtungstabelle blieb unberührt, und die Tabelle wurde danach
+gelöscht. Ein Dienst-Stopp wäre der falsche Fall: der lehnt sofort ab und zeigt die fünf
+Sekunden gar nicht. Gemessen wurde mit demselben Programm in zwei Ständen, db-3 jeweils als
+ERSTER Knoten der Liste:
+
+| | Stand vorher (5 s) | Stand nachher (1 s) |
+|---|---|---|
+| 1. Aufruf | **Fehler nach 5,0016 s** — „no database node can be reached" | **gut nach 1,0049 s** |
+| 2. Aufruf | gut nach 5,417 ms | gut nach 0,251 ms |
+| 3. Aufruf | gut nach 0,238 ms | gut nach 0,229 ms |
+
+Gegenprobe ohne Regel, alle drei Knoten gesund: 7,222 ms / 0,297 ms / 0,195 ms. Die 5,0016 s
+treffen die 5,03 s vom 24.10.2026, und der erste Aufrufer bekommt jetzt eine Antwort statt einer
+abgelaufenen Frist.
+
+**Die 1 s ist gegen eine Messung gewählt, nicht gegen Geschmack:** 30 Anwahlen von api-1 zu den
+drei Knoten am 25.10.2026 brauchten **0,101 ms** im besten und **4,129 ms** im schlechtesten Fall.
+Eine Sekunde ist über zweihundertmal der schlechteste davon.
+
+**Was NICHT gedeckt ist, und es bleibt offen:** ein Knoten, der die Verbindung **annimmt und dann
+schweigt**. Der frisst weiter `connectDeadline` (10 s) und damit die ganze Frist der Anfrage; der
+Benutzer bekommt dann ein ehrliches 503 `db-busy`, aber eben kein 200. Der gemessene Fall war ein
+**weggefallener** Knoten, kein stummer. Eine gerechte Aufteilung der Restfrist auf die Knoten
+wäre der nächste Schritt — sie ist hier **nicht** gebaut, weil sie genau die Gefahr trägt, vor der
+die Rangfolge warnt: bei drei Knoten bekäme jeder nur ein Drittel, und ein gesunder, aber
+belasteter Knoten würde für tot erklärt.
+
+**Was NICHT gemessen ist:** die Zahl der konfigurierbaren Knoten ist 16 (`maxList`,
+`shared/config`). Fünfzehn tote Knoten passen in keine Fünf-Sekunden-Frist, mit keiner Anwahlfrist,
+die diesen Namen verdient. Der Prüffall hält darum die **betriebene** Gestalt (drei) und sagt das
+hin; `shared/` ist eingefroren, die Schranke lässt sich hier nicht senken.
+
+### Punkt 90, zweiter Teil: die Behebung liegt in der Vorlage, und die Vorlage hängt an `shared/`
+
+Geprüft am 25.10.2026: die Datei `/etc/ngc/apache-apis.conf` auf api-1 (10.2.3.210, Apache 2.4.69)
+ist **Zeichen für Zeichen** das, was
+`apps/server-controller/templates/apache-apis.conf.tmpl` erzeugt. Der nackte `500` liegt also
+**nicht** in NGC-Code, sondern in der Apache-Konfiguration — und die kommt aus der Vorlage. Von
+Hand auf der Maschine wäre falsch.
+
+Entschieden gehört in die Vorlage:
+
+1. `connectiontimeout=2` je Mitglied. Heute erbt die Anwahl `timeout=65`, ein Mitglied ohne
+   Rechner wird also über eine Minute lang bewartet, bevor der Verteiler das nächste ansieht. Zwei
+   Sekunden sind hundertfach die gemessene Anwahl und nehmen der **Antwort** nichts.
+2. `Header always set Retry-After "5" "expr=%{REQUEST_STATUS} == 503"`. Bleibt kein Mitglied
+   übrig, antwortet Apache selbst `503` — nackt. Eine besetzte Datenbank antwortet längst `503`
+   **mit** `Retry-After: 5` (Punkt 48). Der Satz macht aus zwei Antworten eine.
+   `headers_module` ist auf api-1 geladen (gelesen am 25.10.2026).
+3. `LogLevel proxy:info proxy_balancer:info`. Das schließt die zweite Hälfte von Punkt 90: am
+   24.10.2026 stand im Fehlerprotokoll **keine** Zeile, während neun von vierzig Anmeldungen
+   scheiterten.
+
+**Ausdrücklich NICHT entschieden: `failonstatus=500`.** Das wäre der Satz, der den nackten `500`
+in einen Wurf auf das gesunde Mitglied verwandelt — aber diese API antwortet ihre **eigenen**
+Fehler mit `500` (`E_INTERNAL`, `httpapi/fault.go`). `failonstatus` würde dann eine **gesunde**
+API wegen einer beschädigten Zeile aus dem Verteiler nehmen und ihren ehrlichen Rumpf durch eine
+Fehlerseite ersetzen. Die Erscheinung ist das nicht wert. Was von Punkt 90 danach übrig bleibt,
+braucht das `::` aus den Namen (Punkt 80) — und das liegt beim Netz.
+
+**Gebaut, und der Weg dahin gehört in den Punkt:** `shared/ulh.md` hält die Datei
+`apache-apis.conf` Zeichen für Zeichen als Vertrag, und
+`TestBalancerTemplateMatchesTheContract` vergleicht beide Seiten. Die Vorlage lässt sich also
+nicht ändern, ohne **einen Beispielblock in `shared/ulh.md` mitzuziehen** — und `shared/` ist
+eingefroren. Thomas hat am 25.10.2026 die Freigabe für genau diesen **einen** Beispielblock
+gegeben; Code in `shared/` ist nicht angefasst.
+
+**Was an Fall 2 NICHT geprüft ist, und es bleibt der ehrliche Rest:** auf der Maschine, auf der
+das geschrieben wurde, läuft kein Apache. Dass die drei Zeilen von Apache **angenommen** werden,
+ist unbelegt — wie in jedem Fall dieses Pakets. `headers_module` und `proxy_balancer_module`
+sind auf api-1 als geladen gelesen (25.10.2026). Und ob die neun Fehlschläge vom 24.10.2026
+damit auf null gehen, ist **nicht** nachgemessen: das bräuchte wieder einen Maschinen-Stopp von
+api-2, und der gehört in einen eigenen Lauf.
+## Punkt 92: Bei verlorener Mehrheit ist auch das Lesen zu — und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500`
 
 Am 24.10.2026 ist jede der sechs Maschinen einmal abgeschaltet worden. Zwei
 Fälle blieben offen, und beide sind am 25.10.2026 nachgeholt: **zwei
