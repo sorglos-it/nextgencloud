@@ -226,6 +226,7 @@ gibt, aber erst nach dem Schreiben.
 | 92 | Bei verlorener Mehrheit ist auch das Lesen zu – und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500` | gilt – **schärft Punkt 90**; die Anlage antwortet ehrlich, zwei eigene Erwartungen widerlegt | Messung |
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
+| 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7083,3 +7084,213 @@ den Stellen 449 und 452 ausdrücklich auf `-pbkdf2 -md sha256` und schreibt den
 Fehler damit fest.
 
 Herkunft: an der Anlage gemessen, Quelltext gelesen in `/root/ulh` auf db-2.
+---
+
+## Punkt 95: Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen
+
+Dies ist **keine zweite Bestandsaufnahme.** Punkt 72 hat die Härtung des App-Containers
+vollständig aufgenommen; seine Tabelle der Schalter gilt und wird hier nicht wiederholt. Gemessen
+sind hier nur die Posten, die Punkt 72 ausdrücklich als offen hinterlassen hat — seine Nummern 3
+und 7 aus „Was daraus zu bauen wäre", seine Probe 1, die mit einer Attrappe gefahren wurde, und
+die Folge des geteilten `TasksMax`, die dort als abgewogen und nicht gemessen steht. Dazu ein
+Befund, der in Punkt 72 nicht vorkommt.
+
+**Welche Maschinen.** `svc-1` (10.2.3.213) und `svc-2` (10.2.3.214) der **verteilten** Anlage,
+gemessen am 25.10.2026, podman 5.4.2. Dazu die **Einzel-VM 208** aus Punkt 72, gemessen am
+25.10.2026 kurz vor ihrem Ende — siehe die Anmerkung am Schluss. Jede Zahl gilt für die Maschine,
+die neben ihr steht.
+
+**Wie gemessen wurde.** Wie in Punkt 72: jeder Aufruf aus `/tmp` heraus mit
+`setpriv --reuid=<uid> --regid=<gid> --clear-groups` und mit `HOME`, `XDG_RUNTIME_DIR`,
+`PATH=/usr/bin:/bin`, `LANG=C.UTF-8` — den vier, die `Podman.run` mitgibt. Das Werkzeug wurde vor
+der ersten Zählung geprüft (`podman ps` antwortet mit dem Container, Ausstiegscode 0), und im
+Container fehlen `strings`, `ip`, `ss` und `capsh`, was vorher festgestellt wurde, damit keine
+leere Antwort als Null gelesen wird.
+
+### Posten 3 ist zu — `--cap-drop ALL` liegt an, erstmals an einer laufenden App
+
+Punkt 72 musste den am häufigsten genannten Härtungsschalter offen lassen: Terminal trägt
+`needs:["root"]`, also greift der `if !c.Root`-Zweig nicht, und Terminal war die einzige App der
+Anlage. Seit dem 24.10.2026 läuft auf `svc-1` eine **zweite** App, `org.sorglos.uhr`, und sie
+verlangt kein root. Beide Container auf derselben Maschine, nebeneinander gemessen:
+
+| | `ngc-terminal-439982dd` (uid 999) | `ngc-uhr-ad8c00e2` (uid 995) |
+|---|---|---|
+| `--cap-drop ALL` in `.Config.CreateCommand` | steht **nicht** drin | **steht drin** |
+| `.HostConfig.CapDrop` | `[]` | alle 11 benannt |
+| `.EffectiveCaps` | die 11 von podman | **`[]` — leer** |
+
+Damit ist der Schalter zum ersten Mal an einer laufenden App gemessen, und er liegt vollständig
+an: nicht „weniger Fähigkeiten", sondern **keine**. Der `if !c.Root`-Zweig in `createArgs` tut
+beides richtig — er lässt den Schalter bei einer root-App aus und setzt ihn bei einer anderen. Die
+Lesart aus Punkt 72 bleibt gültig: welche 11 eine root-App erbt, steht nicht im Repo, sondern in
+podman.
+
+### Posten 7 ist zu — Befund 1 liegt auf beiden App-Knoten genauso
+
+Punkt 72 warnt ausdrücklich, dass Befund 1 an `Delegate=` **einer** systemd-Einheit hängt und
+keine Zahl von der Einzel-VM über `svc-1` und `svc-2` etwas sagt. Gemessen, auf beiden:
+
+| | `svc-1` (213) | `svc-2` (214) |
+|---|---|---|
+| `systemctl show ngc-controller.service -p Delegate` | `Delegate=no` | `Delegate=no` |
+| `TasksMax` der Einheit | 3466 | 3466 |
+| `.HostConfig.CgroupManager` | `cgroupfs` | `cgroupfs` |
+| `.State.CgroupPath` | `/system.slice/ngc-controller.service` | `/system.slice/ngc-controller.service` |
+| `.HostConfig.PidsLimit` | 512 | 512 |
+
+Befund 1 gilt also für die ganze Anlage und nicht für eine Maschine: **auf keinem der drei
+gemessenen Knoten hat ein App-Container eine eigene cgroup.** Die 3466 sind `TasksMax` dieser
+Maschinen; auf der Einzel-VM waren es 9409 — dieselbe Ursache, eine andere Zahl, weil `TasksMax`
+aus dem Arbeitsspeicher folgt. Wer die Zahl zitiert, nennt die Maschine dazu.
+
+### Die Fork-Bombe ist gemessen, gedeckelt — und die Grenzen liegen auch im Verhalten nicht an
+
+Punkt 72 hat die Fork-Bombe bewusst nicht gefahren, weil sie auf einer Maschine mit fremden
+Sitzungen zerstörerisch wäre, und `inspect` gegen die cgroup-Dateien gelesen. Das ist die richtige
+Vorsicht, lässt aber die Frage aus Punkt 51 offen: *ob* `--pids-limit 512` eine echte Fork-Bombe
+stoppt. Gefahren wurde darum keine Bombe, sondern eine **gedeckelte Probe** auf der Einzel-VM 208:
+600 Aufgaben, also über 512 und weit unter der Decke 9409 — eine Zahl, die die Antwort gibt und
+nichts reißen kann.
+
+```
+600 Aufgaben gestartet         ->  600 von 600 gestartet, kein fork schlug fehl
+Aufgaben im Container gezählt  ->  1204 Einträge in /proc (gleichzeitig)
+400 MiB angefordert            ->  392 MiB angenommen, Ausstiegscode 0
+```
+
+`--pids-limit 512` und `--memory 256m` liegen damit **nicht nur laut cgroup-Datei nicht an, sondern
+auch im Verhalten nicht.** Eine Lesung einer cgroup-Datei kann über den falschen Baum gehen; 600
+gleichzeitige Aufgaben über einer Decke von 512 können es nicht.
+
+**Und das geteilte Fach ist anders geteilt, als Punkt 72 abgewogen hat.** Dort steht als Abwägung,
+die Aufgaben einer App zählten gegen `TasksMax` des Controllers. Gemessen, während die 600
+Aufgaben liefen:
+
+```
+cgroups, die Aufgaben mit uid 997 halten:
+  600  /user.slice/user-1000.slice/session-14.scope     <- die ssh-Sitzung des Messenden
+    3  /system.slice/ngc-controller.service             <- conmon, catatonit, ngc-hold
+pids.current der Controller-Einheit, währenddessen:  18   (nicht 618)
+```
+
+Die Aufgaben eines `podman exec` landen in der cgroup **des Aufrufers** — das bestätigt Punkt 72s
+zweiten Weg an der Grenze vorbei, und zwar als direkte Beobachtung des cgroup-Pfads. Daraus folgt
+beides: im Betrieb ist der Aufrufer `ngc-controller.service`, die Abwägung aus Punkt 72 trifft also
+für den echten Weg zu — aber sie trifft **nicht** zu, weil Apps und Controller ein Fach teilen,
+sondern weil der Controller der Aufrufer ist. Der Haltevorgang selbst sitzt in der
+Controller-cgroup (die drei Zeilen oben), die Sitzungen nicht.
+
+### Probe 1 ist ohne Attrappe gefahren — zwei echte Apps, fünf Wege, alle zu
+
+Punkt 72 musste die zweite App nachbilden (`zz.probe.other`). Auf `svc-1` gibt es sie wirklich.
+Terminal (uid 999) gegen Uhr (uid 995), jeder Weg als der Benutzer der einen App auf die andere:
+
+```
+ls  /var/lib/ngc/apps/org.sorglos.uhr        ->  Keine Berechtigung      (0700 995:995)
+ls  /var/lib/ngc/apps                        ->  Keine Berechtigung      (0711 root)
+ls  /run/ngc/ngc-uhr-ad8c00e2                ->  Keine Berechtigung      (0700 995:995)
+podman ps  mit XDG_RUNTIME_DIR der Uhr       ->  mkdir …/libpod: permission denied
+podman exec ngc-uhr-ad8c00e2 id              ->  stat …/.config: permission denied
+```
+
+Die beiden letzten Zeilen sind der Teil, den eine Attrappe nicht prüfen kann: nicht nur die
+**Daten** der anderen App sind zu, sondern auch ihr **Dienst** — weder über ihr
+`XDG_RUNTIME_DIR` noch über ihr `HOME` kommt man an ihren Container. Die Zeile aus
+`podman_linux.go` trägt damit auch gegen eine echte zweite App.
+
+Eine Gegenprobe gehört dazu, und sie war zunächst missverständlich: `ls` auf den **eigenen**
+Datenordner gab keine Zeile aus. Das ist keine verweigerte Berechtigung — es kam auch keine
+Fehlermeldung — sondern der Ordner enthält nur `.config` und `.local`, und `ls` ohne `-a` zeigt
+davon nichts. Mit `ls -ld` ist der eigene Ordner lesbar.
+
+### Befund — `--read-only` lässt vier beschreibbare Ordner offen, und der Quelltext sagt das Gegenteil
+
+In `createArgs` steht über `--read-only`:
+
+> Das Abbild selbst bleibt unschreibbar; was die App behaelt, gehoert unter /data, **which is the
+> only place it may write.**
+
+Gemessen im laufenden Container (VM 208):
+
+| Ort | Art | Größe | schreibbar |
+|---|---|---|---|
+| `/` | overlay | 74 G | nein (`ro`) |
+| `/data` | ext4, eingehängt | 74 G | ja — so gewollt |
+| `/tmp` | tmpfs | **3,9 G** | **ja** |
+| `/run` | tmpfs | **3,9 G** | **ja** |
+| `/var/tmp` | tmpfs | **3,9 G** | **ja** |
+| `/dev/shm` | tmpfs | 63 M | **ja** |
+
+`/data` ist also nicht der einzige Ort, an den die App schreiben darf — es ist der einzige, der
+einen Neustart übersteht. Das ist die Art Abweichung, die hier am häufigsten vorkommt: der
+Kommentar sagt etwas anderes als der Code tut, und niemand liest ihn gegen den laufenden Zustand.
+Podman hängt diese vier selbst ein; `--read-only` meint bei podman die Wurzel, nicht den ganzen
+Container.
+
+**Warum das nicht nur Wortklauberei ist** — und das ist abgewogen, nicht gemessen: die drei tmpfs
+sind je 3,9 GiB groß, also je etwa die Hälfte des Arbeitsspeichers der Maschine, und ein tmpfs
+zählt gegen den Arbeitsspeicher. Zusammen mit Befund 1 aus Punkt 72 — `memory.max` ist `max` — ist
+das ein Weg, den Speicher des Wirts zu füllen, ohne eine einzige Grenze zu verletzen, die irgendwo
+steht. Welche der beiden Hälften zuerst zu schließen ist, die cgroup oder die Größe der tmpfs, ist
+eine Entscheidung und steht hier nicht.
+
+### Kleiner Nachtrag — `/var/lib/ngc` ist auflistbar
+
+Punkt 72 hat `/var/lib/ngc/apps` als `0711 root` gemessen und den Zugriff darauf verweigert
+gesehen. Das Verzeichnis **darüber** ist `0755 root` und von jedem App-Benutzer auflistbar; auf
+`svc-1` und auf 208 gleichermaßen:
+
+```
+ls /var/lib/ngc  als App-Benutzer  ->  apps  controller  release.seq  staged  (spool auf 208)
+release.seq                        ->  0644, von jedem lesbar
+```
+
+Die Inhalte sind zu (`controller` und `spool` sind `0700`). Kein Loch — aber die App erfährt den
+Aufbau des Servers und die laufende Release-Nummer, und beides braucht sie nicht. Erwähnt, weil
+Punkt 72 die Zeile darunter ausdrücklich gemessen hat und diese nicht.
+
+### Anmerkung zur Maschine — die Einzel-VM 208 ist weg
+
+Die Zahlen zu 208 in diesem Punkt sind am 25.10.2026 gemessen; die Maschine war beim Messen
+ausgeschaltet und wurde dafür angekündigt gestartet. Beim Abschluss der Messung war sie **auf dem
+Wirt nicht mehr vorhanden**: `qm status 208` antwortet
+`Configuration file 'nodes/pve/qemu-server/208.conf' does not exist`, es gibt keine Konfiguration
+und keine Platte mehr, und dafür sind die VMs 307 bis 309 neu dazugekommen. Entfernt hat sie
+dieser Strang nicht — er hat `qm start 208` aufgerufen und sonst nichts am Wirt.
+
+**Die Ursache ist gemeldet, nicht von hier gemessen:** die Sitzung „Die tote Einzel-VM aufräumen"
+hat 208 auf Thomas' ausdrückliche Entscheidung mit `qm destroy 208 --purge` entfernt, samt Platte
+und Schnappschuss; die Messskripte der Maschine sind unter `D:\claude\workinglte-vm-bergung`
+gesichert. Gemessen ist hier nur, dass Konfiguration und Platte weg sind — wer es getan hat und
+warum, steht auf dem Wort jener Sitzung.
+
+Das steht aus einem Grund hier: **die Messungen von Punkt 72 und die Zahlen dieses Punktes zu 208
+sind auf dieser Maschine nicht wiederholbar** — nicht wegen eines Ausfalls, sondern weil die
+Maschine absichtlich abgeräumt wurde. Wer sie wiederholen will, braucht eine neue Einzel-VM. Was
+ohne sie wiederholbar ist, steht oben unter `svc-1` und `svc-2`.
+
+### Was daraus zu bauen wäre
+
+1. **Posten 3 und 7 aus Punkt 72 können gestrichen werden** — beide sind gemessen. Posten 1, 2, 4,
+   5 und 6 stehen unverändert; Posten 2 (der Controller muss das Verwerfen bemerken) ist durch die
+   Verhaltensprobe oben eher dringlicher geworden als vorher.
+2. **Den Kommentar an `--read-only` berichtigen.** „The only place it may write" ist falsch;
+   richtig ist „der einzige Ort, der einen Neustart übersteht". Ein Satz, kein Umbau — aber genau
+   diese Sorte Satz wird sonst als Zusicherung weitergelesen.
+3. **Eine Grenze für die drei tmpfs**, oder eine Zeile, die sagt, warum 3 × 3,9 GiB im Container in
+   Ordnung sind. Solange `memory.max` `max` ist, ist das die bequemste Art, dem Wirt den Speicher
+   zu nehmen.
+4. **Ein Fall, der `/var/lib/ngc` auf `0711` prüft** — wenn es eng sein soll. Ob es eng sein soll,
+   ist eine Entscheidung: die Liste `apps`, `controller`, `staged` ist kein Geheimnis, aber sie
+   steht auch nicht in einem Vertrag.
+5. **Dieselbe Messung auf einem Knoten mit `Delegate=yes`**, sobald es einen gibt. Erst dann ist
+   gemessen, ob `PIDsLimit = 512` in Betrieb trägt — und Punkt 72 nennt die Folge: 512 reißen bei
+   rund 53 Terminal-Sitzungen, unter den 64, die ein Browser öffnen darf.
+
+**Getrennt gehalten:** gemessen sind die beiden Tabellen (cap-drop, Delegate/cgroup auf beiden
+Knoten), die gedeckelte Verhaltensprobe samt der cgroup-Zuordnung der 600 Aufgaben, die fünf Wege
+der Probe 1, die Tabelle der Einhängungen und die Rechte an `/var/lib/ngc`. Abgewogen sind die
+Folge der drei tmpfs für den Arbeitsspeicher des Wirts, die Dringlichkeit von Posten 2 und jede
+Zeile der letzten Liste. Nicht gemessen ist, ob `nosuid` auf `/data` wirkt — das steht in Punkt 72
+und ist dort als geschlossen, nicht gemessen gekennzeichnet; dieser Punkt ändert daran nichts.
