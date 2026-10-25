@@ -22,7 +22,7 @@ API1=10.2.3.210
 # Die einzigen VMIDs, die dieses Skript anfassen darf. Auf demselben Wirt
 # laufen das NAS (200), PC02, die Kameras und loxberry - ein Tippfehler dort
 # waere ein Schaden, kein Messfehler.
-erlaubt() { case "$1" in 301|302|303|304|305|306) return 0;; *) return 1;; esac; }
+erlaubt() { case "$1" in 301|302|303|304|305|306|308|309) return 0;; *) return 1;; esac; }
 
 VMID=${1:?VMID fehlt}
 ADDR=${2:?Adresse fehlt}
