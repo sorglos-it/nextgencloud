@@ -45,10 +45,26 @@ const SNAP_EDGE = 12;
 // means.
 const TEAR = 4;
 
-// How much of a window has to stay on the desktop while it is dragged: enough
-// of the title bar to grab it again.
-const KEEP_X = 60;
-const KEEP_Y = 34;
+// How far a window may be pushed off the desktop while it is dragged: NOT AT
+// ALL (docs/gestaltung.md point 2). Thomas chose windows over full-screen
+// apps, on the phone too, and this is the price he named with the choice: a
+// window that can leave the screen is a window nobody brings back, and on a
+// 360 px screen that decides whether the shell stays usable at all.
+//
+// Before this, 60 px of the title bar and 34 px of its height had to stay
+// behind - enough to grab again, which is a weaker promise than the one that
+// was decided. clampX and clampY below hold the whole window inside instead.
+//
+// A window WIDER than the desktop is the one case that cannot be held inside
+// it: then it is pinned to the left and top edge, which is where its title
+// bar and its three buttons are. Pushing it further would hide exactly those.
+function clampX(x, w, area) {
+  return area.w >= w ? Math.max(0, Math.min(area.w - w, x)) : 0;
+}
+
+function clampY(y, h, area) {
+  return area.h >= h ? Math.max(0, Math.min(area.h - h, y)) : 0;
+}
 
 export class Win {
   constructor(desktop, { id, title, icon, width, height }) {
@@ -331,7 +347,7 @@ export class Win {
         // during a transition it answers the size the window is leaving.
         this.toggleMax(false);
         const w = this.el.offsetWidth;
-        this.el.style.left = Math.max(0, sx - w * rel) + "px";
+        this.el.style.left = clampX(sx - w * rel, w, this.desktop.area()) + "px";
         this.el.style.top = "0px";
         // The drag carries on from where the small window now stands, while
         // sx and sy stay the point that was grabbed - so the window follows
@@ -339,13 +355,13 @@ export class Win {
         ox = this.el.offsetLeft;
         oy = this.el.offsetTop;
       }
-      const a = this.desktop.area(), W = this.el.offsetWidth;
-      let nx = ox + e.clientX - sx;
-      let ny = oy + e.clientY - sy;
-      nx = Math.max(-W + KEEP_X, Math.min(a.w - KEEP_X, nx));
-      ny = Math.max(0, Math.min(a.h - KEEP_Y, ny));
-      this.el.style.left = nx + "px";
-      this.el.style.top = ny + "px";
+      const a = this.desktop.area();
+      const W = this.el.offsetWidth, H = this.el.offsetHeight;
+      // The whole window stays on the desktop - all four edges, not just
+      // enough of the title bar to grab. The pointer may leave the desktop;
+      // the window does not follow it out.
+      this.el.style.left = clampX(ox + e.clientX - sx, W, a) + "px";
+      this.el.style.top = clampY(oy + e.clientY - sy, H, a) + "px";
 
       // Docking preview at the edges of the desktop.
       let s = null;
@@ -448,7 +464,26 @@ export class Win {
       Object.assign(this.el.style, { left: "0px", top: "0px", width: a.w + "px", height: a.h + "px" });
       return;
     }
-    this.el.style.left = Math.min(this.el.offsetLeft, Math.max(0, a.w - 80)) + "px";
-    this.el.style.top = Math.min(this.el.offsetTop, Math.max(0, a.h - 40)) + "px";
+    // CUT TO FIT FIRST, then moved inside. open() already cuts a window to
+    // the desktop it opens on; a desktop that shrinks afterwards - a phone
+    // turned on its side, a browser window pulled narrow - leaves the same
+    // window too big for it, and moving a window that does not fit can only
+    // choose which of its edges to lose. Measured: the App-Store opens 760
+    // wide, and on a 420 px desktop pinning it to the left put its three
+    // title-bar buttons - the only way to close it - off the screen.
+    //
+    // Never below the smallest a window may be drawn: below that the three
+    // buttons stop fitting, which is the same loss by another route.
+    const min = minSize();
+    const w = Math.max(min.w, Math.min(this.el.offsetWidth, a.w));
+    const h = Math.max(min.h, Math.min(this.el.offsetHeight, a.h));
+    Object.assign(this.el.style, {
+      width: w + "px", height: h + "px",
+      // The same clamp the drag uses, so a window that was inside the desktop
+      // is still inside it afterwards. It used to keep 80 px of the width and
+      // 40 px of the height and leave the rest off the screen.
+      left: clampX(this.el.offsetLeft, w, a) + "px",
+      top: clampY(this.el.offsetTop, h, a) + "px",
+    });
   }
 }
