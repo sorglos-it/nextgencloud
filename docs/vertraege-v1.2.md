@@ -6893,9 +6893,18 @@ ausgeschaltet und wurde dafür angekündigt gestartet. Beim Abschluss der Messun
 Wirt nicht mehr vorhanden**: `qm status 208` antwortet
 `Configuration file 'nodes/pve/qemu-server/208.conf' does not exist`, es gibt keine Konfiguration
 und keine Platte mehr, und dafür sind die VMs 307 bis 309 neu dazugekommen. Entfernt hat sie
-dieser Strang nicht — er hat `qm start 208` aufgerufen und sonst nichts am Wirt. Das steht hier
-nur aus einem Grund: **die Messungen von Punkt 72 und die Zahlen dieses Punktes zu 208 sind auf
-dieser Maschine nicht wiederholbar.** Was wiederholbar ist, steht oben unter `svc-1` und `svc-2`.
+dieser Strang nicht — er hat `qm start 208` aufgerufen und sonst nichts am Wirt.
+
+**Die Ursache ist gemeldet, nicht von hier gemessen:** die Sitzung „Die tote Einzel-VM aufräumen"
+hat 208 auf Thomas' ausdrückliche Entscheidung mit `qm destroy 208 --purge` entfernt, samt Platte
+und Schnappschuss; die Messskripte der Maschine sind unter `D:\claude\workinglte-vm-bergung`
+gesichert. Gemessen ist hier nur, dass Konfiguration und Platte weg sind — wer es getan hat und
+warum, steht auf dem Wort jener Sitzung.
+
+Das steht aus einem Grund hier: **die Messungen von Punkt 72 und die Zahlen dieses Punktes zu 208
+sind auf dieser Maschine nicht wiederholbar** — nicht wegen eines Ausfalls, sondern weil die
+Maschine absichtlich abgeräumt wurde. Wer sie wiederholen will, braucht eine neue Einzel-VM. Was
+ohne sie wiederholbar ist, steht oben unter `svc-1` und `svc-2`.
 
 ### Was daraus zu bauen wäre
 
