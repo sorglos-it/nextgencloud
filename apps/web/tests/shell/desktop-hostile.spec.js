@@ -34,8 +34,12 @@ async function stillADesktop(page) {
   await expect(page.locator("#smsearch")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator("#startmenu")).not.toHaveClass(/open/);
+  // The theme button as a sign of life: one press has to reach the document.
+  // The fixture's machine is set to light (playwright.config.js) and nothing
+  // has been chosen here, so the shell is following the machine and the press
+  // goes to the other design.
   await page.getByRole("button", { name: "Design wechseln" }).click();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 }
 
 // The contract caps a name at 64 bytes of printable UTF-8 and refuses a list
@@ -213,5 +217,31 @@ test("an empty list of apps leaves a desktop that still works", async ({ page })
   await desktop(page, []);
   await expect(page.locator(".dicon")).toHaveCount(0);
   await expect(page.locator(".status")).toHaveText("");
+  // docs/gestaltung.md point 3: one sentence, and it does not read as a
+  // fault. Neither of the shell's two words for a defect is in it, and the
+  // decision book has that measured for exactly this screen.
+  await expect(page.locator("#deskempty")).toBeVisible();
+  await expect(page.locator("#deskempty .emptymain")).toHaveText("Hier ist Platz für Ihre Apps.");
+  const said = await page.locator("#deskempty").textContent();
+  expect(said).not.toContain("nicht in Ordnung");
+  expect(said).not.toContain("antwortet gerade nicht");
+  // The start menu says the same thing, and NOT "Keine Treffer": nothing was
+  // searched for.
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(page.locator(".smempty")).toHaveText("Hier ist Platz für Ihre Apps.");
+  await page.keyboard.press("Escape");
   await stillADesktop(page);
+});
+
+test("a list that could not be fetched is not an empty desktop", async ({ page }) => {
+  // THE CASE THE SENTENCE MUST NOT COVER. A refused list is a request that
+  // failed, and "here is room for your apps" over it would be telling the
+  // person something that was never measured: the strip says what happened
+  // and the desktop stays bare.
+  await desktop(page, [app({ id: "de.example.lang", name: "A".repeat(10000) }), CALC]);
+  await expect(page.getByRole("status")).toHaveText(REFUSED);
+  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#deskempty")).toBeHidden();
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(page.locator(".smempty")).toHaveCount(0);
 });

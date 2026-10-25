@@ -13,7 +13,7 @@ import { UICache, openAppUI } from "./appframe.js";
 import { iconName, fillGlyph } from "./icon.js";
 import { APPS, Changed, RIGHTS } from "./changed.js";
 import {
-  ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentTheme, toggleTheme,
+  ACCENTS, WALLPAPERS, applyAccent, applyTheme, applyWallpaper, currentChoice, toggleTheme,
 } from "./theme.js";
 
 // The apps whose face the web interface itself builds: app id to the function
@@ -43,6 +43,10 @@ const BUILTIN = {
   "ngc.store": storeApp,
   "ngc.users": usersApp,
 };
+
+// The id of the Store, written once. The empty desktop offers it by name, and
+// a second spelling of it somewhere else is a button that opens nothing.
+const STORE_APP = "ngc.store";
 
 // Accent colours in the order of theme.js, with the name the swatch carries
 // for a screen reader. Six colours, no colour picker: a wall of choices is
@@ -92,6 +96,9 @@ class Desktop {
     this.cascade = 0;
     this.uid = 0;
     this.appList = [];
+    // Whether a list of apps has ever come back. The empty desktop of
+    // docs/gestaltung.md point 3 hangs on it - see renderEmpty.
+    this.loaded = false;
     this.noticeTimer = 0;
     // Which tile of the start menu carries the one tabindex of the list.
     this.active = 0;
@@ -269,8 +276,10 @@ class Desktop {
     const head = el("div", null, "Aussehen");
     head.id = "smlookhead";
 
+    // Three choices since docs/gestaltung.md point 7, and the first of them is
+    // the default: the machine decides unless the person says otherwise.
     const themes = el("div", "row");
-    for (const [t, label] of [["light", "Hell"], ["dark", "Dunkel"]]) {
+    for (const [t, label] of [["system", "Wie das System"], ["light", "Hell"], ["dark", "Dunkel"]]) {
       const b = button("b", label, null);
       b.addEventListener("click", () => {
         applyTheme(t);
@@ -315,7 +324,10 @@ class Desktop {
   // document and the wallpaper element, not a variable of its own, so the
   // marks cannot drift away from what is on screen.
   markLook() {
-    const t = currentTheme();
+    // The CHOICE, not the design on the screen: with "system" chosen it is
+    // "Wie das System" that is marked, even though the screen is light or
+    // dark like any other moment.
+    const t = currentChoice();
     for (const b of this.themeRow.children) b.classList.toggle("on", b.dataset.theme === t);
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
     for (const b of this.colorRow.children) b.classList.toggle("on", b.dataset.accent === accent);
@@ -349,7 +361,18 @@ class Desktop {
     this.icons.id = "icons";
     this.snapHint = el("div", null);
     this.snapHint.id = "snaphint";
-    this.layer.append(this.wallpaper, this.icons, this.snapHint);
+    // The desktop with nothing on it (docs/gestaltung.md point 3). It is
+    // built here and hidden, not built when the case arrives: the case is a
+    // list that came back empty, and that is the worst moment to be creating
+    // elements.
+    //
+    // It is NOT inside #icons. #icons is taken off the screen under 640 px,
+    // and the one sentence that says where the apps are is the last thing a
+    // phone may lose.
+    this.empty = el("div", null);
+    this.empty.id = "deskempty";
+    this.empty.hidden = true;
+    this.layer.append(this.wallpaper, this.icons, this.empty, this.snapHint);
     root.append(this.layer);
   }
 
@@ -435,7 +458,17 @@ class Desktop {
     clear(this.list);
     const hits = this.appList.filter((a) => !f || a.name.toLowerCase().includes(f) || a.id.includes(f));
     if (!hits.length) {
-      this.list.append(el("div", "smempty", "Keine Treffer."));
+      // Two different facts, and they used to read as one. "Keine Treffer" on
+      // a desktop with no apps at all told the person their search was wrong
+      // when there was nothing to search - and an empty state that blames the
+      // reader is the kind this shell does not make.
+      //
+      // AND NOTHING AT ALL while no list has come back yet. A list that was
+      // refused leaves this.loaded false, and a menu that says "here is room
+      // for your apps" over a failed request says something that was never
+      // measured - the same line renderEmpty draws, for the same reason.
+      if (f) this.list.append(el("div", "smempty", "Keine Treffer."));
+      else if (this.loaded) this.list.append(el("div", "smempty", "Hier ist Platz für Ihre Apps."));
       return;
     }
     for (const a of hits) this.list.append(this.menuItem(a));
@@ -517,6 +550,11 @@ class Desktop {
       return;
     }
     this.appList = list;
+    // A list came back, and it is this that lets the empty desktop show its
+    // sentence. It is set HERE and never unset: once a list has been seen, a
+    // later request that fails does not turn the desktop back into a page
+    // that has not loaded yet.
+    this.loaded = true;
     this.renderIcons();
     this.renderMenu("");
   }
@@ -527,6 +565,7 @@ class Desktop {
   // search in the start menu, not a wall of icons to read through.
   renderIcons() {
     clear(this.icons);
+    this.renderEmpty();
     for (const a of this.appList) {
       // One click opens. Double-click is the habit of an installed desktop,
       // and the people this is built for do not have it; one click is the
@@ -536,6 +575,33 @@ class Desktop {
       if (a.state !== "ok") d.classList.add("off");
       d.addEventListener("click", () => this.openApp(a.id));
       this.icons.append(d);
+    }
+  }
+
+  // The one sentence and the one button of the empty desktop, and the whole
+  // reason they are careful: an empty state must not read as a fault or as an
+  // attack (docs/vertraege-v1.2.md). So neither of the shell's two words for
+  // a defect appears here, and nothing is red.
+  //
+  // IT IS SHOWN ONLY AFTER A LIST ACTUALLY CAME BACK EMPTY. A list that could
+  // not be fetched leaves this.loaded false, and then the strip below says so
+  // and the desktop stays bare: "here is room for your apps" over a failed
+  // request would be telling the person something that was never measured.
+  renderEmpty() {
+    clear(this.empty);
+    const bare = this.loaded && !this.appList.length;
+    this.empty.hidden = !bare;
+    if (!bare) return;
+    this.empty.append(el("p", "emptymain", "Hier ist Platz für Ihre Apps."));
+    // The Store is an app like any other and stands in the same list. With an
+    // empty list it is not there either, and a button that opens nothing is
+    // worse than no button: then the sentence says who does it instead.
+    if (this.appList.some((a) => a.id === STORE_APP)) {
+      const go = button("b", "Store öffnen", null);
+      go.addEventListener("click", () => this.openApp(STORE_APP));
+      this.empty.append(go);
+    } else {
+      this.empty.append(el("p", "muted", "Ein Verwalter aktiviert die Apps dieser Anlage."));
     }
   }
 
@@ -576,7 +642,7 @@ class Desktop {
     const mount = BUILTIN[appID];
     if (typeof mount === "function") {
       try {
-        win.onClose = mount(win, this.appCtx()) || null;
+        win.onClose = mount(win, this.appCtx(win)) || null;
       } catch {
         this.placeholder(win, "Diese App konnte nicht geöffnet werden.",
           "Bitte das Fenster schließen und es noch einmal versuchen.");
@@ -589,10 +655,11 @@ class Desktop {
       // listeners with it.
       openAppUI(win, {
         app: a, link: this.link, trust: this.trust, cache: this.uiCache,
-        // The strip of this desktop, for the reason a refused channel of this
-        // app has (appframe, doOpen): an app says what it likes in its own
-        // window, and this says it where the shell speaks.
-        notice: (level, txt) => this.notice(level, txt),
+        // Over this app's OWN window (docs/gestaltung.md point 4). An
+        // interface that will not load is this app's business and nobody
+        // else's: the window it was opening is where it says so, and the
+        // desktop around it stays usable.
+        notice: (level, txt) => this.notice(level, txt, a.id),
       });
     }
     return win;
@@ -603,7 +670,10 @@ class Desktop {
   // place a message goes. It is built anew for every window, so an app holds
   // no reference to the desktop itself and cannot reach the other windows
   // through it.
-  appCtx() {
+  // appCtx is what a surface of the shell is given. It takes the window the
+  // surface runs in, so a message of that surface lands over ITS window
+  // instead of in the strip at the bottom - see notice().
+  appCtx(win) {
     const self = this;
     return {
       link: this.link,
@@ -622,7 +692,7 @@ class Desktop {
       // another one changed. Handed over in appCtx and nowhere else, for the
       // reason written above it: one place builds what a built-in app gets.
       changed: this.changed,
-      notice: (level, txt) => this.notice(level, txt),
+      notice: (level, txt) => this.notice(level, txt, win?.appID),
     };
   }
 
@@ -689,10 +759,39 @@ class Desktop {
     } catch {
       return;
     }
-    this.notice(n.level, n.text);
+    // n.app is "" for a notice of the installation itself and an app's id for
+    // one of an app (core.parseNotice checks which). That is exactly the
+    // question notice() asks, so it is handed straight on.
+    this.notice(n.level, n.text, n.app);
   }
 
-  notice(level, txt) {
+  // notice says one thing to the person. WHERE it is said is decided here and
+  // nowhere else (docs/gestaltung.md point 4):
+  //
+  //   - a message that belongs to an app with a window open -> a popup over
+  //     THAT window, so one coughing app does not still the installation;
+  //   - everything else -> the strip at the bottom edge, which is what is
+  //     left for a message no app owns: the list of apps that would not load,
+  //     a notice of the server itself, an app whose window never opened.
+  //
+  // The app is named by its id and matched against the windows, not taken on
+  // trust: an id arrives in a "notify" body from outside, and a window that
+  // is not open is not a window to write into.
+  notice(level, txt, appID) {
+    if (appID) {
+      for (const w of this.windows.values()) {
+        if (w.appID === appID) {
+          // A minimised window would hide the popup and with it the message.
+          // It comes back up: the person is being told something about this
+          // app, and they have to be able to see it.
+          if (w.min) w.restore();
+          // The same rule as the strip has below: an error waits, the other
+          // two go by themselves after NOTICE_MS. One rule, two places.
+          w.say(level, txt, level === "error" ? 0 : NOTICE_MS);
+          return;
+        }
+      }
+    }
     clearTimeout(this.noticeTimer);
     text(this.status, txt);
     this.status.className = "status " + (level === "error" || level === "warn" ? level : "info");

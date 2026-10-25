@@ -124,6 +124,67 @@ export class Win {
     this.makeResizable();
   }
 
+  // say puts ONE message over this window and nothing else (docs/gestaltung.md
+  // point 4): centred, covering the app's own window only, with one button
+  // that takes it away. While the Store coughs, the clock beside it goes on
+  // running and stays clickable.
+  //
+  // THE TEXT GOES IN AS TEXT. It comes from an app or from a server, and the
+  // decision book has this one twice over: text(), never innerHTML, and never
+  // a node built out of what arrived.
+  //
+  // One message at a time. A second one replaces the first rather than
+  // stacking: two popups over one window hide each other's buttons, and the
+  // person then has a window they cannot get back to.
+  //
+  // HOW LONG IT STANDS IS THE RULE THE STRIP ALREADY HAD, moved to the new
+  // place and not rewritten: an error waits for the person, and warn and info
+  // go by themselves. So a line of good news does not become something to
+  // click away, and nothing about which level waits has changed with the
+  // place it is shown in. The caller passes the milliseconds; 0 means wait.
+  say(level, txt, holdMs = 0) {
+    this.clearSay();
+    const back = el("div", "winback");
+    const box = el("div", "winmsg" + (level === "error" || level === "warn" ? " " + level : ""));
+    const p = el("p", null, null);
+    // role=alert and not role=status: this one took the window away from the
+    // person, so it is read out when it arrives and not when they get round
+    // to it.
+    //
+    // IT SITS ON THE PARAGRAPH and not on the box around it, exactly as
+    // .status does in the strip: the role names the message, and a role on
+    // the box would make the word on the button part of the message - both
+    // for a screen reader reading it out and for a test asking what it says.
+    p.setAttribute("role", "alert");
+    text(p, txt);
+    const go = button("b", "Schließen", null);
+    go.addEventListener("click", () => {
+      this.clearSay();
+      // Back into the window, not nowhere: the focus was moved onto the
+      // button of this popup, and a popup that takes the focus with it when
+      // it goes leaves the keyboard at the top of the page.
+      this.el.focus();
+    });
+    const row = el("div", "winmsgrow");
+    row.append(go);
+    box.append(p, row);
+    back.append(box);
+    this.el.append(back);
+    this.sayBack = back;
+    // The focus only for a message that waits. Pulling the focus out of the
+    // window for a line that takes itself away again would move the keyboard
+    // out from under the person's hands while they are working.
+    if (!holdMs) go.focus();
+    else this.sayTimer = setTimeout(() => this.clearSay(), holdMs);
+  }
+
+  clearSay() {
+    clearTimeout(this.sayTimer);
+    this.sayTimer = null;
+    this.sayBack?.remove();
+    this.sayBack = null;
+  }
+
   setTitle(t) {
     text(this.el.querySelector(".t"), t);
     text(this.tab.querySelector(".lbl"), t);
@@ -218,6 +279,10 @@ export class Win {
     } catch {
       // Swallowed on purpose; see above.
     }
+    // The timer of a message that was still standing over this window. A
+    // timeout that fires into a window that is gone is a timeout that keeps
+    // the whole window alive in the closure it was made in.
+    this.clearSay();
     this.el.remove();
     this.tab.remove();
     this.desktop.windows.delete(this.id);

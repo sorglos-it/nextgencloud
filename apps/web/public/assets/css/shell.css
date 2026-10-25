@@ -87,6 +87,22 @@ body{font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflo
           background:linear-gradient(135deg,var(--accent),var(--accent-2));text-shadow:none}
 .dicon .n{font-size:12px;word-break:break-word;overflow:hidden;max-height:2.9em}
 
+/* ---------- Der leere Schreibtisch ----------
+   Ein Satz und ein Knopf (docs/gestaltung.md Punkt 3). Es ist der Ausnahme-
+   fall und sieht auch so aus: keine Farbe der Warnung, kein Rahmen, kein
+   roter Rand - ein leerer Zustand darf nicht wie ein Fehler aussehen. Mittig,
+   damit auf dem Handy nichts danebensteht, wo die Symbole fehlen. */
+#deskempty{position:absolute;inset:0;display:flex;flex-direction:column;
+           align-items:center;justify-content:center;gap:12px;padding:24px;
+           text-align:center;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);
+           pointer-events:none}
+#deskempty[hidden]{display:none}
+/* Der Knopf ist das Einzige hier, was angeklickt wird; die Fläche darum
+   nimmt keine Klicks, sonst liegt sie über dem Hintergrund und fängt sie ab. */
+#deskempty .b{pointer-events:auto}
+#deskempty .emptymain{margin:0;font-size:15px}
+#deskempty .muted{margin:0;font-size:13px;color:#fff;opacity:.8}
+
 
 /* ---------- App-Icons ----------
    Ein Icon ist ein <svg>, das js/shell/icon.js mit dem DOM baut - keine
@@ -258,6 +274,25 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .installbox,.buy{margin-top:8px;padding:12px;border:1px solid var(--accent);border-radius:9px}
 .tick{display:flex;gap:8px;align-items:center;margin:6px 0;cursor:pointer}
 .store .installbox button,.store .buy button{margin-top:10px}
+
+/* ---------- Meldung über ihrem eigenen Fenster ----------
+   docs/gestaltung.md Punkt 4: eine Fehlermeldung ist ein Popup, mittig, und
+   es deckt NUR das Fenster der App, in der der Fehler entstand. Deshalb
+   position:absolute im Fenster und nicht fixed über dem Schirm - hustet der
+   Store, läuft die Uhr daneben weiter und bleibt anklickbar.
+   Dieselbe Form wie .usersapp .askback, die es schon gab; die ist das
+   Vorbild, nicht eine zweite Bauart. */
+.winback{position:absolute;inset:0;z-index:10;display:flex;align-items:center;
+         justify-content:center;padding:16px;background:rgba(0,0,0,.45)}
+.winmsg{width:min(30rem,100%);max-height:100%;overflow:auto;padding:16px 18px;
+        border:1px solid var(--win-border);border-radius:var(--radius);
+        background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
+/* Die Stufe färbt den Rahmen, nicht die Fläche: ein rot gefüllter Kasten über
+   dem halben Fenster liest sich als Defekt der Anlage, und das ist es nicht. */
+.winmsg.warn{border-color:#d2932a}
+.winmsg.error{border-color:#e13e3e}
+.winmsg p{margin:0 0 12px}
+.winmsgrow{display:flex;justify-content:flex-end}
 
 /* ---------- Bestätigen ---------- */
 /* One question over everything, and nothing behind it can be clicked. */

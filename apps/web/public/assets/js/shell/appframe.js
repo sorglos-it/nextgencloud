@@ -26,7 +26,7 @@ import { equal, fromUtf8, bytesOf } from "../contracts/b64.js";
 import { validName, validPath } from "../contracts/text.js";
 import { CODES, MAX_PARAMS, validParams, message as codeMessage } from "../contracts/wire.js";
 import { sha256 } from "../../vendor/noble-hashes/sha2.js";
-import { currentTheme, onThemeChange } from "./theme.js";
+import { effectiveTheme, onThemeChange } from "./theme.js";
 
 // Where an app window comes from. It is a document of this server and not a
 // srcdoc frame, because only a document fetched over http gets a policy of
@@ -850,7 +850,10 @@ function buildDocument(app, files, token, library) {
   csp.after(lib);
 
   // What the shell looks like, before the first paint rather than after it.
-  doc.documentElement.dataset.theme = currentTheme() || "dark";
+  // The design that is ON THE SCREEN, not the choice: with "system" chosen
+  // there is no design on the shell's document to copy, and this document has
+  // no stylesheet of ours to answer for it. effectiveTheme resolves it.
+  doc.documentElement.dataset.theme = effectiveTheme();
   doc.documentElement.dataset.accent = accent();
 
   return "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;

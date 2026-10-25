@@ -53,11 +53,63 @@ test("a window opens, moves, maximizes and closes", async ({ shell }) => {
   await expect(win).toHaveCount(0);
 });
 
-test("light and dark are kept", async ({ shell }) => {
+// docs/gestaltung.md point 7: the machine's setting is the DEFAULT, and the
+// person may overrule it. Three cases, and the first of them is the one that
+// used to be missing - until this the shell came up dark on a light machine
+// and stayed dark for good.
+//
+// The fixture's machine is set to light (playwright.config.js). "Follows the
+// machine" is read as the ABSENCE of data-theme: that is the one state in
+// which the stylesheet's prefers-color-scheme rule bites, so the absence is
+// the mechanism and not a detail of it.
+test("nothing chosen means the machine decides", async ({ shell }) => {
+  await expect(shell.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+  // And it is really light that is drawn, not just an attribute that is gone:
+  // --page-bg of the light block is #e7ecf4.
+  expect(await shell.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--page-bg").trim()))
+    .toBe("#e7ecf4");
+  // The start menu marks that choice, and only that one.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await expect(shell.locator("#smlook .row button.on")).toHaveCount(1);
+  await expect(shell.locator('#smlook .row button[data-theme="system"]')).toHaveClass(/on/);
+});
+
+test("a chosen design overrules the machine and is kept", async ({ shell }) => {
   await shell.getByRole("button", { name: "Design wechseln" }).click();
-  await expect(shell.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
   await shell.reload();
-  await expect(shell.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
+  // On a light machine, and it stays dark: that is what "overrules" means.
+  expect(await shell.evaluate(() => matchMedia("(prefers-color-scheme: light)").matches)).toBe(true);
+  await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
+});
+
+test("the choice can be handed back to the machine", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Design wechseln" }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Wie das System", exact: true }).click();
+  await expect(shell.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+  // Kept as a choice of its own: a reload comes back following the machine
+  // and not back on the dark that was stored before it.
+  await shell.reload();
+  await expect(shell.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+});
+
+test("the shell follows the machine changing its mind, without being reloaded", async ({ shell }) => {
+  // The decision book forbids "please reload". Nothing is pressed here and
+  // nothing is reloaded: the machine is turned to dark and the page has to be
+  // dark afterwards. --page-bg of the dark block is #0d1017.
+  await expect(shell.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+  await shell.emulateMedia({ colorScheme: "dark" });
+  expect(await shell.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--page-bg").trim()))
+    .toBe("#0d1017");
+  await shell.emulateMedia({ colorScheme: "light" });
+  expect(await shell.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--page-bg").trim()))
+    .toBe("#e7ecf4");
 });
 
 test("a name from outside is never HTML", async ({ shell }) => {

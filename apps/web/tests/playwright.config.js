@@ -83,7 +83,18 @@ export default defineConfig({
   // shell is still written in outside the language files. A case that wants
   // another language says so itself (test.use({ locale }), or lang.load() with
   // the tag it wants - shell/busy.spec.js does both).
-  use: { baseURL: `http://127.0.0.1:${port}`, locale: "de-DE", trace: "retain-on-failure" },
+  //
+  // THE MACHINE'S LIGHT-OR-DARK SETTING IS PART OF THE FIXTURE TOO, for the
+  // same reason and since docs/gestaltung.md point 7: the shell now follows
+  // it by default, so every case that reads data-theme reads this setting
+  // through it. Playwright's own default happens to be light; written down it
+  // is a decision, left out it is a default that may change under us.
+  use: {
+    baseURL: `http://127.0.0.1:${port}`,
+    locale: "de-DE",
+    colorScheme: "light",
+    trace: "retain-on-failure",
+  },
   webServer: [
     {
       command: `"${php}" -d variables_order=EGPCS -S 127.0.0.1:${phpPort} -t ../public ../public/index.php`,
