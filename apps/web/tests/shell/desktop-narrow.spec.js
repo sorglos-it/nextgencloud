@@ -23,6 +23,37 @@ const inside = (shell, sel, outer) => shell.evaluate(([s, o]) => {
   return a.left >= b.left - 1 && a.right <= b.right + 1 && a.top >= b.top - 1 && a.bottom <= b.bottom + 1;
 }, [sel, outer]);
 
+// docs/gestaltung.md point 1: NGC has to be usable on a phone, and the way to
+// the apps has to survive under 640 px, where the desktop icons step aside.
+// The way Thomas named is the start menu, and this case pins that promise
+// instead of leaving it to fall out of another case: every app this user may
+// use is reachable on a 375 px screen, by name, and opening one works.
+//
+// The sheet's own "Heute" read the hidden icons as "no way to the apps on a
+// phone". Measured, the start menu was already that way - the Start button is
+// in the bar at every width. What was missing was this case saying so, so
+// that the next change to the bar cannot take it away unnoticed.
+test("every app is reachable on a phone, through the start menu", async ({ shell }) => {
+  await expect(shell.locator("#icons")).toBeHidden();
+  const start = shell.getByRole("button", { name: "Start" });
+  await expect(start).toBeVisible();
+  // The button is wholly on the screen, not just present in the page.
+  expect(await start.evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    return r.left >= -0.5 && r.right <= innerWidth + 0.5 && r.width > 0;
+  })).toBe(true);
+  await start.click();
+  // None of the apps is lost with the icons: the three the other cases of
+  // this file open on a wide screen are all in the menu on a narrow one.
+  const inMenu = await shell.locator("#smlist .smitem .n").allTextContents();
+  for (const name of ["Rechner", "App-Store", "Benutzer und Rechte"]) {
+    expect(inMenu, name + " is in the menu at 375 px").toContain(name);
+  }
+  // And one of them really opens, which is what "a way to the apps" means.
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await expect(shell.locator(".win", { hasText: "Rechner" })).toBeVisible();
+});
+
 test("the icons step aside and the taskbar keeps its words to itself", async ({ shell }) => {
   await expect(shell.locator("#icons")).toBeHidden();
   await shell.getByRole("button", { name: "Start" }).click();

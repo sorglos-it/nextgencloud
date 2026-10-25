@@ -196,6 +196,110 @@ test("a notice from the API is shown as text", async ({ shell }) => {
   await expect(shell.getByRole("status")).toHaveText("Update für ngc-web bereit.");
 });
 
+// docs/gestaltung.md point 4: a message that belongs to an app is a popup,
+// centred, over THAT app's window - and the strip at the bottom edge is left
+// for what no app owns. The reason is in the sheet: "hustet der Store, läuft
+// die Uhr daneben weiter und bleibt anklickbar".
+test("an app's message covers its own window and nothing else", async ({ shell }) => {
+  for (const name of ["Rechner", "App-Store"]) {
+    await shell.getByRole("button", { name: "Start" }).click();
+    await shell.getByRole("menuitem", { name, exact: true }).click();
+  }
+  const calc = shell.locator(".win").filter({ has: shell.locator(".titlebar .t", { hasText: "Rechner" }) });
+  const store = shell.locator(".win").filter({ has: shell.locator(".titlebar .t", { hasText: "App-Store" }) });
+  await expect(calc).toBeVisible();
+  await expect(store).toBeVisible();
+
+  await shell.evaluate(() => window.__ngcSendNotice(
+    "error", "Das hat der Rechner nicht angenommen.", "org.sorglos.calculator"));
+
+  // In the Rechner's window, and in no other.
+  await expect(calc.locator("[role=alert]")).toHaveText("Das hat der Rechner nicht angenommen.");
+  await expect(store.locator(".winback")).toHaveCount(0);
+  // NOT in the strip: that is the half that used to still the whole desktop.
+  await expect(shell.locator(".status")).toHaveText("");
+  // It covers that window only - its veil is inside the window's box.
+  expect(await shell.evaluate(() => {
+    const wins = [...document.querySelectorAll(".win")];
+    const w = wins.find((x) => x.querySelector(".winback"));
+    const a = w.getBoundingClientRect(), b = w.querySelector(".winback").getBoundingClientRect();
+    return b.left >= a.left - 1 && b.right <= a.right + 1
+      && b.top >= a.top - 1 && b.bottom <= a.bottom + 1;
+  })).toBe(true);
+
+  // And the window beside it is still usable, which is the whole decision.
+  // Driven from the TASKBAR, not from the windows themselves: they open
+  // cascaded and overlap, so a click on a title bar measures which window
+  // lies on top and not whether the neighbour still answers.
+  // The Rechner first, because the Store opened last and still has the focus:
+  // its taskbar button would minimise it rather than raise it.
+  await shell.getByRole("button", { name: "Fenster Rechner" }).click();
+  await expect(calc).toHaveClass(/focus/);
+  await shell.getByRole("button", { name: "Fenster App-Store" }).click();
+  await expect(store).toHaveClass(/focus/);
+  await expect(store.locator(".winback")).toHaveCount(0);
+
+  // One button takes the message away. The Rechner is brought to the front
+  // first - the popup is part of ITS window, so raising the neighbour put it
+  // behind, which is "it covers only its own window" seen from the other
+  // side.
+  await shell.getByRole("button", { name: "Fenster Rechner" }).click();
+  await expect(calc).toHaveClass(/focus/);
+  await calc.getByRole("button", { name: "Meldung schließen" }).click();
+  await expect(calc.locator(".winback")).toHaveCount(0);
+  await expect(calc).toHaveCount(1);
+});
+
+test("a message that belongs to no app stays in the strip", async ({ shell }) => {
+  // The other half of point 4, and the control beside the case above: the
+  // strip is what is LEFT, not what was replaced. A notice of the
+  // installation itself carries no app and goes there.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const calc = shell.locator(".win");
+  await expect(calc).toBeVisible();
+  await shell.evaluate(() => window.__ngcSendNotice("warn", "Update für ngc-web bereit."));
+  await expect(shell.getByRole("status")).toHaveText("Update für ngc-web bereit.");
+  await expect(calc.locator(".winback")).toHaveCount(0);
+});
+
+test("a message for an app with no window open stays in the strip", async ({ shell }) => {
+  // An app that is named but has no window is not a window to write into.
+  // There would be nothing to show the message on, and dropping it would be
+  // losing it.
+  await shell.evaluate(() => window.__ngcSendNotice(
+    "error", "Das hat der Rechner nicht angenommen.", "org.sorglos.calculator"));
+  await expect(shell.getByRole("status")).toHaveText("Das hat der Rechner nicht angenommen.");
+  await expect(shell.locator(".winback")).toHaveCount(0);
+});
+
+test("a minimized window comes back up for a message of its own", async ({ shell }) => {
+  // A popup inside a window that is not on the screen is a message nobody
+  // reads. The person is being told something about this app.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const calc = shell.locator(".win");
+  await calc.getByRole("button", { name: "Minimieren" }).click();
+  await expect(calc).toBeHidden();
+  await shell.evaluate(() => window.__ngcSendNotice(
+    "error", "Das hat der Rechner nicht angenommen.", "org.sorglos.calculator"));
+  await expect(calc).toBeVisible();
+  await expect(calc.locator("[role=alert]")).toHaveText("Das hat der Rechner nicht angenommen.");
+});
+
+test("a message that tries to be markup is text in the window too", async ({ shell }) => {
+  // The rule of the decision book, at the new place: foreign text goes into
+  // the page AS TEXT. It was measured for the strip; the popup is a second
+  // way in and gets the same case.
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const calc = shell.locator(".win");
+  await shell.evaluate(() => window.__ngcSendNotice(
+    "error", "<img src=x onerror=alert(9)><b>fett</b>", "org.sorglos.calculator"));
+  await expect(calc.locator("[role=alert]")).toHaveText("<img src=x onerror=alert(9)><b>fett</b>");
+  expect(await calc.locator(".winback img, .winback script, .winback b, .winback svg").count()).toBe(0);
+});
+
 test("an app the API calls unreachable opens no window", async ({ shell }) => {
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name: "Fotos" }).click();

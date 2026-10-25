@@ -173,7 +173,13 @@ export class Win {
     // for a screen reader reading it out and for a test asking what it says.
     p.setAttribute("role", "alert");
     text(p, txt);
-    const go = button("b", "Schließen", null);
+    // "Meldung schließen", the name the strip's own button already carries,
+    // and not plain "Schließen": the title bar of this very window has a
+    // Schließen on it, and two controls with one name in one window is a
+    // window where neither a person nor a screen reader can tell which is
+    // which. Measured as a strict-mode violation the moment a case asked for
+    // "Schließen" inside the window.
+    const go = button("b", "Meldung schließen", null);
     go.addEventListener("click", () => {
       this.clearSay();
       // Back into the window, not nowhere: the focus was moved onto the
