@@ -447,6 +447,16 @@ Ersteinrichtung"; Punkt 60).
   Vertrauensliste passt (`tunnel.checkCode`) — „ein Code auf dem Schirm ist ein Code, den
   jemand einfügt" (Kommentar in `users.js`).
 
+> **Und hier steht, was passiert, wenn du es doch tust — am 29.10.2026 gemessen, zweimal.**
+> Schließt du das Fenster zwischen Schritt 6 und Schritt 8, ist die Anlage **unbrauchbar**,
+> und es gibt **keinen Weg zurück**. Die Oberfläche zeigt wieder die **Einrichtungsseite** —
+> `index.php` entscheidet allein an `/etc/ngc/trust-anchor.json`, und die Datei entsteht erst
+> bei der Kopplung. Eine gültige, gespeicherte Sitzung hilft nicht. Gleichzeitig ist der
+> Einmal-Code **verbraucht**: `/api/v1/setup` gibt `404`, `/var/lib/ngc/setup-code` ist
+> gelöscht. Es gibt also eine Seite, die nach einem Code fragt, und keinen Code mehr, den sie
+> annimmt. **Dann hilft nur neu installieren.** Deshalb steht die Warnung oben, und deshalb
+> steht sie jetzt mit ihrer Folge dabei.
+
 ### Schritt 8 — `ngc-all configure` mit dem Kopplungscode
 
 Den Code als `pair_code` in die `answer.yaml`, dann `configure`.
@@ -493,8 +503,21 @@ noch **nicht in der Vertrauensliste**, und solange er dort nicht steht, darf er 
   ihn weg, wenn Sie auf diesem Server selbst nichts einrichten sollen — dann kann es dort
   zunächst niemand. Das lässt sich später unter »Eingetragene Server« ändern."
 - `Server aufnehmen`.
+- **Und dann kommt noch ein Fenster, das hier gefehlt hat** (gemessen 29.10.2026):
+  **„Bitte bestätigen — Diese Dauerfreigabe wird in die Vertrauensliste eingetragen. Bitte
+  noch einmal das Passwort eingeben."** Das ist die **Unterschrift**: eine neue Fassung der
+  Vertrauensliste wird im Browser mit deinem eigenen Schlüssel unterschrieben, und das
+  Passwort belegt, dass du noch davorsitzt. Wer hier abbricht, hat **nichts** aufgenommen —
+  und der Schirm sieht danach aus wie vorher. Dasselbe Fenster kommt bei jeder weiteren
+  Änderung der Vertrauensliste: Rolle anlegen, Benutzer anlegen, Rechte vergeben,
+  Systemrechte ändern.
+- **Steht dort „Zurzeit wartet kein Server.", obwohl die Kopplung lief:** das Fenster weiß
+  von einer Änderung **außerhalb** von sich nichts (Schritt 13 sagt, warum). Oben steht
+  „Stand: …" und daneben **„Jetzt nachsehen"** — den Knopf drücken, dann steht er da.
 - **Geht:** „Der Server »…« ist aufgenommen. Aufgaben mit Systemrechten dürfen dort: …" mit
-  den Namen, die du angekreuzt hast.
+  den Namen, die du angekreuzt hast. Gegenprobe auf der Maschine, und sie ist die beste in
+  dieser ganzen Anleitung: `/etc/ngc/trust-anchor.json` steht danach auf **`"seq": 2`**. Genau
+  das konnte Wand 1 nicht (`pinned=1 stored=2`) — hier ist sie am laufenden Dienst widerlegt.
 - **Geht auch, und das ist die Sackgasse:** nimmst du **alle** Haken weg, steht dort „Auf
   diesem Server darf noch niemand Apps einrichten." Das ist kein Fehler, das ist die Wahrheit
   — und der Weg heraus führt über **Eingetragene Server**, wo sich beide Listen jederzeit
@@ -557,11 +580,25 @@ alles, was kein Controller ist, ohnehin `false` (`askJoinAPI`, `users.js:1285`).
 **Eine frische Anlage hat bis zu eine Stunde lang keinen Laden.** `server.go:386` legt einen
 **Stundenticker** an, `Server.hour` holt die Kataloge. Bis der erste Tick kommt, steht im Store:
 
-> Der Katalog dieses Stores ist nicht echt.
+> Der Katalog dieses Stores ist noch nicht geholt. NGC sieht stündlich nach; unter Quellen
+> steht, wann es das letzte Mal geklappt hat.
 
-**Das ist nicht wahr, und zwar nur in der Formulierung.** Gemeint ist „noch nicht geholt". Wer
-den Satz liest, sucht einen Schlüsselfehler, und das ist die falsche Stelle. Das ist Wand 3 von
-sechs (Punkte 65, 66; behoben in PR #86).
+**Das ist seit PR #86 der richtige Satz, und am 29.10.2026 so auf dem Schirm nachgelesen.**
+Vorher stand dort „Der Katalog dieses Stores ist nicht echt" — wer das las, suchte einen
+Schlüsselfehler, und das war die falsche Stelle. Das war Wand 3 von sechs (Punkte 65, 66).
+
+> **Zwei Fallen beim eigenen Laden, beide am 29.10.2026 gemessen (Punkt 97):**
+>
+> 1. **Die Ladenkennung muss `global` sein.** `ngc-all.sh` fragt nur nach Adresse und
+>    Schlüssel; die Kennung in der Vertrauensliste ist fest `global` (`contracts/trust.js`,
+>    `STORE_GLOBAL`). Ein Katalog, der auf eine andere Kennung unterschrieben ist, wird
+>    abgelehnt — auch wenn Adresse, Schlüssel und Unterschrift stimmen.
+> 2. **Und die Oberfläche sagt dazu das Falsche.** Unter **Quellen** steht dann „Diese Quelle
+>    antwortet nicht. Bitte die Adresse prüfen." — obwohl der Laden mit **`http=200`**
+>    geantwortet hat (im Zugriffsprotokoll des Ladens steht der Abruf des `Go-http-client`).
+>    Die Adresse ist in Ordnung; abgelehnt wurde der Inhalt. Wer dem Satz folgt, prüft die
+>    falsche Sache. Der echte Grund steht in `s.error` und wird nicht angezeigt
+>    (`store.js:298`).
 
 - **Was du tust:** erst prüfen, dass Schritt 8 und 9 wirklich durch sind — sonst wartest du
   umsonst. Dann entweder warten (bis zu 60 Minuten) oder `systemctl restart ngc-api` und eine

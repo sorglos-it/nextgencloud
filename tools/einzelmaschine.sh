@@ -133,6 +133,133 @@ pruefen() {
 	echo "einzelmaschine: pruefen ok"
 }
 
+# haertung_oeffnen opens the ports the small case needs, and it is the reason
+# this script grew a step that touches the inside of the machine.
+#
+# WHY IT HAS TO BE HERE. The template has carried the hardening since
+# 24.10.2026: table inet haertung, input policy DROP, and exactly ONE port
+# through it - 22. The six machines got their ports per ROLE, by hand, on the
+# machines; those rules are in NO repository (docs/messreste-je-maschine.md
+# lists "nftables" as a leftover on every one of them). The small case has no
+# role rules at all, and neither ngc-all.sh nor ngc-web.sh opens a port - they
+# are installers, not firewall tools, and ulh has no business guessing a
+# network policy.
+#
+# So a machine built from the template and the scripts alone answered ssh and
+# NOTHING else: apache listened on 443, the API on 7443, and a browser got a
+# connection timeout. Measured 29.10.2026 on VMID 310, and it is invisible from
+# the machine - curl from localhost goes through the loopback accept above, so
+# every probe run ON the machine reports a healthy installation nobody can
+# reach (Punkt 96).
+#
+# The three ports, each with its reason:
+#   443   the interface itself.
+#   7443  the API. /config.json names apis[] by NAME and the BROWSER connects
+#         there ITSELF, not through the interface - so this one is not internal.
+#   80    the one page a plain http:// call gets: "NGC braucht eine sichere
+#         Verbindung" (step 5). Closed, that sentence is a timeout instead.
+# The source stays 10.0.0.0/8, the same scope the template allows ssh from -
+# this opens the ports to the local network, not to the internet, and that is
+# deliberately the same decision the template already made for 22.
+haertung_oeffnen() {
+	# auf_vm and not "still": "still nft ..." asks the PROXMOX HOST, which has
+	# no such table and happily said so - the script then reported "nothing was
+	# in the way" about a machine it had not looked at. The same mistake
+	# auf_vm's own comment warns about, made one function further down.
+	# THE FULL PATH, and it is not pedantry. auf_vm runs the command through
+	# "sh" on the machine, and that shell's PATH carries no /usr/sbin - so a
+	# bare "nft" is not found, the probe comes back empty, and the script
+	# reported "nothing was in the way" about a machine whose 443 was shut.
+	# An empty answer from a probe is a statement about the probe until
+	# something else shows the thing is really absent.
+	# AND IT IS WAITED FOR, because ssh comes up BEFORE nftables does. Measured
+	# 29.10.2026: the readiness loop above answers after ~15 s, and at that
+	# moment the table is not loaded yet - so the first probe found nothing,
+	# the script said "nothing was in the way", and ninety seconds later the
+	# machine was shut to everything but 22. "Not there yet" and "not there"
+	# look the same to one probe.
+	local nft=/usr/sbin/nft da i
+	for i in $(seq 1 12); do
+		da=$(auf_vm "$nft list table inet haertung >/dev/null 2>&1 && echo ja")
+		[ "$da" = ja ] && break
+		sleep 5
+	done
+	[ "$da" = ja ] || {
+		echo "einzelmaschine: no nftables table 'haertung' after 60s - nothing opened; if the template is hardened, 443 is shut and the interface will answer nobody"
+		return 0
+	}
+	auf_vm "$nft add rule inet haertung eingang ip saddr 10.0.0.0/8 tcp dport { 80, 443, 7443 } accept" >/dev/null
+	# Held against the machine, not against the exit code: a rule that did not
+	# take leaves an installation nobody can reach, and the install that follows
+	# would look like the thing that is broken.
+	local got
+	got=$(auf_vm "$nft list chain inet haertung eingang | grep -c '443'")
+	if [ "${got:-0}" -gt 0 ]; then
+		echo "einzelmaschine: ports 80, 443 and 7443 opened for 10.0.0.0/8 (the template lets only 22 through)"
+	else
+		fehler "the rule for 80/443/7443 did not take - the interface would answer nobody. Nothing else was done."
+	fi
+}
+
+# appplatte_richten makes the second disk into config.AppDataDir, and without
+# it NO APP CAN EVER BE SET UP on a machine this script built.
+#
+# WHAT WAS MEASURED, 29.10.2026 on VMID 310. The clock app was activated
+# through the interface and the answer was "Das hat der Rechner nicht
+# angenommen. Bitte es noch einmal versuchen." - and NOTHING in the journal of
+# the controller or of the API. The cause was two layers down:
+#
+#   kernel:      CONFIG_FS_ENCRYPTION=y          -- can encrypt
+#   /dev/sda1:   has_journal ext_attr ... (no "encrypt")   -- CANNOT
+#
+# runtime.ErrNoFscrypt says "this FILESYSTEM cannot encrypt a directory", and
+# it is the filesystem that decides: the Debian cloud image makes its root
+# without the encrypt feature, and an existing ext4 only gains it with
+# tune2fs -O encrypt on an UNMOUNTED filesystem - which the root never is.
+#
+# The second disk was attached for exactly this ("what lets fscrypt be measured
+# without touching the mounted root filesystem", see EXTRA above) and then
+# never formatted, never mounted, never used - 16 GiB of nothing. So it is made
+# here, with the feature on from the start, and mounted at config.AppDataDir.
+#
+# 0711 and not 0700: every app runs as its own user and has to traverse this
+# directory to reach its own (apps/server-controller/classes/runtime/data.go,
+# and station 7 of tools/erstlauf.sh says the same). The controller sets that
+# mode on the directory it makes; it is set here too, because the mount point
+# is this script's.
+appplatte_richten() {
+	local ziel=/var/lib/ngc/apps platte=/dev/sdb schon
+	[ "$EXTRA" = 0 ] && return 0
+	schon=$(auf_vm "test -b $platte && echo ja")
+	[ "$schon" = ja ] || {
+		echo "einzelmaschine: no $platte on the machine - no app directory made"
+		return 0
+	}
+	# Never over a disk that already carries something: this runs right after a
+	# clone, but a second call must not eat an installation's data.
+	local belegt
+	belegt=$(auf_vm "blkid $platte >/dev/null 2>&1 && echo ja")
+	if [ "$belegt" = ja ]; then
+		echo "einzelmaschine: $platte already carries a filesystem - left alone"
+	else
+		auf_vm "mkfs.ext4 -q -F -O encrypt -L ngc-apps $platte" >/dev/null
+	fi
+	auf_vm "mkdir -p $ziel
+grep -q ' $ziel ' /etc/fstab || echo 'LABEL=ngc-apps $ziel ext4 defaults,noatime 0 2' >> /etc/fstab
+mountpoint -q $ziel || mount $ziel
+chmod 0711 $ziel" >/dev/null
+	# Held against the machine: the feature and the mount, not the exit codes.
+	# Without the feature every activation dies, and it dies without a word.
+	local hat ein
+	hat=$(auf_vm "/usr/sbin/tune2fs -l $platte 2>/dev/null | grep -c encrypt")
+	ein=$(auf_vm "mountpoint -q $ziel && echo ja")
+	if [ "${hat:-0}" -gt 0 ] && [ "$ein" = ja ]; then
+		echo "einzelmaschine: $ziel is $platte, ext4 WITH the encrypt feature, mode 0711 - without it no app can be set up"
+	else
+		fehler "$ziel did not come up as an encryptable filesystem (encrypt=$hat mounted=$ein). Every app activation would fail with runtime.ErrNoFscrypt and say nothing."
+	fi
+}
+
 anlegen() {
 	pruefen
 	lauf qm clone "$VORLAGE_ID" "$VMID" --name "ngc-$NAME" --full 1 --storage "$STORAGE"
@@ -153,6 +280,8 @@ anlegen() {
 		if [ "$wer" = "ngc-$NAME" ]; then
 			echo "einzelmaschine: ssh answers after ~$((i * 5))s"
 			auf_vm '. /etc/os-release; echo "  $PRETTY_NAME, kernel $(uname -r), $(nproc) cores, $(free -m | awk "/^Mem:/{print \$2}") MiB"'
+			haertung_oeffnen
+			appplatte_richten
 			return 0
 		fi
 		# A reachable machine with the WRONG name is worse than silence: it

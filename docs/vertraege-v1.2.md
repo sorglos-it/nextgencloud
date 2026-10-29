@@ -228,6 +228,7 @@ gibt, aber erst nach dem Schreiben.
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
 | 96 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
+| 97 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; Wurzel-Dateisystem ohne `encrypt` war die Wand, behoben; **offen: anna mit allen drei Rechten bekommt die App nicht, ohne eine Protokollzeile** | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7440,3 +7441,162 @@ Behebung. Abgewogen ist, dass Station 2w einen Buchstaben bekommt statt acht Num
 verschieben, und jede Zeile der letzten Liste. **Nicht gemessen** ist alles ab Station 3 — kein
 Controller ist gekoppelt, keiner aufgenommen, keine App eingerichtet, kein Fenster geöffnet. Die
 Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.
+
+---
+
+## Punkt 97: Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein
+
+**Gemessen am 29.10.2026** auf derselben frischen Maschine wie Punkt 96 (VMID **310**,
+`ngc-probe`, **10.2.3.219**, aus der Vorlage geklont). Punkt 96 endete, wo der Prüflauf endet:
+bei Station 3, weil alles dahinter einen Menschen im Browser braucht. **Dieser Punkt geht den
+Rest** — Einrichtungsseite, Verwalter, Kopplungscode, Aufnehmen mit Systemrechten, Katalog,
+App einrichten, Recht „benutzen", Fenster öffnen.
+
+Der Browser ist ein echter Chromium, und der **Name wird vom Browser selbst aufgelöst**
+(`--host-resolver-rules`) statt aus einer `hosts`-Datei — das ist Schritt 0 der Anleitung,
+ohne dass jemand eine Systemdatei anfassen muss.
+
+### Der Weg, Station für Station
+
+| Station | Stand | Beleg |
+|---|---|---|
+| 5 Einrichtungsseite | **gemessen** | `GET / → 200`, „NGC einrichten … Einmal-Code … Weiter" |
+| 6 erster Verwalter | **gemessen** | Schritt 2 mit Kennung, `wss://ngc.test:7443/tunnel`, Fingerabdruck; danach der Schreibtisch und **ein** Keks `ngc_session`, `httpOnly`, `secure` |
+| 7 Kopplungscode | **gemessen** | 337 Zeichen, beginnt mit `ngc-pair:` |
+| 8 `ngc-all configure` | **gemessen** | „Die Kopplung hat geklappt", `trust-anchor.json` entsteht, `controller.json` da, `ngc-controller` **active**, Rollen `["web","api","db","services"]` |
+| 9 aufnehmen + Systemrechte | **gemessen** | Haken für die unterschreibende Person **vorgekreuzt**, Rolle `admin` **nicht**; danach „Mit Systemrechten: thomas" |
+| 10 Gegenprobe | **gemessen** | neuer Browser zeigt **„Bei NGC anmelden"**, `/api/v1/setup` → **404**, `/config.json` trägt den Anker |
+| 11 Katalog | **gemessen** | nach `systemctl restart ngc-api` in **einer Minute** geholt, ohne Fehlerzeile |
+| 12 App einrichten | **gemessen** | „Die App ist eingerichtet.", Rechnerauswahl bot `probe-2` |
+| 13 Oberfläche zieht nach | **gemessen** | „Uhr" stand **sofort** in der Leiste, ohne Neuladen |
+| 10 App ist bedienbar | **gemessen** | Fenster zeigt `2026-10-29T20:55:48Z`, „Noch einmal lesen" gibt `20:55:57Z` |
+
+**Der Beleg auf der Maschine, nicht im Bild:** Behälter `ngc-uhr-ad8c00e2` aus
+`localhost/ngc/uhr:1.0.0`, zwei `container exec` um **20:55:48** und **20:55:57** — dieselben
+zwei Zeiten, die im Fenster standen. Eigener Benutzer `ngc-uhr-ad8c00e2` (uid 999, Heimat
+`/var/lib/ngc/apps/org.sorglos.uhr`, Hülle `nologin`), dessen Ordner `0700` ihm gehört und im
+`0711`-Elternordner liegt — genau die Durchgangsrechte, die Station 7 fordert. Und
+`a service wrote to stderr app=org.sorglos.uhr service=uhr action=zeit`: der zweite Strom ging
+ins Protokoll, nicht ins Fenster.
+
+### Die Wand, die den ganzen Weg aufgehalten hat: das Dateisystem, nicht der Kern
+
+Die erste Aktivierung antwortete **„Das hat der Rechner nicht angenommen. Bitte es noch einmal
+versuchen."** — und **weder** das Protokoll des Controllers **noch** das der API schrieb ein
+Wort. Die Ursache lag zwei Schichten tiefer:
+
+```
+Kern      CONFIG_FS_ENCRYPTION=y                              kann
+/dev/sda1 has_journal ext_attr ... (kein "encrypt")           kann NICHT
+```
+
+`runtime.ErrNoFscrypt` sagt selbst „this **filesystem** cannot encrypt a directory". Das
+Debian-Cloud-Abbild legt seine Wurzel **ohne** das `encrypt`-Merkmal an, und ein bestehendes
+ext4 bekommt es nur mit `tune2fs -O encrypt` im **ausgehängten** Zustand — was die Wurzel nie
+ist. **Damit kann auf einer Maschine aus `einzelmaschine.sh` keine einzige App laufen.**
+
+Und die zweite Platte, die genau dafür da ist („what lets fscrypt be measured without touching
+the mounted root filesystem", `EXTRA` in `einzelmaschine.sh`), war **unformatiert und nicht
+eingehängt** — 16 GiB, die das Skript anhängt und dann nie anfasst.
+
+**Behoben:** `einzelmaschine.sh` legt die zweite Platte jetzt als `ext4 -O encrypt` an, hängt
+sie als `/var/lib/ngc/apps` ein und setzt `0711`; danach lief die Aktivierung sofort durch.
+Und `erstlauf-maschine.sh` fragt bei Station 7 jetzt **beides** — vorher fragte es nur den Kern
+und hätte diese Maschine grün genannt.
+
+### Der Befund, der offen bleibt: eine zweite Person kann die App nicht benutzen
+
+Wand 6 selbst ist **behoben und gemessen**: bei der Rolle `admin` stehen „Uhr · benutzen" und
+„Uhr · zeit" ohne Kasten da — „Diese Rolle darf jede eingerichtete App benutzen" — **ohne eine
+einzige Zeile in der Datenbank** (`adminApps`, `c0f0022`). Die frisch eingerichtete App ist für
+den Verwalter sofort sichtbar und damit auch vergebbar.
+
+Und die Vergabe an einen zweiten Menschen geht auch, bis zu einem Punkt. Gemessen, mit einer
+Rolle `leser`, die ausdrücklich **nicht** `admin` ist (ein Admin sieht ohnehin jede App, an ihm
+wäre nichts zu messen):
+
+```
+anna, Rolle leser, ohne Recht   Startmenue: []
+Recht "Uhr · benutzen" vergeben
+anna, Rolle leser, mit Recht    Startmenue: ["Uhr"]
+```
+
+**Das ist Wand 6, sauber gezeigt.** Aber das Fenster, das sich dann öffnet, sagt:
+
+> Der Dienst dieser App hat nicht geantwortet.
+
+Und das bleibt so. Gegenprobe in **derselben Minute**, dasselbe System, dieselbe App:
+
+```
+thomas  2026-10-29T21:12:02Z | Die Zeit kommt vom Server.
+anna    — | Der Dienst dieser App hat nicht geantwortet.
+```
+
+Was anna zu diesem Zeitpunkt hält, nachgesehen und nicht angenommen:
+
+| | |
+|---|---|
+| `Uhr · benutzen` | **gesetzt** |
+| `Uhr · zeit` (die Aktion) | **gesetzt** |
+| Systemrechte auf `probe-2` | **gesetzt** („Mit Systemrechten: anna, thomas") |
+
+**Die naheliegende Ursache ist damit widerlegt, nicht bestätigt.** Es lag nicht am fehlenden
+Aktionsrecht und nicht an `trust.MayRoot` — beide wurden nacheinander gegeben, und beide Male
+blieb die Antwort dieselbe. Und auf **keiner** Seite steht eine Zeile: der Controller
+protokolliert nichts, die API protokolliert nichts. Der Aufruf erreicht den Controller gar
+nicht; bei thomas erreicht er ihn.
+
+**Was das heißt:** der Weg „App einrichten → Recht vergeben → ein anderer Mensch benutzt sie"
+ist **nicht** durchgängig. Er endet eine Station vor dem Ziel, und zwar still.
+
+### Drei Stellen, an denen die Oberfläche die Erscheinung statt der Ursache nennt
+
+Alle drei sind an diesem Tag aufgetreten und haben je einen Umweg gekostet:
+
+1. **„Das hat der Rechner nicht angenommen."** — Ursache war das Dateisystem ohne `encrypt`.
+   Kein Protokolleintrag auf beiden Seiten.
+2. **„Diese Quelle antwortet nicht. Bitte die Adresse prüfen."** — der Laden hatte mit
+   **`http=200`** geantwortet, im Zugriffsprotokoll steht der Abruf des `Go-http-client`.
+   Abgelehnt wurde der **Inhalt**: der Katalog war auf die Kennung `uhr-probe` unterschrieben,
+   die Vertrauensliste nennt fest `global` (`STORE_GLOBAL`, `contracts/trust.js`). Der echte
+   Grund liegt in `s.error` und wird nicht angezeigt (`store.js:298`).
+3. **„Der Dienst dieser App hat nicht geantwortet."** — siehe oben; die Rechte waren alle da.
+
+### Zwei Dinge, die die Anleitung nicht sagte und die jeden aufhalten
+
+1. **Nach „Server aufnehmen" kommt noch ein Fenster:** „Bitte bestätigen — Diese Dauerfreigabe
+   wird in die Vertrauensliste eingetragen. Bitte noch einmal das Passwort eingeben." Das ist
+   die Unterschrift. Wer dort abbricht, hat **nichts** aufgenommen, und der Schirm sieht
+   danach aus wie vorher. Dasselbe Fenster kommt bei Rolle anlegen, Benutzer anlegen, Rechte
+   vergeben und Systemrechte ändern.
+2. **Ein geschlossenes Fenster zwischen Schritt 6 und Schritt 8 macht die Anlage unbrauchbar,
+   und es gibt keinen Weg zurück.** Die Oberfläche zeigt wieder die Einrichtung (ohne Anker
+   hält `index.php` jede Anlage für neu, auch mit gültiger Sitzung), und der Einmal-Code ist
+   **verbraucht**: `/api/v1/setup` gibt `404`, `/var/lib/ngc/setup-code` ist gelöscht. Es gibt
+   eine Seite, die nach einem Code fragt, und keinen Code mehr, den sie annimmt. Das ist in
+   diesem Lauf **zweimal** passiert und hat zweimal eine Neuinstallation gekostet. Die
+   Anleitung warnte „nicht den Browser schließen" — ohne zu sagen, was sonst geschieht.
+
+### Was daraus noch zu bauen wäre
+
+1. **Dem Befund mit der zweiten Person nachgehen.** Er ist der einzige rote in diesem Lauf und
+   er trifft den Zweck der Anlage: mehrere Menschen, eine App. Der erste Schritt ist kein Code,
+   sondern ein **Protokolleintrag** — solange beide Seiten schweigen, rät jeder.
+2. **Die drei Sätze oben an ihre Ursache binden.** Wo ein Grund im Programm bekannt ist, gehört
+   er auf den Schirm oder wenigstens ins Protokoll. „Bitte die Adresse prüfen" bei `http=200`
+   ist eine Anweisung, die in die Irre führt.
+3. **Die Ladenkennung in `ngc-all.sh` fragen oder dokumentieren.** Wer sich einen Laden
+   ausdenken muss (Punkt 96), kann heute nicht wissen, dass die Kennung `global` sein muss.
+4. **Das `encrypt`-Merkmal zu einer Voraussetzung machen, die beim Installieren geprüft wird.**
+   `ngc-all.sh` prüft openssl 3.0 und podman und sagt bei beiden laut, was fehlt. Hier fehlt
+   etwas Gleichwertiges — und es fällt erst bei der ersten App auf, Stunden später.
+
+**Getrennt gehalten:** gemessen sind die Stationentabelle, die zwei Zeiten im Fenster und die
+zwei `exec` im Protokoll des Controllers, Benutzer und Rechte des App-Ordners, annas Startmenü
+vorher und nachher, die drei Rechte, die sie zuletzt hielt, die Gegenprobe thomas/anna in
+derselben Minute, das Fehlen jeder Protokollzeile auf beiden Seiten, die Merkmale von
+`/dev/sda1` und `/dev/sdb`, der `http=200` des Ladens im Zugriffsprotokoll und beide
+Sackgassen nach dem Schließen des Fensters. Abgewogen ist die Einordnung der drei Meldungen als
+„Erscheinung statt Ursache" und jede Zeile der letzten Liste. **Nicht gemessen** ist, woran der
+Aufruf der zweiten Person scheitert — nur, dass er scheitert und dass es an keinem der drei
+geprüften Rechte liegt. Die Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.

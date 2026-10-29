@@ -433,23 +433,38 @@ unmeasurable 3 "Controller koppeln" "the pairing code comes out of the BROWSER: 
 unmeasurable 4 "aufnehmen" "needs station 3, and then a click through the interface with a signed-in admin"
 unmeasurable 5 "Systemrechte setzen" "needs station 4"
 unmeasurable 6 "Katalog da" "needs a store with a signed catalog in the trust list; ngc-all.sh takes store_url and store_key, and NGC's own store key is still a placeholder in the script (NGC_STORE_KEY_DEFAULT=REPLACE-THIS-LINE-...)"
-# Three sources, because the first two answer on no Debian at all and the run
-# then told a machine that CAN encrypt that no app could ever be set up on it
-# (measured 29.10.2026 on a fresh clone of the Proxmox template, VMID 310):
-# /proc/config.gz does not exist on Debian - the config ships as
+# TWO QUESTIONS, NOT ONE, and the second is the one that decides.
+#
+# The kernel is asked from three places, because the first two answer on no
+# Debian at all: /proc/config.gz does not exist there - the config ships as
 # /boot/config-$(uname -r) - and /sys/fs/ext4/features/encryption is a FILE,
-# so the "-d" below was false on every machine that has it. A probe that is
-# wrong in the safe-looking direction is the worse half: it hands out a red
-# verdict nobody checks.
-if zgrep -q '^CONFIG_FS_ENCRYPTION=y' /proc/config.gz 2>/dev/null ||
-	grep -q '^CONFIG_FS_ENCRYPTION=y' "/boot/config-$(uname -r)" 2>/dev/null ||
-	[ -e /sys/fs/ext4/features/encryption ]; then
-	unmeasurable 7 "App einrichten" "this kernel can encrypt, so the obstacle is not here - what is missing is station 6 and an app image"
-else
-	# The repository says this itself, at the one place that answers for it:
-	# serve/activate.go, "On a kernel without CONFIG_FS_ENCRYPTION every
-	# activation ends here (measured on 6.18.33.2-microsoft-standard-WSL2)".
+# so a "-d" test is false on every machine that has it.
+#
+# But a kernel that can encrypt is not a machine that can. runtime.ErrNoFscrypt
+# says "this FILESYSTEM cannot encrypt a directory", and the filesystem is
+# where it was really missing: measured 29.10.2026 on VMID 310, the Debian
+# cloud image's root carries CONFIG_FS_ENCRYPTION=y in the kernel and NO
+# "encrypt" in the features of /dev/sda1 - so every activation ended, the
+# interface said "Das hat der Rechner nicht angenommen", and neither journal
+# wrote a word. An existing ext4 gains the feature only with tune2fs on an
+# UNMOUNTED filesystem, which the root never is, so this is not something an
+# admin fixes in passing.
+kern=nein
+zgrep -q '^CONFIG_FS_ENCRYPTION=y' /proc/config.gz 2>/dev/null && kern=ja
+grep -q '^CONFIG_FS_ENCRYPTION=y' "/boot/config-$(uname -r)" 2>/dev/null && kern=ja
+[ -e /sys/fs/ext4/features/encryption ] && kern=ja
+appdir=/var/lib/ngc/apps
+[ -d "$appdir" ] || appdir=/var/lib/ngc
+appdev=$(findmnt -no SOURCE --target "$appdir" 2>/dev/null)
+fs=nein
+[ -n "$appdev" ] && tune2fs -l "$appdev" 2>/dev/null |
+	grep -i '^filesystem features:' | grep -qw encrypt && fs=ja
+if [ "$kern" = nein ]; then
 	unmeasurable 7 "App einrichten" "this kernel has no CONFIG_FS_ENCRYPTION ($(uname -r)), and runtime.ErrNoFscrypt ends EVERY activation on such a kernel (apps/server-controller/classes/serve/activate.go says so at the line) - no app can be set up here, whatever else is right"
+elif [ "$fs" = nein ]; then
+	fail 7 "App einrichten" "the kernel can encrypt, but the filesystem under $appdir ($appdev) has no 'encrypt' feature - runtime.ErrNoFscrypt ends EVERY activation, the interface answers 'Das hat der Rechner nicht angenommen' and NEITHER journal writes a word. An existing ext4 takes the feature only unmounted (tune2fs -O encrypt), so $appdir needs a filesystem that was made with it"
+else
+	unmeasurable 7 "App einrichten" "kernel and the filesystem under $appdir ($appdev) can both encrypt, so the obstacle is not here - what is missing is station 6 and an app image"
 fi
 unmeasurable 8 "App erscheint im Menue" "needs station 7, and a second user to show that the rights page offers an app one cannot see yet"
 # ---------------------------------------------------------------------------
