@@ -342,6 +342,17 @@ echo "== web"
 # five archives is a trap.
 sh "$self/pack-release.sh" "$ref" 1 "$out" || die "the web archive could not be packed"
 rm -f -- "$out/release.payload.json"
+# AND THEREFORE ITS CLOSING HINT DOES NOT APPLY HERE, and that has to be said in
+# the same breath or the two lines contradict each other. pack-release.sh ends
+# with "tools/sign-release.sh <dir> <key.pem>", which is right when pack is run
+# on its own - it leaves the payload that script needs. Run from here the payload
+# is gone one line later, so the call dies with "release.payload.json is missing
+# in <dir>" (measured 29.10.2026, Punkt 96). The two ways also take different
+# key files: sign-release.sh wants an openssl Ed25519 PEM, ngc-store wants its
+# own key file and writes one when the path is empty.
+echo "  IGNORE the sign-release.sh line above: it belongs to pack-release.sh run"
+echo "  on its own. From here the payload of the WHOLE release is built by"
+echo "  ngc-store release, named at the end of this run."
 
 echo "== shape of all five, through the tool the user runs"
 "$work/$host_arch/ngc-store" contents "$out" || die "ngc-store contents refuses this release"

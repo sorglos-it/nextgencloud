@@ -86,6 +86,14 @@ machine=""
 mstaged=${NGC_MACHINE_STAGED:-/root/release/dist}
 mulh=${NGC_MACHINE_ULH:-/root/release/ulh}
 mkey=${NGC_MACHINE_RELEASE_KEY:-}
+# The NAME the installation answers under. Without it erstlauf-maschine.sh takes
+# the IPv4 address of the default route, and docs/installation-kleines-system.md,
+# step 0, says why that is not the small case: the certificate carries the name
+# and nothing else, and a passkey hangs on rp.id, which is a NAME - over an
+# address no passkey can be made or used. Every run before 29.10.2026 therefore
+# installed on an address, and no run has ever measured the configuration a user
+# is told to build.
+mhost=${NGC_MACHINE_HOSTNAME:-}
 # Extra options for ssh and scp, for a target that is not in ~/.ssh/config -
 # a port, an identity, another config file. Taken from the environment so that
 # nothing here has to write into the user's ssh configuration.
@@ -114,6 +122,10 @@ while [ $# -gt 0 ]; do
 		;;
 	--machine-release-key)
 		mkey=${2:-}
+		shift 2
+		;;
+	--machine-hostname)
+		mhost=${2:-}
 		shift 2
 		;;
 	-h | --help)
@@ -212,7 +224,7 @@ else
 		# out of the script itself - not out of this file.
 		rwp=$(sed -n 's/.*"ReadWritePaths=\(.*\)".*/\1/p' "$script")
 		[ -n "$rwp" ] || broken 1 "$s1" "no ReadWritePaths= line found in ngc-api.sh of $ulh_ref"
-		for var in NGC_DATA NGC_TLS NGC_STATE_DIR; do
+		for var in NGC_DATA NGC_ETC NGC_TLS NGC_STATE_DIR; do
 			val=$(sed -n "s/^$var=\"\([^\"]*\)\".*/\1/p" "$script" | head -1)
 			[ -n "$val" ] && rwp=${rwp//\$\{$var\}/$val}
 		done
@@ -376,7 +388,7 @@ else
 	echo "erstlauf: phase B on $machine (its station lines are indented; the ones above come out of the sources):"
 	set +e
 	# shellcheck disable=SC2029
-	ssh $sshopts -- "$machine" "bash /tmp/erstlauf-maschine.sh --staged '$mstaged' --ulh '$mulh'${mkey:+ --test-release-key '$mkey'}" >"$mlog" 2>&1
+	ssh $sshopts -- "$machine" "bash /tmp/erstlauf-maschine.sh --staged '$mstaged' --ulh '$mulh'${mkey:+ --test-release-key '$mkey'}${mhost:+ --hostname '$mhost'}" >"$mlog" 2>&1
 	mrc=$?
 	set -e
 	sed 's/^/    /' "$mlog"

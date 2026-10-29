@@ -321,12 +321,21 @@ Rechner konnten nicht geladen werden" wieder auftaucht.
 
 ### Schritt 3 — Dem Dienst `/etc/ngc` zum Schreiben erlauben
 
-**Das ist Wand 1 von sechs, und sie steht noch** (nachgesehen am 24.10.2026).
+> **Berichtigung vom 29.10.2026: Wand 1 ist weg, und du musst hier nichts tun.** Auf dem Zweig
+> `ngc-kette` lautet die Zeile `ReadWritePaths=${NGC_DATA} ${NGC_ETC}` — also `/var/lib/ngc` und
+> **`/etc/ngc`** (`ngc-all.sh:1431`, dieselbe Zeile in `ngc-api.sh:1073`). Auf einer frisch aus
+> der Vorlage geklonten Maschine nachgemessen, nicht im Text nachgelesen: `systemctl show
+> ngc-api.service -p ReadWritePaths` nennt `/var/lib/ngc /etc/ngc`, und ein Schreibversuch in
+> der **echten** Sandbox der Unit kommt durch (Punkt 96). **Der Drop-in unten ist überholt** —
+> wer ihn anlegt, legt eine Zeile an, die schon im Skript steht. Der Rest dieses Schritts bleibt
+> stehen, weil die Gegenprobe mit `systemd-run` richtig und nützlich bleibt und weil der Grund
+> erklärt, warum diese eine Zeile so viel entscheidet.
 
-`ngc-api.service` wird mit `ProtectSystem=strict` geschrieben, und die schreibbaren Pfade sind
-`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`
-(`ngc-all.sh:1322`, dieselbe Zeile in `ngc-api.sh:1065`, Zweig `ngc-kette`). **`/etc/ngc`
-selbst steht nicht dabei.** Der Vertrauensanker liegt aber dort, und er wird **atomar**
+**Das war Wand 1 von sechs** (Stand bis 24.10.2026, hier als Begründung aufbewahrt).
+
+`ngc-api.service` wird mit `ProtectSystem=strict` geschrieben, und die schreibbaren Pfade waren
+`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`. **`/etc/ngc`
+selbst stand nicht dabei.** Der Vertrauensanker liegt aber dort, und er wird **atomar**
 geschrieben: `config.SaveAnchor` (`shared/config/config.go:451`) legt erst eine Datei
 `.trust-anchor.json.tmp-*` **im selben Ordner** an. Ein Ordner, in dem keine Datei entstehen
 darf, lässt kein atomares Ersetzen zu — auch dann nicht, wenn die Zieldatei selbst `0644`
@@ -533,9 +542,20 @@ alles, was kein Controller ist, ohnehin `false` (`askJoinAPI`, `users.js:1285`).
 
 ### Schritt 11 — Auf den Katalog warten (bis zu eine Stunde)
 
-**Eine frische Anlage hat eine Stunde lang keinen Laden.** `server.go:386` legt einen
-**Stundenticker** an, `Server.hour` holt die Kataloge — und es gibt **keinen Abruf beim Start
-und keine Handauslösung**. Bis der erste Tick kommt, steht im Store:
+> **Berichtigung vom 29.10.2026, zwei Sätze, und der zweite ist der nützliche.**
+>
+> 1. **Es gibt eine Handauslösung: `systemctl restart ngc-api`.** `FirstCatalog = time.Minute`
+>    lässt die **erste** Runde eine Minute nach dem Start laufen und erst danach stündlich. Am
+>    29.10.2026 gemessen: Start 19:49:22, erste Katalogrunde 19:50:22. Wer nicht warten will,
+>    startet neu und hat die Runde nach einer Minute.
+> 2. **Vor der Vertrauensliste wird ohnehin nichts geholt.** Dieselbe Runde endete mit
+>    `WARN catalogs could not be fetched error="state: no trust list yet"`. Die Stunde ist also
+>    nicht der erste Hinderer — **Schritt 8 und 9 sind es.** Wer hier auf einen Katalog wartet,
+>    ohne den Controller gekoppelt und aufgenommen zu haben, wartet auf etwas, das gar nicht
+>    kommen kann (Punkt 96).
+
+**Eine frische Anlage hat bis zu eine Stunde lang keinen Laden.** `server.go:386` legt einen
+**Stundenticker** an, `Server.hour` holt die Kataloge. Bis der erste Tick kommt, steht im Store:
 
 > Der Katalog dieses Stores ist nicht echt.
 
@@ -543,7 +563,9 @@ und keine Handauslösung**. Bis der erste Tick kommt, steht im Store:
 den Satz liest, sucht einen Schlüsselfehler, und das ist die falsche Stelle. Das ist Wand 3 von
 sechs (Punkte 65, 66; behoben in PR #86).
 
-- **Was du tust:** warten. Bis zu 60 Minuten.
+- **Was du tust:** erst prüfen, dass Schritt 8 und 9 wirklich durch sind — sonst wartest du
+  umsonst. Dann entweder warten (bis zu 60 Minuten) oder `systemctl restart ngc-api` und eine
+  Minute warten.
 - **Hast du in Abschnitt 1 einen erfundenen Store eingetragen** (weil es keinen offiziellen
   gibt), antwortet dort auch nach einer Stunde nichts. Dann führt der Weg über **Hochladen**:
   App-Store → **Hochladen** („Ein Paket von der Festplatte einrichten", `store.js:503`).

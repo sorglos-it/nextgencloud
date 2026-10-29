@@ -227,6 +227,7 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
+| 96 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7294,3 +7295,148 @@ der Probe 1, die Tabelle der Einhängungen und die Rechte an `/var/lib/ngc`. Abg
 Folge der drei tmpfs für den Arbeitsspeicher des Wirts, die Dringlichkeit von Posten 2 und jede
 Zeile der letzten Liste. Nicht gemessen ist, ob `nosuid` auf `/data` wirkt — das steht in Punkt 72
 und ist dort als geschlossen, nicht gemessen gekennzeichnet; dieser Punkt ändert daran nichts.
+
+---
+
+## Punkt 96: Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht
+
+**Gemessen am 29.10.2026** auf einer **neu aus der Vorlage geklonten** Maschine: VMID **310**,
+`ngc-probe`, **10.2.3.219**, Debian 13 (trixie), Kern `6.12.113+deb13-cloud-amd64`, angelegt mit
+`tools/einzelmaschine.sh` aus der Vorlage 300. Nummer und Adresse sind **am Gast nachgesehen**
+(`qm status 310` → „Configuration file … does not exist"; Ping auf 10.2.3.219 ohne Antwort), nicht
+gerechnet. Seit den Behebungen zwischen dem 19. und 25.10.2026 hatte niemand mit den
+Installationsskripten eine Maschine von null aufgebaut.
+
+### Der Befund in einem Satz
+
+**Die `ulh`-Skripte liefen durch. Kein einziger Handgriff an `ngc-all.sh` oder `ngc-web.sh`.**
+Was nicht lief, war der Prüflauf dieses Hauses: `tools/erstlauf.sh` und
+`tools/erstlauf-maschine.sh` brachen an vier Stellen ab oder urteilten falsch, und zwar an
+Stellen, die eine frische Maschine zuverlässig trifft und eine von Hand gewachsene nie.
+
+### Was an `ulh` gemessen gehalten hat
+
+| | gemessen |
+|---|---|
+| `einzelmaschine.sh anlegen` | lief durch, ssh nach ~15 s, 2 Kerne, 3922 MiB |
+| `ngc-all.sh install` | Ausstiegscode **0**, Pakete selbst nachinstalliert (`ensure_packages`) |
+| **Wand 1 ist weg** | `ReadWritePaths=/var/lib/ngc /etc/ngc`, in der **echten** Sandbox belegt: `/etc/ngc/trust-anchor.json` ist schreibbar |
+| Dienst | `ngc-api` **active**, `NRestarts=0`, ein `MainPID` über 10 s gehalten |
+| Fassung | `ngc-api 0.2.2 (contract 1)` — **kein** `0.0.0-dev` |
+| `ngc-web.sh install` | lief durch; Apache **active**, `/` → `http=200` mit `<title>NGC</title>`, `/api/v1/setup` **durch Apache** → `200` |
+| Name | `CN=ngc.test`, `SAN: DNS:ngc.test`, `/config.json` nennt `rp.id` `ngc.test` |
+| Uhr-Paket | Abbild gebaut, beide Ströme getrennt: STDOUT **21** Byte Zeit, STDERR **33** Byte Meldung |
+| Prüfladen | `store ok`; über das Netz `catalog http=200 verify=0` (647 Byte), `paket http=200 verify=0` (85623296 Byte) |
+
+**Die Behebung von Wand 1 aus `ulh` hält also, und sie hält am laufenden Dienst, nicht nur im
+Text.** `docs/installation-kleines-system.md`, Schritt 3, sagt bis heute „das ist Wand 1 von
+sechs, und sie steht noch" und verlangt einen Drop-in. **Das ist überholt** — der Drop-in ist
+nicht mehr nötig, und wer ihn anlegt, legt eine Zeile an, die schon im Skript steht.
+
+### Die vier Befunde am Prüflauf
+
+1. **`erstlauf.sh` kannte `${NGC_ETC}` nicht.** Station 1 löst die Variablen von `ngc-api.sh`
+   selbst auf, aber nur `NGC_DATA`, `NGC_TLS`, `NGC_STATE_DIR`. Seit der Behebung lautet die Zeile
+   `ReadWritePaths=${NGC_DATA} ${NGC_ETC}` — und der Lauf brach ab mit „still holds an unresolved
+   variable". **Die Behebung selbst hat den Prüflauf blind gemacht.** Ein Wort in einer Liste.
+2. **`erstlauf-maschine.sh` verlangte vorab die Pakete, die `ngc-all.sh` selbst nachinstalliert.**
+   Die Vorsperre forderte `openssl jq curl`; die Vorlage trägt **kein `jq`**, und der Lauf
+   verweigerte damit genau die Maschine, um die es geht. `NGC_PACKAGES` von `ngc-all.sh` sind
+   `openssl jq curl ca-certificates podman`, und `ensure_packages` holt jedes fehlende. **Eine
+   Voraussetzung, die der Prüfling selbst erfüllt, ist keine Voraussetzung der Prüfung.**
+3. **Die fscrypt-Probe irrte, und zwar in die beruhigende Richtung.** Der Lauf meldete „this
+   kernel has no CONFIG_FS_ENCRYPTION … no app can be set up here, whatever else is right". Der
+   Kern **kann** es: `/boot/config-6.12.113+deb13-cloud-amd64` sagt `CONFIG_FS_ENCRYPTION=y`.
+   Zwei Gründe, beide klein: `/proc/config.gz` gibt es auf Debian **nicht** — die Konfiguration
+   liegt als `/boot/config-$(uname -r)` —, und `/sys/fs/ext4/features/encryption` ist eine
+   **Datei**, geprüft wurde mit `-d` auf ein Verzeichnis. **Ein rotes Urteil prüft niemand nach.**
+4. **Der Testschlüssel wurde nur in `ngc-all.sh` getauscht, nicht in `ngc-web.sh`.** Beide tragen
+   denselben Release-Schlüssel und prüfen dasselbe Release. `ngc-web.sh install` wies darum jedes
+   Release ab, das dieser Lauf bauen kann (`release wrong: signature does not verify`), die
+   Oberfläche wurde **nie** installiert — und Station 3 sagte auf **jedem** Lauf, den es je gab,
+   die Oberfläche müsse „erst installiert werden". **Sechs Stationen dahinter waren nicht
+   unerreichbar, weil sie schwer sind, sondern weil der Lauf an einem Riegel hing, den er selbst
+   schon zu ersetzen beschlossen hatte.**
+
+Dazu zwei kleinere:
+
+5. **`erstlauf.sh` konnte `--hostname` nicht durchreichen.** Phase B nimmt sonst die IPv4-Adresse
+   der Standardroute. Schritt 0 der Anleitung sagt, warum das nicht der kleine Fall ist: das
+   Zertifikat lautet auf den **Namen**, und ein Passschlüssel hängt an `rp.id`, die ein Name ist —
+   über eine Adresse ist keiner anzulegen und keiner zu benutzen. **Kein Lauf vor dem 29.10.2026
+   hat also die Einrichtung gemessen, zu der die Anleitung anleitet.**
+6. **`build-release.sh` nennt einen Weg, den es selbst versperrt.** Es druckt
+   „`tools/sign-release.sh <dir> <key.pem>`" und löscht in Zeile 344 die Datei
+   `release.payload.json`, die `sign-release.sh` zwingend braucht — der Aufruf endet mit
+   „release.payload.json is missing". Richtig ist die **letzte** Zeile derselben Ausgabe,
+   `ngc-store release`, und die nimmt eine **andere** Art Schlüsseldatei als `sign-release.sh`
+   (kein openssl-PEM; `ngc-store` legt sie selbst an).
+
+### Der Riegel, an dem der Weg aufhört — und er ist kein Fehler
+
+Alles ab Station 3 hängt an **einem Menschen im Browser**. Gemessen, nicht angenommen:
+
+```
+19:49:22  ngc-api gestartet
+19:50:22  WARN trust list could not be read   error="state: no trust list yet"
+19:50:22  WARN catalogs could not be fetched  error="state: no trust list yet"
+```
+
+**Vor der Vertrauensliste holt die API gar keinen Katalog** — Station 6 („Katalog da") ist also
+nicht eine Frage von Warten, sondern von Koppeln und Aufnehmen, und beides geschieht im Browser.
+Der Kopplungscode entsteht dort, die Aufnahme des Controllers wird dort unterschrieben, und ein
+neuer Benutzer ist eine neue Fassung der Vertrauensliste, unterschrieben mit dem Schlüssel jener
+Person. Nichts auf der Maschine hält diesen Schlüssel.
+
+**Und dabei steht eine Zahl, die der Anleitung widerspricht:** die erste Katalogrunde kam
+**genau eine Minute** nach dem Neustart, nicht nach einer Stunde (`FirstCatalog = time.Minute`).
+`docs/installation-kleines-system.md`, Schritt 11, sagt „es gibt keinen Abruf beim Start und keine
+Handauslösung … warten, bis zu 60 Minuten". Ein Neustart von `ngc-api` **ist** die Handauslösung.
+
+### Der Schlüssel, der mit seiner Maschine weg ist
+
+Der geheime Release-Schlüssel der laufenden Anlagen lag als `/root/ngc-keys/release.key` auf der
+Messmaschine 10.2.3.208. **Die Maschine ist weg (Punkt 95), und der Schlüssel ist auf keiner der
+erreichbaren Maschinen** (`/root/ngc-keys/` existiert auf 10.2.3.210, .216 und .219 nicht; die
+anderen antworten von hier aus nicht auf ssh). Dessen öffentlicher Teil steht in `ngc-all.sh`,
+`ngc-api.sh`, `ngc-controller.sh` und `ngc-web.sh`.
+
+**Damit ist heute kein Release herstellbar, das die ausgelieferten Skripte annehmen.** Dieser Lauf
+ist deshalb mit einem **Testschlüssel** gefahren, und jede Zeile, die daran hängt, sagt das: die
+Unterschriftsprüfung selbst läuft unverändert, dass **NGCs eigener** Schlüssel in den Skripten
+richtig ist, ist hier **nicht** gemessen.
+
+### Was gebaut wurde
+
+Alle sechs Befunde sind behoben, **alle in `nextgencloud`, keiner in `ulh`** — das ist der
+eigentliche Ertrag: an den Installationsskripten war nichts zu tun. Dazu eine neue Station:
+
+**Station 2w „Oberfläche installieren"**, zwischen 2 und 3, mit Buchstaben statt Nummer, weil
+`docs/erstlauf.md` die zehn Nummern zitiert. Sie installiert `ngc-web.sh` mit demselben
+getauschten Schlüssel, rechnet den Pin aus dem Zertifikat der API selbst aus (ein eingefügter Pin
+wäre eine Messung der Einfügung) und hält vier Dinge: Apache läuft, `/` gibt 200 mit NGCs eigener
+Seite, `/api/v1/setup` antwortet **durch Apache**, und `/config.json` nennt `rp.id` = der Name.
+Danach: **11 Stationen, 0 rot.**
+
+### Was daraus noch zu bauen wäre
+
+1. **Schritt 3 der Anleitung berichtigen.** Wand 1 ist in `ngc-kette` behoben; der Drop-in ist
+   überholt. Die Gegenprobe mit `systemd-run` bleibt richtig und nützlich.
+2. **Schritt 11 der Anleitung berichtigen.** Der Neustart von `ngc-api` ist die Handauslösung, und
+   vor der Vertrauensliste wird ohnehin nichts geholt — die Stunde ist nicht der erste Hinderer.
+3. **Die zwei Unterschriftswege von `build-release.sh` auf einen zusammenziehen**, oder die
+   überholte Zeile streichen. Zwei widersprüchliche Anweisungen in einer Ausgabe sind schlimmer
+   als eine fehlende.
+4. **Den Release-Schlüssel entscheiden.** Solange er nicht existiert, ist jede Messung am
+   Installationsweg mit Testwurzel gefahren, und das ist ein Loch, das kein Skript schließt.
+5. **Station 3 bis 10 brauchen einen Browser im Lauf.** Was ein Mensch klicken muss, ist in Punkt
+   71 und in der Anleitung aufgeschrieben; gemessen wird es nirgends. Erst ein Lauf, der sich
+   anmelden kann, macht aus „unmeasurable" eine Zahl.
+
+**Getrennt gehalten:** gemessen sind die Tabelle oben, die sechs Befunde samt ihrer Ursache im
+Quelltext, die drei Protokollzeilen zur Vertrauensliste, die Minute bis zur ersten Katalogrunde,
+die Abwesenheit des Schlüssels auf den erreichbaren Maschinen und die 11 Stationen nach der
+Behebung. Abgewogen ist, dass Station 2w einen Buchstaben bekommt statt acht Nummern zu
+verschieben, und jede Zeile der letzten Liste. **Nicht gemessen** ist alles ab Station 3 — kein
+Controller ist gekoppelt, keiner aufgenommen, keine App eingerichtet, kein Fenster geöffnet. Die
+Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.

@@ -152,9 +152,15 @@ echo "erstlauf-maschine: $(sed -n 's/^PRETTY_NAME="\(.*\)"$/\1/p' /etc/os-releas
 # ---------------------------------------------------------------------------
 [ "$(ps -p 1 -o comm=)" = systemd ] ||
 	broken 0 "voraussetzungen" "pid 1 is '$(ps -p 1 -o comm=)', not systemd - the ulh script installs services and this run asks systemd about them"
-for t in openssl jq curl tar sha256sum systemctl; do
+# Only what NOBODY installs for this run. openssl, jq, curl, ca-certificates
+# and podman are NGC_PACKAGES of ngc-all.sh, and ensure_packages installs every
+# one of them that is missing - so demanding them here refused to measure the
+# one machine this whole run is about: a fresh clone of the Proxmox template,
+# which carries no jq (measured 29.10.2026, VMID 310). A precondition the
+# script under test fulfils itself is not a precondition of the test.
+for t in tar sha256sum systemctl dpkg-query; do
 	command -v "$t" >/dev/null 2>&1 ||
-		broken 0 "voraussetzungen" "$t is missing; the ulh script needs openssl jq curl ca-certificates podman"
+		broken 0 "voraussetzungen" "$t is missing, and no step of the installation brings it - this run cannot measure anything on this machine"
 done
 
 # ---------------------------------------------------------------------------
@@ -167,18 +173,26 @@ cp -f -- "$staged"/* /var/lib/ngc/staged/
 	broken 0 "installieren" "$staged carries no release.json, so fetch_release would go to the internet and this run would measure a download"
 
 run=$script
-if [ -n "$testkey" ]; then
-	[ -f "$testkey" ] ||
-		broken 0 "installieren" "--test-release-key names no readable file: $testkey"
-	grep -q 'BEGIN PUBLIC KEY' "$testkey" ||
-		broken 0 "installieren" "$testkey is no PEM public key"
+# mit_testschluessel writes a copy of an ulh script whose NGC_RELEASE_KEY is
+# the test root, and refuses to hand back a copy the replacement missed.
+#
+# IT TAKES A SCRIPT NAME, because the run needs TWO of them. Until 29.10.2026
+# only ngc-all.sh was swapped, and ngc-web.sh - which carries the very same
+# key and checks the very same release - was left with NGC's own. So
+# "ngc-web install" refused every release this run can build ("release wrong:
+# signature does not verify"), the web interface was never installed, and
+# station 3 said the interface "has to be installed first" on every run there
+# has ever been. Six stations behind it were therefore unreachable not because
+# they are hard, but because the run could not get past a bolt it had already
+# decided to replace. Measured on a fresh clone of the Proxmox template.
+mit_testschluessel() {
+	local src=$1 out=$2 want
 	# The copy has to lie NEXT TO the original: the ulh scripts source
 	# ../../classes/bootstrap.sh relative to their own place, and a copy in a
 	# mktemp directory dies at line 105 with "No such file or directory" - which
 	# looks like a fault of the script and is a fault of the run. Measured
 	# 23.10.2026 on the first machine run.
-	run=$(dirname "$script")/ngc-all.erstlauf.sh
-	trap 'rm -rf -- "$work"; rm -f -- "'"$run"'"' EXIT
+	#
 	# The replacement is done with awk and not with sed, because the key is a
 	# multi-line value and a sed over line boundaries is where a measurement
 	# dies at its own separator (messen.md, 10.10.2026).
@@ -195,16 +209,30 @@ if [ -n "$testkey" ]; then
 		skip && /^-----END PUBLIC KEY-----"$/ { skip = 0; next }
 		skip { next }
 		{ print }
-	' "$script" >"$run"
+	' "$src" >"$out"
 	# The preparation is checked before anything is concluded from it: a
 	# replacement that did not take leaves the run measuring the ORIGINAL key,
 	# and it would then fail for a reason nobody could see.
 	want=$(sed -n '2p' "$testkey")
-	grep -q -- "$want" "$run" ||
-		broken 0 "installieren" "the test key did not get into the copy of ngc-all.sh - the run would measure the original key"
-	bash -n "$run" ||
-		broken 0 "installieren" "the copy of ngc-all.sh with the test key does not parse any more"
-	echo "erstlauf-maschine: TEST ROOT - the release key of ngc-all.sh was replaced by $testkey."
+	grep -q -- "$want" "$out" ||
+		broken 0 "installieren" "the test key did not get into the copy of $(basename "$src") - the run would measure the original key"
+	bash -n "$out" ||
+		broken 0 "installieren" "the copy of $(basename "$src") with the test key does not parse any more"
+}
+
+webscript=$ulhdir/apps/cli/assets/scripts/ngc-web.sh
+webrun=$webscript
+if [ -n "$testkey" ]; then
+	[ -f "$testkey" ] ||
+		broken 0 "installieren" "--test-release-key names no readable file: $testkey"
+	grep -q 'BEGIN PUBLIC KEY' "$testkey" ||
+		broken 0 "installieren" "$testkey is no PEM public key"
+	run=$(dirname "$script")/ngc-all.erstlauf.sh
+	webrun=$(dirname "$script")/ngc-web.erstlauf.sh
+	trap 'rm -rf -- "$work"; rm -f -- "'"$run"'" "'"$webrun"'"' EXIT
+	mit_testschluessel "$script" "$run"
+	[ -f "$webscript" ] && mit_testschluessel "$webscript" "$webrun"
+	echo "erstlauf-maschine: TEST ROOT - the release key of ngc-all.sh and of ngc-web.sh was replaced by $testkey."
 	echo "erstlauf-maschine: the signature check itself runs unchanged; that NGC's OWN key is right is NOT measured here."
 fi
 
@@ -333,6 +361,66 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# station 2w  die Oberflaeche installieren
+#
+# WHY THIS STATION IS NEW AND WHY IT IS NUMBERED 2w. It is step 4 of
+# docs/installation-kleines-system.md, it sits between station 2 and station 3
+# in the ORDER (the pairing code of station 3 comes out of the browser, and
+# without this there is no browser page to get it from), and the numbers of the
+# ten stations are quoted in docs/erstlauf.md - so it gets a letter instead of
+# pushing eight numbers along.
+#
+# It was measured by hand on 29.10.2026 and nothing in this run asked it: the
+# page answers 200 with NGC's own <title>, and /api/v1/setup answers 200
+# THROUGH APACHE, which is the only thing that proves the whole stretch
+# browser -> apache -> balancer -> api. A run that installs the API and stops
+# has measured half a machine.
+#
+# The pin is computed here and not typed: ngc-web.sh refuses a pin that does
+# not belong to the API's certificate, and a pin pasted from somewhere else
+# would make this station a measurement of the paste.
+# ---------------------------------------------------------------------------
+s2w="Oberflaeche installieren"
+if [ ! -f "$webscript" ]; then
+	unmeasurable 2w "$s2w" "$ulhdir carries no apps/cli/assets/scripts/ngc-web.sh - the NGC scripts are on their own branches of ulh (ngc-kette)"
+elif [ ! -f /etc/ngc/tls/api.crt ]; then
+	unmeasurable 2w "$s2w" "there is no /etc/ngc/tls/api.crt, so station 1 has to come off first"
+else
+	pin=$(openssl x509 -in /etc/ngc/tls/api.crt -noout -pubkey 2>/dev/null |
+		openssl pkey -pubin -outform der 2>/dev/null |
+		openssl dgst -sha256 -binary 2>/dev/null | base64 -w0 | tr '+/' '-_' | tr -d '=')
+	[ ${#pin} -eq 43 ] ||
+		broken 2w "$s2w" "the pin of /etc/ngc/tls/api.crt came out ${#pin} characters, not 43 - openssl did something else than expected"
+	set +e
+	env NGC_HOSTNAME="$host" NGC_CERT_MODE=selfsigned \
+		NGC_APIS="https://$host:7443" NGC_API_PINS="$pin" \
+		bash "$webrun" install >"$work/web.log" 2>&1
+	webrc=$?
+	set -e
+	if [ "$webrc" != 0 ]; then
+		fail 2w "$s2w" "ngc-web.sh install ended with code $webrc: $(grep -iE 'error|wrong|fehler|✗' "$work/web.log" | tail -3 | tr '\n' ' ')"
+	else
+		code=$(curl -sk -o "$work/index.html" -w '%{http_code}' "https://$host/" 2>/dev/null)
+		setup=$(curl -sk -o /dev/null -w '%{http_code}' "https://$host/api/v1/setup" 2>/dev/null)
+		rp=$(curl -sk "https://$host/config.json" 2>/dev/null | jq -r '.rp.id // "none"' 2>/dev/null)
+		wrong=""
+		systemctl is-active --quiet apache2 || wrong="apache2 is not active; "
+		[ "$code" = 200 ] || wrong="${wrong}GET / answered $code, not 200; "
+		grep -q '<title>NGC</title>' "$work/index.html" ||
+			wrong="${wrong}the page at / is not NGC's own (no <title>NGC</title>); "
+		[ "$setup" = 200 ] || [ "$setup" = 404 ] ||
+			wrong="${wrong}/api/v1/setup answered $setup through apache, so the stretch browser -> apache -> balancer -> api does not carry; "
+		[ "$rp" = "$host" ] ||
+			wrong="${wrong}/config.json names rp.id '$rp', not '$host' - the browser would bind passkeys to another name; "
+		if [ -n "$wrong" ]; then
+			fail 2w "$s2w" "${wrong%; }"
+		else
+			pass 2w "$s2w" "apache2 is active, / answers 200 with NGC's own page, /api/v1/setup answers $setup THROUGH apache, and /config.json names rp.id $host"
+		fi
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # station 3  Controller koppeln       station 4  aufnehmen
 # station 5  Systemrechte setzen      station 6  Katalog da
 # station 7  App einrichten           station 8  App erscheint im Menue
@@ -341,12 +429,21 @@ fi
 # search and does not have to believe a sentence (messen.md: an absence is shown
 # with places, not with searchers).
 # ---------------------------------------------------------------------------
-unmeasurable 3 "Controller koppeln" "the pairing code comes out of the BROWSER (ngc-all.sh answer 'pair_code'), so the web interface has to be installed first: ulh's ngc-web.sh with apache and php, which ngc-all.sh does not install (its NGC_PACKAGES are openssl jq curl ca-certificates podman)"
+unmeasurable 3 "Controller koppeln" "the pairing code comes out of the BROWSER: a person signs in on the page station 2w put up, makes the code there, and only then does ngc-all.sh take it as its answer 'pair_code'. Nothing on this machine can sign in, so this is the station where the run ends and a human carries on"
 unmeasurable 4 "aufnehmen" "needs station 3, and then a click through the interface with a signed-in admin"
 unmeasurable 5 "Systemrechte setzen" "needs station 4"
 unmeasurable 6 "Katalog da" "needs a store with a signed catalog in the trust list; ngc-all.sh takes store_url and store_key, and NGC's own store key is still a placeholder in the script (NGC_STORE_KEY_DEFAULT=REPLACE-THIS-LINE-...)"
+# Three sources, because the first two answer on no Debian at all and the run
+# then told a machine that CAN encrypt that no app could ever be set up on it
+# (measured 29.10.2026 on a fresh clone of the Proxmox template, VMID 310):
+# /proc/config.gz does not exist on Debian - the config ships as
+# /boot/config-$(uname -r) - and /sys/fs/ext4/features/encryption is a FILE,
+# so the "-d" below was false on every machine that has it. A probe that is
+# wrong in the safe-looking direction is the worse half: it hands out a red
+# verdict nobody checks.
 if zgrep -q '^CONFIG_FS_ENCRYPTION=y' /proc/config.gz 2>/dev/null ||
-	[ -d /sys/fs/ext4/features/encryption ] 2>/dev/null; then
+	grep -q '^CONFIG_FS_ENCRYPTION=y' "/boot/config-$(uname -r)" 2>/dev/null ||
+	[ -e /sys/fs/ext4/features/encryption ]; then
 	unmeasurable 7 "App einrichten" "this kernel can encrypt, so the obstacle is not here - what is missing is station 6 and an app image"
 else
 	# The repository says this itself, at the one place that answers for it:
