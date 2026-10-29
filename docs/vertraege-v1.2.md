@@ -227,6 +227,7 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
+| 96 | Eine App auf eine neue Fassung heben geht — aber nicht über den Weg, den die Oberfläche dafür hat | gilt – Hub 1.0.0 → 1.0.1 gemessen, **Daten und Benutzer bleiben**; Update-Seite kann nicht anbieten, weil die Anlage ein Programm von vor `5ff4bc8` fährt | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7294,3 +7295,233 @@ der Probe 1, die Tabelle der Einhängungen und die Rechte an `/var/lib/ngc`. Abg
 Folge der drei tmpfs für den Arbeitsspeicher des Wirts, die Dringlichkeit von Posten 2 und jede
 Zeile der letzten Liste. Nicht gemessen ist, ob `nosuid` auf `/data` wirkt — das steht in Punkt 72
 und ist dort als geschlossen, nicht gemessen gekennzeichnet; dieser Punkt ändert daran nichts.
+
+---
+
+## Punkt 96: Eine App auf eine neue Fassung heben geht — aber nicht über den Weg, den die Oberfläche dafür hat
+
+Punkt 96 ist der erste Punkt über das **Heben einer App**. Punkt 72 und Punkt 95 haben den
+Container einer App aufgenommen, `docs/app-weg.md` den Weg einer App in den Laden — beide hören
+auf, wo eine App einmal läuft. Dieser Punkt fängt dort an und beantwortet eine Frage, die bis
+hierher niemand gestellt hat: was mit einer eingerichteten App und **ihren Daten** passiert, wenn
+eine neue Fassung kommt.
+
+**Welche Maschinen.** Die **verteilte** Anlage: `svc-1` (10.2.3.213), `api-1` (10.2.3.210),
+`store` (10.2.3.215). Beide Server auf `ngc-api`/`ngc-controller` **0.2.2** (contract 1), die
+Programme vom 24.10.2026 11:05 bis 12:21. podman 5.4.2. Die App ist `org.sorglos.uhr`.
+
+**Woher die Zahlen kommen.** Der Hub selbst lief am **25.10.2026** und ist im Journal von `svc-1`
+auf die Millisekunde protokolliert; jede Zeitangabe unten ist von dort, nicht nachgerechnet. Der
+Zustand von Laden, Datenordner und Abbildspeicher ist am **29.10.2026** gelesen. Der Quelltext ist
+der Stand von `origin/main` am 29.10.2026 (`25b8f24`).
+
+### Gemessen: der Hub lief, und die App war 262 ms weg
+
+`org.sorglos.uhr` wurde auf `svc-1` von **1.0.0 auf 1.0.1** gehoben. Aus dem Journal, in der
+Reihenfolge, in der es dort steht:
+
+| Zeit (25.10.2026) | was |
+|---|---|
+| 20:05:58 | die **alte** Fassung bedient noch eine Anfrage — `action=zeit` im Container `image=localhost/ngc/uhr:1.0.0` |
+| 20:06:18.184 | das neue Abbild wird geladen, aus `/var/lib/ngc/staged/accept-2060123582/files/services/amd64.tar` |
+| 20:06:18.263 | der alte Container **stirbt** |
+| 20:06:18.390 | der alte Container ist **entfernt** |
+| 20:06:18.454 | der neue Container wird angelegt, `image=localhost/ngc/uhr:1.0.1` |
+| 20:06:18.525 | der neue Container **läuft** |
+| 20:06:22 | die **neue** Fassung bedient eine Anfrage — `action=zeit` |
+
+Daraus zwei Zahlen, beide gemessen und nicht abgewogen:
+
+- **Die App ist zwischendurch weg.** Die alte Fassung läuft **nicht** weiter, bis die neue steht:
+  sie wird angehalten und entfernt, und erst danach wird die neue angelegt. Zwischen „alter
+  Container gestorben" und „neuer Container läuft" liegen **262 ms** (20:06:18.263912 bis
+  20:06:18.525490).
+- **Der ganze Tausch dauert 341 ms**, vom Laden des Abbilds bis zum Start.
+
+Die 262 ms sind **eine** Messung, an **einer** App, deren Abbild 85 MB hat. Dass eine größere App
+in derselben Zeit tauscht, sagt diese Zahl nicht.
+
+### Gemessen: die Daten bleiben, und der Benutzer bleibt derselbe
+
+Das ist der Befund, nach dem gesucht wurde, und er fällt zugunsten von NGC aus. Belegt ist er mit
+zwei Dateien im Datenordner, die vor dem Hub und nach dem Hub gelesen wurden:
+
+- `vor-dem-update.txt`, vor dem Hub von Hand in den Datenordner gelegt (25.10.2026 19:49) — liegt
+  **unverändert** da, nach dem Hub und nach einem Neustart der Maschine am 29.10.
+- `zugriffe` mit dem Inhalt **42** — der Zähler, den **erst 1.0.1** mitbringt. Er steht im
+  **selben** Ordner, in dem die Datei von vorher liegt.
+
+Beide gehören `ngc-uhr-ad8c00e2`, **uid 995** — demselben Benutzer wie vor dem Hub. Der Ordner ist
+`drwx------`.
+
+Im Quelltext steht dasselbe, an zwei Stellen und mit Begründung: `install/activate.go` setzt
+`installed := old.Version != ""` und gibt den Benutzer und den Datenordner nur dann in die
+Rücknahmeliste, wenn die App **nicht** installiert war — „an update must never take the user of
+the app away on a failure: the data directory belongs to it". `install/update.go` ruft `setUp` mit
+`installed = true`, immer.
+
+**Kein Datenverlust über einen Hub hinweg.** Der schwerste Befund, den dieser Auftrag finden
+konnte, liegt nicht vor.
+
+### Gemessen: der Datenordner ist nicht verschlüsselt
+
+Dies widerspricht einer Annahme, mit der gearbeitet wurde. `/var/lib/ngc/apps` ist auf `svc-1`
+
+```
+/dev/sdb on /var/lib/ngc/apps type ext4 (rw,relatime)
+```
+
+— nackt. Kein `fscrypt`, kein `gocryptfs`, keine Einhängeoption, die etwas verschlüsselt; beide
+Werkzeuge sind auf der Maschine nicht vorhanden. Geschützt ist der Ordner durch **Rechte und
+Eigentum**: `drwx------`, Eigentümer der App-Benutzer, und `/var/lib/ngc/apps` selbst
+`drwx--x--x root`. Das hält jeden anderen App-Benutzer heraus und hält `root` nicht heraus —
+gelesen wurden die beiden Dateien oben als `root`.
+
+Der Quelltext nennt ihn an mehreren Stellen „the encrypted data directory" (`install/update.go`,
+`install/activate.go`). **Auf dieser Anlage trägt der Satz nicht.** Ob er je getragen hat oder für
+eine andere Einrichtung gedacht war, sagt diese Messung nicht; sie sagt nur, dass er hier nicht
+stimmt.
+
+### Gemessen: jeder Hub lässt ein ganzes Abbild im Datenordner liegen
+
+Der Quelltext sagt das selbst voraus und nennt es als Kosten, nicht als Fehler
+(`install/update.go`: „every update adds a set of image layers under `config.AppDataDir/<app>` …
+The image of the version before is NOT removed either"). Gemessen auf `svc-1`, im Abbildspeicher
+der beiden Apps, der **innerhalb** des Datenordners liegt:
+
+| App | Hübe | Abbilder im Speicher | Datenordner |
+|---|---|---|---|
+| `org.sorglos.uhr` | **einer** (1.0.0 → 1.0.1) | **2** | 93 MB |
+| `org.sorglos.terminal` | keiner | **1** | 110 MB |
+
+Das alte Abbild ist noch da. Weil dieser Speicher das Heimatverzeichnis des App-Benutzers ist,
+zählt `runtime.DataSize` diese Abbilder als **Daten der App**: was ein Benutzer als Platzverbrauch
+seiner App zu sehen bekommt, wächst mit jedem Hub um ein ganzes Abbild, und nichts räumt auf. Der
+Quelltext nennt auch, warum nicht: `dbapi.App` hat kein Feld für die Kennung eines Abbilds, also
+gibt es keinen Namen, den man `Engine.RemoveImage` reichen könnte, und `shared/dbapi` ist
+eingefroren. **BLOCKIERT, nicht gebaut** — so steht es dort, und so bleibt es hier.
+
+### Gemessen: der Hub lief über die Einrichtung, nicht über den Update-Weg
+
+Der Ordner, aus dem das neue Abbild geladen wurde, heißt `accept-2060123582`. `accept-` legt
+`install.Accept` an — das ist der Weg einer **Einrichtung** (`install.Manager.Activate`), nicht der
+Weg eines Updates (`install.Manager.Update`).
+
+Das ist kein Zufall und kein Umweg, den jemand gewählt hat, sondern der einzige Weg, den die
+laufende Anlage hat. `install.Manager.Update` wird im ganzen Baum von genau **einer** Stelle
+gerufen, `update/install.go:473`, und die steht hinter
+
+```go
+if m.d.Apps == nil { return ErrInternal }
+```
+
+`node/run.go:928` übergibt `Apps: nil`, mit Kommentar: ein App-Update gehe „through the activation
+(install.Manager) on this controller". Also ist `install.Manager.Update` auf diesem Programm
+**nicht erreichbar**, und ein App-Hub ist eine Einrichtung der neuen Fassung über eine alte.
+
+Das hat eine Folge, die gemessen und nicht abgewogen ist: `activate.go:235` weist eine Fassung ab,
+die nicht neuer ist als die eingerichtete
+
+```go
+if installed && old.Version != p.Version && !store.Newer(p.Version, old.Version) {
+        return nil, ErrForbidden
+}
+```
+
+— **ein Rückdreh auf eine ältere Fassung wird verweigert**, bevor die API die Datei überhaupt
+sendet.
+
+### Gemessen: die Oberfläche sieht die neue Fassung, kann sie aber nicht anbieten
+
+Die Oberfläche hat eine vollständige Update-Seite. `apps/web/public/assets/js/apps/store.js`
+zeichnet unter „Updates" je Ziel eine Zeile `eingespielt → verfügbar`, eine Wahl zwischen
+**automatisch**, **auf Klick** und **nur melden**, und einen Knopf „Jetzt aktualisieren". Apps
+stehen dort mit drin: `updates/rows.go` liest `AppList` und rechnet `Available` aus dem Katalog
+**des Ladens, aus dem die App eingerichtet wurde**.
+
+Der Laden trägt heute `1.0.1` **und** `1.0.2` für die Uhr, eingerichtet ist `1.0.1`. Die Zeile muss
+also `1.0.1 → 1.0.2` zeigen.
+
+**Der Knopf erscheint trotzdem nicht.** Er hängt an einem Zustand:
+
+```js
+if (u.state === catalog.UPDATE_DOWNLOADED) { … "Jetzt aktualisieren" … }
+```
+
+und `updates/rows.go` (`fill`) setzt `row.State` nur aus einer **Meldung des Knotens**; ohne
+Meldung bleibt er leer. Die Meldung `UpdateDownloaded` entsteht, wenn der Rundlauf der API die
+Datei auf dem Knoten bereitlegt — über den Kanal `ngc.store/controller/stage`. Und genau der wird
+auf dieser Anlage abgewiesen.
+
+**Warum, mit Datum.** Der Griff, der diesen Kanal bedient, ist
+`apps/server-controller/classes/serve/update.go`, Funktion `stage`, und er ist in `main` gekommen
+mit `5ff4bc8` am **24.10.2026 13:03**. Die Programme auf der Anlage sind vom **24.10.2026 11:05**
+(`svc-1`) und **11:06/12:21** (`api-1`) — **rund zwei Stunden älter als die Behebung.** Der
+Kommentar in genau dieser Funktion beschreibt den Zustand, in dem die Anlage noch steht:
+
+> „Until this function existed, a stage channel found no handler at all and ended E_INTERNAL in
+> Server.core … which is what an update round of an API ran into at its FIRST node, every hour".
+
+Und so ist es bis heute. Im Journal von `api-1`, stündlich, zuletzt am **29.10.2026 19:42**:
+
+```
+WARN the update round stopped error="updates: the round stopped at a node"
+```
+
+Damit steht die Kette ganz: **der Rundlauf stirbt am stage-Kanal → kein Knoten meldet
+`UpdateDownloaded` → kein Zustand in der Zeile → kein Knopf.** Weder „automatisch" noch „auf
+Klick" kann greifen, und das liegt nicht an einem Fehler im Update-Weg, sondern daran, dass die
+Anlage ein Programm von **vor** der Behebung fährt.
+
+Der Weg, der funktioniert, ist der von Hand: im Laden die neue Fassung einrichten. Den ist die Uhr
+am 25.10. gegangen.
+
+### Gemessen: der Zustand des Ladens, und eine Falle darin
+
+Auf `store` (10.2.3.215), gelesen am 29.10.2026:
+
+- Der ausgelieferte Katalog `/var/www/store/catalog.json` steht auf **Folge 9**, Laden `global`,
+  Kennung des Schlüssels `RPmRtyPJs5WQECAkiPeBsg`.
+- Er trägt **beide** Apps. Die Uhr mit **drei** Fassungen: 1.0.0, 1.0.1, 1.0.2. Die Pakete
+  `uhr-1.0.1.ngc` und `uhr-1.0.2.ngc` liegen daneben.
+- Zwei Sicherungen des jeweils vorigen Katalogs liegen in `/root/store/`:
+  `catalog-vor-uhr-1.0.1-20261025.json` und `catalog-vor-uhr-1.0.2-20261025.json`.
+
+**Die Falle:** `/root/store/seq` sagt **7**. Der unterschriebene Katalog sagt **9**. Wer die
+nächste Folge aus dieser Datei liest und 8 unterschreibt, unterschreibt einen **Rückschritt**, und
+`store.ErrRollback` weist ihn bei jedem Abholen ab — der Laden wäre für jede Installation tot, bis
+jemand höher unterschreibt. `docs/app-weg.md` nennt `seq` nicht als Quelle; die einzige
+verlässliche Folge steht im Katalog selbst. Die Datei wird offenbar nicht mitgeschrieben, wenn
+`ngc-store catalog` läuft.
+
+### Abgewogen, nicht gemessen
+
+Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
+
+- **Dass ein Rollout der Programme den Knopf einschaltet.** Die Kette oben ist gemessen bis zum
+  stage-Kanal, und der Griff dafür liegt in `main`. Dass eine Anlage mit einem Programm von nach
+  dem 24.10. 13:03 die Zeile `1.0.1 → 1.0.2` **mit** Knopf zeigt, ist geschlussfolgert und nicht
+  gefahren.
+- **Dass die 262 ms typisch sind.** Eine Messung, eine App, ein kleines Abbild.
+- **Was bei einer Fassung passiert, die nicht läuft.** Nicht gemessen, in keiner Richtung. Der
+  Quelltext sagt zweierlei, das zusammengenommen unbequem ist: ein Fehlschlag lässt die Zeile der
+  App auf der **alten** Fassung stehen (`install/update.go`,
+  `TestUpdateLeavesTheOldVersionInTheRowAtEveryStep`), aber der Container der alten Fassung ist zu
+  dem Zeitpunkt schon **entfernt** (die Reihenfolge im Journal oben). Daraus folgt der Verdacht,
+  dass eine kaputte neue Fassung eine App tot stehen lässt, während die Datenbank die alte nennt —
+  **Verdacht, nicht Befund.** Ein Rückdreh von Hand ist dann auch versperrt, weil
+  `activate.go:235` die ältere Fassung abweist. Das ist der erste Posten für den nächsten
+  Durchgang.
+- **Ob der Satz „verschlüsselt" auf einer anderen Einrichtung trägt.** Hier trägt er nicht.
+
+### Was daraus zu bauen wäre
+
+1. **Die Programme auf der Anlage heben**, auf einen Stand ab `5ff4bc8` (24.10. 13:03). Ohne das
+   ist der ganze Update-Weg der Oberfläche totes Gerät, und der stündliche Rundlauf schreibt
+   weiter jede Stunde eine Warnung.
+2. **`/root/store/seq` mitschreiben oder abschaffen.** Eine Zahl, die an zwei Stellen steht und an
+   einer falsch ist, ist schlechter als keine.
+3. **Den Satz „encrypted data directory" im Quelltext richtigstellen** oder die Verschlüsselung
+   bauen. Im Moment verspricht der Kommentar mehr, als die Anlage hält.
+4. **Das alte Abbild nach einem Hub entfernen.** Braucht ein Feld in `shared/dbapi` — eingefroren,
+   also blockiert.
