@@ -1,6 +1,7 @@
 # Einen zweiten Benutzer anlegen — die Schritte am Gerät
 
-**Stand 24.10.2026.** Was hier steht, kann **nur ein Mensch** tun: die neue Fassung der
+**Stand 29.10.2026** (Anlage und Rückweg nachgetragen; die Schritte selbst sind die vom
+24.10.2026). Was hier steht, kann **nur ein Mensch** tun: die neue Fassung der
 Vertrauensliste wird im Browser mit dem Schlüssel der Person unterschrieben, und dieser
 Schlüssel ist ihr Passwort. Kein Agent tippt es. Alles andere ist gebaut und gemessen
 (`docs/vertraege-v1.2.md`, Punkt 73).
@@ -23,9 +24,14 @@ Es gibt seit dem 24.10.2026 **zwei**, und nur auf einer liegt dieser Stand.
   hier **nicht** zu gehen, solange dieser Zweig nicht verschmolzen und ausgerollt ist. Die
   Sicherung von vor der Änderung liegt auf der alten Platte und im Schnappschuss
   `vor-bergung-20261024` (siehe `docs/alte-vm-verweise.md`, Abschnitt 6).
-- **Verteilte Anlage `https://ngc.mein.lan`** (api-1 … store, NGC `0.2.1`): läuft **exakt
-  `origin/main`** und hat die beiden Formulare **nicht**. Dort sind die Schritte unten
-  **nicht** zu gehen, solange dieser Zweig nicht verschmolzen und ausgerollt ist.
+- **Verteilte Anlage `https://ngc.mein.lan`** (api-1 = 10.2.3.210, api-2 = 10.2.3.211, NGC
+  `0.2.1`): **hier sind die Schritte unten zu gehen.** Am 29.10.2026, 20:07 UTC, sind die zwei
+  Dateien aus PR 118 auf api-1 eingespielt; über HTTPS geholt tragen sie `e40f648` und
+  `91871de`, und der ganze Importbaum von `users.js` kommt mit 18 Modulen und ohne Lücke
+  herunter (Punkt 96). Sicherung: `/root/zweiter-benutzer-backup-20261029-200719/`.
+  **Bis dahin lag dort fünf Tage die Fassung ohne die Formulare** — wer die Schritte in dieser
+  Zeit gegangen ist, hat die Felder nicht gefunden, und das sah wie „nicht gebaut" aus.
+  Die Oberfläche liegt **nur auf api-1**.
 
 Und gegen den **Namen** messen, nie gegen die IP: Zertifikat und Passkey hängen am Namen.
 
@@ -36,10 +42,9 @@ Und gegen den **Namen** messen, nie gegen die IP: Zertifikat und Passkey hängen
 Der Browser hält die alte Fassung der Oberfläche fest. Ohne das hier siehst du die neuen
 Felder nicht, und das sieht aus wie „es ist nicht gebaut".
 
-**Strg + F5** auf `https://ngc.test` — also auf dem Namen **der Anlage, auf der die zwei
-Dateien liegen**. Achtung: `ngc.test` heißen inzwischen **zwei** Maschinen. Auf der alten
-(10.2.3.208, aus) lagen die Dateien; auf der neuen (10.2.3.216) liegen sie **nicht**. Welche
-der Name bei dir erreicht, steht in deiner `hosts`-Datei, nicht in dieser Anleitung.
+**Strg + F5** auf `https://ngc.mein.lan` — dem Namen, nie der IP: Zertifikat und Passkey
+hängen am Namen. Ohne das Neuladen hält der Browser die alte Fassung fest, und dann fehlen die
+Felder, obwohl sie da sind.
 
 ---
 
@@ -108,10 +113,14 @@ auf dem Schirm stand. Das wird als **Messung** nachgetragen — bis dahin gelten
 
 Die Oberfläche zurückdrehen, ein Befehl auf der VM:
 
+Auf **api-1** (10.2.3.210), als `root`:
+
 ```
-sudo cp /root/zweiter-benutzer-backup-20261024/users.js  /var/www/ngc/public/assets/js/apps/users.js
-sudo cp /root/zweiter-benutzer-backup-20261024/shell.css /var/www/ngc/public/assets/css/shell.css
+sh /root/tuer-zumachen.sh /root/zweiter-benutzer-backup-20261029-200719
 ```
+
+Das Skript legt die beiden gesicherten Dateien zurück und druckt ihre Hashes; dastehen muss
+`83344ee…` für `users.js` und `d0c5ffe…` für `shell.css`. Danach im Browser **Strg + F5**.
 
 Ein Benutzer, der schon in der Vertrauensliste steht, geht davon **nicht** weg: er steht in der
 unterschriebenen Liste, nicht in der Oberfläche. Ihn wieder loszuwerden heißt, eine Fassung
