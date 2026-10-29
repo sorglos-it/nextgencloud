@@ -405,6 +405,45 @@ else
 	unmeasured_list="${unmeasured_list}$(grep '^station .*: UNMEASURABLE' "$mlog" | sed 's/^/    /')
 "
 	echo "erstlauf: the machine run on $machine ended with code $mrc: $nlines station(s), $mfail red, $munm unmeasurable"
+
+	# -------------------------------------------------------------------
+	# station 2a  die Oberflaeche antwortet VON AUSSEN
+	#
+	# THE ONE QUESTION A PROBE ON THE MACHINE CANNOT ASK, and it took a wall to
+	# notice. Station 2w in phase B curls the interface from the machine it runs
+	# on, and that goes through the loopback accept of every firewall there is -
+	# so it reported a healthy installation on a machine whose 443 answered
+	# NOBODY. The Proxmox template has carried input policy DROP with ssh as the
+	# only way in since 24.10.2026, no installer opens a port, and the six
+	# machines' per-role rules are in no repository. A browser got a connection
+	# timeout and the run was green (measured 29.10.2026, VMID 310, Punkt 96).
+	#
+	# This asks from HERE, over the network, which is where the person with the
+	# browser stands. It is a station of its own and not an extra line in 2w,
+	# because what it measures is a different thing: not "is it installed" but
+	# "can anyone reach it".
+	s2a="Oberflaeche antwortet von aussen"
+	mtarget=${machine#*@}
+	if ! command -v curl >/dev/null 2>&1; then
+		unmeasurable 2a "$s2a" "no curl here, so nothing can ask $mtarget over the network"
+	else
+		# The NAME, forced onto the address, for the reason step 0 of
+		# docs/installation-kleines-system.md gives: the certificate carries the
+		# name and nothing else, so asking the address asks a question the
+		# certificate cannot answer. --resolve does what a hosts file would.
+		aname=${mhost:-$mtarget}
+		o443=$(curl -sk --max-time 20 --resolve "$aname:443:$mtarget" \
+			-o /dev/null -w '%{http_code}' "https://$aname/" 2>/dev/null || echo 000)
+		o7443=$(curl -sk --max-time 20 --resolve "$aname:7443:$mtarget" \
+			-o /dev/null -w '%{http_code}' "https://$aname:7443/api/v1/setup" 2>/dev/null || echo 000)
+		if [ "$o443" = 000 ] || [ "$o7443" = 000 ]; then
+			fail 2a "$s2a" "from here $aname ($mtarget) answers '$o443' on 443 and '$o7443' on 7443, and 000 is no answer at all - the installation can be perfect and still be unreachable; the usual cause is the firewall of the template, which lets only 22 through, and no installer opens a port"
+		elif [ "$o443" != 200 ]; then
+			fail 2a "$s2a" "$aname answers $o443 on 443 from here, not 200"
+		else
+			pass 2a "$s2a" "from this machine, over the network and under its NAME: $aname gives $o443 on 443 and $o7443 on 7443 - a browser can reach both, and the browser needs both ($aname:7443 is in /config.json's apis[], which the browser calls itself)"
+		fi
+	fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -228,7 +228,7 @@ gibt, aber erst nach dem Schreiben.
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
 | 96 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
-| 97 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; Wurzel-Dateisystem ohne `encrypt` war die Wand, behoben; **offen: anna mit allen drei Rechten bekommt die App nicht, ohne eine Protokollzeile** | Messung |
+| 97 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; zwei Wände: gehärtete Vorlage lässt nur Port 22 durch, Wurzel-Dateisystem ohne `encrypt` — beide behoben, Station 2a neu; **offen: anna mit allen drei Rechten bekommt die App nicht, ohne eine Protokollzeile** | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7479,7 +7479,45 @@ zwei Zeiten, die im Fenster standen. Eigener Benutzer `ngc-uhr-ad8c00e2` (uid 99
 `a service wrote to stderr app=org.sorglos.uhr service=uhr action=zeit`: der zweite Strom ging
 ins Protokoll, nicht ins Fenster.
 
-### Die Wand, die den ganzen Weg aufgehalten hat: das Dateisystem, nicht der Kern
+### Die erste Wand: die gehärtete Vorlage lässt nur Port 22 durch
+
+**Bevor irgendein Browser irgendetwas sah, kam ein Zeitablauf.** Die Vorlage 300 trägt seit dem
+24.10.2026 die Härtung, und die ist streng:
+
+```
+table inet haertung
+  chain eingang   policy drop
+    iif lo accept · ct state established,related accept
+    ip saddr 10.0.0.0/8 tcp dport 22 accept
+```
+
+**Genau ein Port.** Apache horcht auf 443 und 80, die API auf 7443 — und **kein Skript in
+beiden Verzeichnissen öffnet einen Port**. `ngc-all.sh` und `ngc-web.sh` sind Installierer,
+keine Firewall-Werkzeuge, und das ist richtig so; die Regeln der sechs Maschinen wurden je
+Rolle **von Hand** gesetzt und liegen **in keinem Repository** (`docs/messreste-je-maschine.md`
+führt „nftables" als Hinterlassenschaft auf jeder einzelnen).
+
+**Und das Tückische daran: von der Maschine aus ist es unsichtbar.** `curl` auf dem Rechner
+geht durch `iif lo accept`, also meldet jede Probe, die **dort** läuft, eine gesunde
+Installation — auch die neue Station 2w aus Punkt 96. Eine Maschine, die allein aus den
+Skripten entsteht, hat damit eine Oberfläche, die **niemand** erreicht, und einen Prüflauf,
+der grün ist.
+
+**Behoben, zweifach:**
+
+- `einzelmaschine.sh` öffnet 80, 443 und 7443 für `10.0.0.0/8` — denselben Bereich, den die
+  Vorlage schon für 22 erlaubt. Dabei zwei eigene Fehler, beide gemessen und beide im Skript
+  vermerkt: die Prüfung lief zuerst auf dem **Proxmox-Wirt** statt auf der VM, und `nft` liegt
+  nicht im PATH der `sh`-Hülle, durch die der Befehl geht — beide Male kam eine leere Antwort
+  zurück und das Skript sagte „nichts war im Weg" über eine Maschine, die es nicht angesehen
+  hatte. Dazu wartet es jetzt: **ssh antwortet nach ~15 s, nftables ist dann noch nicht
+  geladen**, und „noch nicht da" sieht für eine einzelne Probe aus wie „nicht da".
+- `erstlauf.sh` hat eine neue **Station 2a „Oberfläche antwortet von außen"**, die von dem
+  Rechner aus fragt, auf dem der Mensch mit dem Browser sitzt — unter dem **Namen**, mit
+  `--resolve`. Sie ist eine eigene Station und keine Zeile in 2w, weil sie etwas anderes misst:
+  nicht „ist es installiert", sondern „kommt jemand hin".
+
+### Die zweite Wand: das Dateisystem, nicht der Kern
 
 Die erste Aktivierung antwortete **„Das hat der Rechner nicht angenommen. Bitte es noch einmal
 versuchen."** — und **weder** das Protokoll des Controllers **noch** das der API schrieb ein
