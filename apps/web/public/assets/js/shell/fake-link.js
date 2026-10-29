@@ -842,8 +842,14 @@ export async function fakeWorld() {
   // notice with it; the real session gets them over the wire and needs no
   // hook. It is bytes, so the desktop reads them with core.parseNotice
   // exactly as it will read the real ones.
-  window.__ngcSendNotice = (level, text) => {
-    const body = enc.encode(JSON.stringify({ level, text, app: "" }));
+  //
+  // The APP is the third argument and defaults to none, which is what a
+  // notice of the installation itself carries. Since docs/gestaltung.md point
+  // 4 that member decides WHERE the message is shown - over the app's own
+  // window, or in the strip for what no app owns - so a hook that could only
+  // send "" could not drive the case at all.
+  window.__ngcSendNotice = (level, text, app = "") => {
+    const body = enc.encode(JSON.stringify({ level, text, app }));
     for (const fn of notices) fn(body);
   };
 

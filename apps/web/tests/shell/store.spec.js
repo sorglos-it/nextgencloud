@@ -4,6 +4,12 @@ import { signIn, skipWithoutLogin } from "../fixtures/page.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
 import { vectors } from "../fixtures/vectors.js";
 
+// WHERE THE STORE'S MESSAGES ARE READ, and why it moved: since
+// docs/gestaltung.md point 4 a message that belongs to an app stands as a
+// popup over THAT app's window, not in the strip at the bottom edge of the
+// screen. So these cases ask for role=alert - the popup - where they used to
+// ask for role=status. What they measure is unchanged: the whole sentence, in
+// its order, and never as markup.
 // The app store: the first app anybody opens, and the one that decides what
 // runs on this installation afterwards.
 //
@@ -288,7 +294,7 @@ test("a right the admin did not allow stops the activation", async ({ page }) =>
   await expect(page.locator(".upfacts")).toBeVisible();
   // The box stays empty on purpose.
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
-  await expect(page.getByRole("status")).toContainText("Bitte alle Rechte erlauben");
+  await expect(page.getByRole("alert")).toContainText("Bitte alle Rechte erlauben");
   expect(await names(page)).not.toContain("ngc.store/activate");
 });
 
@@ -332,7 +338,7 @@ test("a refusal shows the words of the machine, marked as the machine's",
     await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
     // Whole and in this order: the shell's own first, then whose words follow,
     // then the words.
-    await expect(page.getByRole("status")).toHaveText(
+    await expect(page.getByRole("alert")).toHaveText(
       "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen. "
       + "Der Rechner sagt: " + said,
     );
@@ -352,10 +358,10 @@ test("a sentence under a code that says what to do never reaches the screen", as
   });
   await expect(page.locator(".upfacts")).toBeVisible();
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
-  await expect(page.getByRole("status"))
+  await expect(page.getByRole("alert"))
     .toHaveText("Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen.");
-  await expect(page.getByRole("status")).not.toContainText("Der Rechner sagt");
-  await expect(page.getByRole("status")).not.toContainText("f2fs");
+  await expect(page.getByRole("alert")).not.toContainText("Der Rechner sagt");
+  await expect(page.getByRole("alert")).not.toContainText("f2fs");
 });
 
 // noFscryptText is the controller's own sentence, READ OUT OF THE GO SOURCE
@@ -390,7 +396,7 @@ test("the sentence of a disk that cannot encrypt arrives on the screen", async (
   });
   await expect(page.locator(".upfacts")).toBeVisible();
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(page.getByRole("alert")).toHaveText(
     "Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen. "
     + "Der Rechner sagt: " + said,
   );
@@ -410,8 +416,8 @@ test("the words of the machine go on the screen as text, never as markup", async
   });
   await expect(page.locator(".upfacts")).toBeVisible();
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
-  await expect(page.getByRole("status")).toContainText("Der Rechner sagt: " + said);
-  expect(await page.locator("[role=status] b, [role=status] img").count()).toBe(0);
+  await expect(page.getByRole("alert")).toContainText("Der Rechner sagt: " + said);
+  expect(await page.locator("[role=alert] b, [role=alert] img").count()).toBe(0);
 });
 
 test("a refusal with nothing to say keeps the sentence the shell has", async ({ page }) => {
@@ -428,7 +434,7 @@ test("a refusal with nothing to say keeps the sentence the shell has", async ({ 
   await page.locator(".store").getByRole("button", { name: "Aktivieren" }).click();
   // It went through, because an empty knob is no refusal - the control that
   // the knob is what makes the case above fail, and not the upload.
-  await expect(page.getByRole("status")).toContainText("Die App ist eingerichtet.");
+  await expect(page.getByRole("alert")).toContainText("Die App ist eingerichtet.");
 });
 
 // ---------------------------------------------------------------- 4. target
@@ -680,7 +686,7 @@ test("a version the shell cannot convince itself of is never sent", async ({ pag
   await tab(page, "Updates").click();
   await page.locator(".store select.mode").first().selectOption("auto");
   await answerConfirm(page);
-  await expect(page.getByRole("status")).toContainText("keine gültige Vertrauensliste");
+  await expect(page.getByRole("alert")).toContainText("keine gültige Vertrauensliste");
   expect(await names(page)).not.toContain("ngc.users/trust");
   // And the setting is not switched either: what is on screen is what is in
   // force.

@@ -45,10 +45,26 @@ const SNAP_EDGE = 12;
 // means.
 const TEAR = 4;
 
-// How much of a window has to stay on the desktop while it is dragged: enough
-// of the title bar to grab it again.
-const KEEP_X = 60;
-const KEEP_Y = 34;
+// How far a window may be pushed off the desktop while it is dragged: NOT AT
+// ALL (docs/gestaltung.md point 2). Thomas chose windows over full-screen
+// apps, on the phone too, and this is the price he named with the choice: a
+// window that can leave the screen is a window nobody brings back, and on a
+// 360 px screen that decides whether the shell stays usable at all.
+//
+// Before this, 60 px of the title bar and 34 px of its height had to stay
+// behind - enough to grab again, which is a weaker promise than the one that
+// was decided. clampX and clampY below hold the whole window inside instead.
+//
+// A window WIDER than the desktop is the one case that cannot be held inside
+// it: then it is pinned to the left and top edge, which is where its title
+// bar and its three buttons are. Pushing it further would hide exactly those.
+function clampX(x, w, area) {
+  return area.w >= w ? Math.max(0, Math.min(area.w - w, x)) : 0;
+}
+
+function clampY(y, h, area) {
+  return area.h >= h ? Math.max(0, Math.min(area.h - h, y)) : 0;
+}
 
 export class Win {
   constructor(desktop, { id, title, icon, width, height }) {
@@ -122,6 +138,73 @@ export class Win {
     this.el.addEventListener("pointerdown", () => this.focus(), true);
     this.makeDraggable(bar);
     this.makeResizable();
+  }
+
+  // say puts ONE message over this window and nothing else (docs/gestaltung.md
+  // point 4): centred, covering the app's own window only, with one button
+  // that takes it away. While the Store coughs, the clock beside it goes on
+  // running and stays clickable.
+  //
+  // THE TEXT GOES IN AS TEXT. It comes from an app or from a server, and the
+  // decision book has this one twice over: text(), never innerHTML, and never
+  // a node built out of what arrived.
+  //
+  // One message at a time. A second one replaces the first rather than
+  // stacking: two popups over one window hide each other's buttons, and the
+  // person then has a window they cannot get back to.
+  //
+  // HOW LONG IT STANDS IS THE RULE THE STRIP ALREADY HAD, moved to the new
+  // place and not rewritten: an error waits for the person, and warn and info
+  // go by themselves. So a line of good news does not become something to
+  // click away, and nothing about which level waits has changed with the
+  // place it is shown in. The caller passes the milliseconds; 0 means wait.
+  say(level, txt, holdMs = 0) {
+    this.clearSay();
+    const back = el("div", "winback");
+    const box = el("div", "winmsg" + (level === "error" || level === "warn" ? " " + level : ""));
+    const p = el("p", null, null);
+    // role=alert and not role=status: this one took the window away from the
+    // person, so it is read out when it arrives and not when they get round
+    // to it.
+    //
+    // IT SITS ON THE PARAGRAPH and not on the box around it, exactly as
+    // .status does in the strip: the role names the message, and a role on
+    // the box would make the word on the button part of the message - both
+    // for a screen reader reading it out and for a test asking what it says.
+    p.setAttribute("role", "alert");
+    text(p, txt);
+    // "Meldung schließen", the name the strip's own button already carries,
+    // and not plain "Schließen": the title bar of this very window has a
+    // Schließen on it, and two controls with one name in one window is a
+    // window where neither a person nor a screen reader can tell which is
+    // which. Measured as a strict-mode violation the moment a case asked for
+    // "Schließen" inside the window.
+    const go = button("b", "Meldung schließen", null);
+    go.addEventListener("click", () => {
+      this.clearSay();
+      // Back into the window, not nowhere: the focus was moved onto the
+      // button of this popup, and a popup that takes the focus with it when
+      // it goes leaves the keyboard at the top of the page.
+      this.el.focus();
+    });
+    const row = el("div", "winmsgrow");
+    row.append(go);
+    box.append(p, row);
+    back.append(box);
+    this.el.append(back);
+    this.sayBack = back;
+    // The focus only for a message that waits. Pulling the focus out of the
+    // window for a line that takes itself away again would move the keyboard
+    // out from under the person's hands while they are working.
+    if (!holdMs) go.focus();
+    else this.sayTimer = setTimeout(() => this.clearSay(), holdMs);
+  }
+
+  clearSay() {
+    clearTimeout(this.sayTimer);
+    this.sayTimer = null;
+    this.sayBack?.remove();
+    this.sayBack = null;
   }
 
   setTitle(t) {
@@ -218,6 +301,10 @@ export class Win {
     } catch {
       // Swallowed on purpose; see above.
     }
+    // The timer of a message that was still standing over this window. A
+    // timeout that fires into a window that is gone is a timeout that keeps
+    // the whole window alive in the closure it was made in.
+    this.clearSay();
     this.el.remove();
     this.tab.remove();
     this.desktop.windows.delete(this.id);
@@ -266,7 +353,7 @@ export class Win {
         // during a transition it answers the size the window is leaving.
         this.toggleMax(false);
         const w = this.el.offsetWidth;
-        this.el.style.left = Math.max(0, sx - w * rel) + "px";
+        this.el.style.left = clampX(sx - w * rel, w, this.desktop.area()) + "px";
         this.el.style.top = "0px";
         // The drag carries on from where the small window now stands, while
         // sx and sy stay the point that was grabbed - so the window follows
@@ -274,13 +361,13 @@ export class Win {
         ox = this.el.offsetLeft;
         oy = this.el.offsetTop;
       }
-      const a = this.desktop.area(), W = this.el.offsetWidth;
-      let nx = ox + e.clientX - sx;
-      let ny = oy + e.clientY - sy;
-      nx = Math.max(-W + KEEP_X, Math.min(a.w - KEEP_X, nx));
-      ny = Math.max(0, Math.min(a.h - KEEP_Y, ny));
-      this.el.style.left = nx + "px";
-      this.el.style.top = ny + "px";
+      const a = this.desktop.area();
+      const W = this.el.offsetWidth, H = this.el.offsetHeight;
+      // The whole window stays on the desktop - all four edges, not just
+      // enough of the title bar to grab. The pointer may leave the desktop;
+      // the window does not follow it out.
+      this.el.style.left = clampX(ox + e.clientX - sx, W, a) + "px";
+      this.el.style.top = clampY(oy + e.clientY - sy, H, a) + "px";
 
       // Docking preview at the edges of the desktop.
       let s = null;
@@ -383,7 +470,26 @@ export class Win {
       Object.assign(this.el.style, { left: "0px", top: "0px", width: a.w + "px", height: a.h + "px" });
       return;
     }
-    this.el.style.left = Math.min(this.el.offsetLeft, Math.max(0, a.w - 80)) + "px";
-    this.el.style.top = Math.min(this.el.offsetTop, Math.max(0, a.h - 40)) + "px";
+    // CUT TO FIT FIRST, then moved inside. open() already cuts a window to
+    // the desktop it opens on; a desktop that shrinks afterwards - a phone
+    // turned on its side, a browser window pulled narrow - leaves the same
+    // window too big for it, and moving a window that does not fit can only
+    // choose which of its edges to lose. Measured: the App-Store opens 760
+    // wide, and on a 420 px desktop pinning it to the left put its three
+    // title-bar buttons - the only way to close it - off the screen.
+    //
+    // Never below the smallest a window may be drawn: below that the three
+    // buttons stop fitting, which is the same loss by another route.
+    const min = minSize();
+    const w = Math.max(min.w, Math.min(this.el.offsetWidth, a.w));
+    const h = Math.max(min.h, Math.min(this.el.offsetHeight, a.h));
+    Object.assign(this.el.style, {
+      width: w + "px", height: h + "px",
+      // The same clamp the drag uses, so a window that was inside the desktop
+      // is still inside it afterwards. It used to keep 80 px of the width and
+      // 40 px of the height and leave the rest off the screen.
+      left: clampX(this.el.offsetLeft, w, a) + "px",
+      top: clampY(this.el.offsetTop, h, a) + "px",
+    });
   }
 }
