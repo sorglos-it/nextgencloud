@@ -227,6 +227,7 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
+| 96 | Die Tür lag fünf Tage im Repo und nicht an der Anlage — und api-2 hat keinen Pin | gilt – PR 118 war nie ausgerollt (`83344ee` an der Anlage, `e40f648` in `main`); api-2 ohne `trust-anchor.json` | Sicherheit |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7294,3 +7295,91 @@ der Probe 1, die Tabelle der Einhängungen und die Rechte an `/var/lib/ngc`. Abg
 Folge der drei tmpfs für den Arbeitsspeicher des Wirts, die Dringlichkeit von Posten 2 und jede
 Zeile der letzten Liste. Nicht gemessen ist, ob `nosuid` auf `/data` wirkt — das steht in Punkt 72
 und ist dort als geschlossen, nicht gemessen gekennzeichnet; dieser Punkt ändert daran nichts.
+
+## Punkt 96: Die Tür lag fünf Tage im Repo und nicht an der Anlage — und api-2 hat keinen Pin
+
+Gemessen am 29.10.2026 an der verteilten Anlage (`https://ngc.mein.lan`, api-1 = 10.2.3.210,
+api-2 = 10.2.3.211) und gegen `origin/main` (`25b8f24`).
+
+Punkt 73 hat die Tür für einen zweiten Menschen gebaut und ausdrücklich offen gelassen, dass
+die Stationen „meldet sich an" und „sieht seine Apps" **ungemessen** sind. Dieser Punkt sagt
+zuerst, warum sie es fünf Tage länger geblieben sind, als es aussah.
+
+### Befund 1 — die Tür war auf der laufenden Anlage nicht da
+
+PR 118 ist am 24.10.2026 um 12:53 nach `main` verschmolzen (`7cf3688`). **Ausgerollt wurde sie
+nie.** Gemessen über HTTPS, nicht am Dateisystem geschlossen:
+
+| | Hash | Formulare im Text |
+|---|---|---|
+| `https://ngc.mein.lan/assets/js/apps/users.js`, vorher | `83344ee` | **0** |
+| `main`, dieselbe Datei | `e40f648` | 3 |
+
+`83344ee` ist genau die Fassung, die Punkt 73 am 24.10. schon an dieser Anlage gemessen hat.
+Fünf Tage und 33 verschmolzene Anfragen später liegt dort dieselbe Datei. **Wer die Schritte aus
+`docs/zweiter-benutzer-schritte.md` in dieser Zeit gegangen wäre, hätte die Felder nicht
+gefunden** — und das hätte wie „nicht gebaut" ausgesehen, nicht wie „nicht ausgerollt". Das ist
+der Grund, warum diese Messung mit einem Hash anfängt und nicht mit einem Klick.
+
+Der Umfang des Eingriffs ist dabei selbst gemessen, nicht geschätzt: `users.js` ist seit PR 118
+**unverändert** (`git log 7cf3688..HEAD` auf die Datei: leer, beide Fassungen `e40f648`), und
+api-1s `shell.css` trug `d0c5ffe` — genau die Vorgängerfassung von PR 118. Dessen eigener Blob
+`91871de` passte deshalb Zeile für Zeile, und **keine spätere Oberflächenarbeit aus `main` ist
+mitgekommen**. Von den 59 Dateien unter `apps/web/public` unterscheiden sich 14 zwischen `main`
+und dieser Anlage; keine davon wird von `users.js` importiert, zwei (`shell/icon.js`,
+`net/testlink.js`) fehlen dort ganz. **Deshalb** wurden zwei Dateien gesetzt und nicht `main`
+darübergelegt.
+
+Nach dem Einspielen am 29.10.2026, 20:07 UTC, über HTTPS geholt: `users.js` = `e40f648`,
+`shell.css` = `91871de`, drei Treffer für die Formulare. Der ganze Importbaum von `users.js` ist
+nachgefahren — **18 Module, jedes `200`**, keines fehlt. Sicherung unter
+`/root/zweiter-benutzer-backup-20261029-200719/`, Rückweg `/root/tuer-zumachen.sh`.
+
+### Befund 2 — api-2 hat keinen Vertrauens-Pin, und bekommt nie einen
+
+Das ist der Befund dieses Punktes, und er hat mit dem zweiten Menschen nur die Frage gemeinsam,
+ob zwei API-Server dasselbe sind.
+
+```
+api-1:  /etc/ngc/trust-anchor.json   {"seq": 6, "hash": "JtyqTFme…"}   23.10. 23:41:21
+api-2:  /etc/ngc/trust-anchor.json   gibt es nicht
+```
+
+Diese Datei ist laut ihrem eigenen Quelltext der **einzige** Wert einer Auffrischung, der nicht
+aus den Datenbankzeilen kommt, die er beurteilen soll: „every other check here reads the very
+rows an attacker who can write the database has written, so none of them holds against him …
+The file does" (`apps/server-api/classes/state/trust.go:162`–`:180`). Ohne sie gilt die
+Auffrischung Fassung 1 als Wurzel, also das, was die Datenbank anbietet.
+
+**Warum api-2 keine hat, und warum das bleibt:**
+
+- Geschrieben wird sie von einem Controller, der **paart** (`node.pair`, `config.SaveAnchor`),
+  und danach von der API selbst nach oben (`advanceAnchor`). Gemessen: api-1 hat
+  `/var/lib/ngc/controller/paired` und einen laufenden `ngc-controller`; api-2 hat
+  `/var/lib/ngc/joined`, **keinen Controller-Dienst** und kein `/etc/ngc/controller.json`.
+- `advanceAnchor` schreibt ausdrücklich „**only over a file that is already there**"
+  (`state/trust.go:228`). Eine fehlende Datei entsteht dort nie.
+
+**Was das heißt:** wer die Datenbank schreiben kann, kann die Vertrauensliste **auf api-2**
+zurückdrehen und **auf api-1 nicht**. Da der Lastverteiler von api-1 die Anfragen nach
+`lbmethod=byrequests` zwischen beiden abwechselt (`/etc/ngc/apache-apis.conf`, kein
+`stickysession`), entscheidet bei so einem Angriff der Zufall, welcher der beiden antwortet.
+**Der Schutz, um den es bei diesem Anker geht (Punkt 43 wägt seinen Preis ab), liegt also an
+der halben Anlage.**
+
+**Nicht gemessen, und es soll niemand glauben, es sei geprüft:** dass ein Zurückdrehen auf api-2
+wirklich durchgeht. Dafür müsste jemand die Datenbank schreiben, und das ist ein Angriff, kein
+Prüflauf. Gemessen sind die beiden Dateien und die drei Quelltextstellen, die sagen, was aus
+ihrem Fehlen folgt. **Abgewogen, nicht gemessen** ist auch, was dagegen zu tun wäre: die Datei
+auf api-2 von Hand anzulegen, wäre ein Pin, den niemand vergeben hat — `anchorFor` sagt selbst,
+die Entscheidung gehöre „whoever set it up". Das gehört vorgelegt, nicht nachgeholt.
+
+### Nicht von diesem Punkt beantwortet
+
+Der Lastverteiler wechselt je Anfrage. Die Frage „kommt ein Benutzer an **beiden** API-Servern
+herein" ist deshalb an einem Browser, der `https://ngc.mein.lan` benutzt, **nicht zu trennen**:
+er benutzt im Lauf einer Anmeldung sowieso beide, und kein Protokoll dieser Anlage schreibt
+auf, welches Mitglied geantwortet hat (`LogFormat … ngc` in
+`/etc/apache2/sites-enabled/ngc-web.conf:331` nennt kein `BALANCER_WORKER_NAME`). Eine saubere
+Trennung bräuchte entweder eine Protokollzeile mehr oder zwei Anmeldungen mit einem Mitglied
+aus dem Verbund — beides ein Eingriff, beides hier **nicht** getan.
