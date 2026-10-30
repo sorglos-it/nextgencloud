@@ -732,13 +732,16 @@ func unlistedInDB(t *testing.T, db *sql.DB) []string {
 		}
 	}
 	// The type a column was given is a name the database wrote down too, so
-	// it is looked up the same way: it has to be one the dialect can make.
-	types := []string{}
-	for _, p := range sqlstore.Placeholders {
-		if typ := strings.TrimSpace(sqlstore.SQLite.Type(p)); typ != "" {
-			types = append(types, typ)
-		}
-	}
+	// it is looked up the same way - but against the type THIS column was
+	// made with, not against the set of types the dialect can make.
+	//
+	// It asked the wider question until 30.10.2026, and the wider question is
+	// almost no question: measured, the types of the SQLite dialect are
+	// [BLOB BLOB BLOB BLOB INTEGER], so "one of these" lets ngc_blob.seq stand
+	// as BLOB where the migration wrote {{int}} - and that is the one shape of
+	// damage this measurement exists to catch. The same file, mutated that
+	// way, came through with an empty finding list. sqlstore.ColumnType is
+	// what makes the narrow question askable at all.
 	for _, table := range tables {
 		cols, err := db.QueryContext(ctx, "SELECT name, type FROM pragma_table_info(?)", table)
 		if err != nil {
@@ -751,8 +754,8 @@ func unlistedInDB(t *testing.T, db *sql.DB) []string {
 			}
 			if !slices.Contains(sqlstore.Columns[table], name) {
 				bad = append(bad, "column "+table+"."+name)
-			} else if !slices.Contains(types, typ) {
-				bad = append(bad, "column "+table+"."+name+" of type "+typ)
+			} else if want := strings.TrimSpace(sqlstore.SQLite.Type(sqlstore.ColumnType[table][name])); want != typ {
+				bad = append(bad, "column "+table+"."+name+" of type "+typ+" instead of "+want)
 			}
 		}
 		cols.Close()

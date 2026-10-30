@@ -44,16 +44,34 @@ jede Spalte gegen `sqlstore.Columns` und jeden Typ gegen die Typen, die der Dial
 kann. Zwei Gründe, warum sie die Lücke nicht schließt:
 
 - Sie läuft **im Test**, gegen eine frisch migrierte Datei. Kein Programm ruft sie.
-- Ihre Typprüfung fragt nur, ob der Typ **einer** der Dialekttypen ist, nicht ob er der
+- Ihre Typprüfung fragte nur, ob der Typ **einer** der Dialekttypen ist, nicht ob er der
   **richtige für diese Spalte** ist. Gemessen: die Typen des SQLite-Dialekts sind
   `[BLOB BLOB BLOB BLOB INTEGER]` – `seq BLOB` statt `seq INTEGER` ist darin enthalten und
   wird nicht gemeldet. Dieselbe Logik gegen eine mutierte Datei gefahren meldet
   **leere Fundliste**.
 
+Der zweite Punkt ist am 30.10.2026 behoben (Weg D). Dieselbe mutierte Datei, dieselbe
+Stelle, mit der Zuordnung statt mit der Menge gefragt:
+`column ngc_blob.seq of type BLOB instead of INTEGER`. Vorher leer, nachher gefunden.
+Der erste Punkt steht weiter offen: es ist eine Messung im Test, kein Riegel im Programm.
+
 Was für eine echte Prüfung fehlt, ist also keine Technik, sondern eine **Angabe**:
 `sqlstore.Columns` kennt die Namen der Spalten, aber nicht, welcher Platzhalter
-(`{{key}}`, `{{int}}`, `{{doc}}`, `{{data}}`) zu welcher Spalte gehört. Diese Zuordnung
-gibt es im Repo nirgends als Daten – sie steht nur im Text von `0001-core.sql`.
+(`{{key}}`, `{{int}}`, `{{doc}}`, `{{data}}`) zu welcher Spalte gehört.
+
+**Die Zuordnung Spalte → Platzhalter stand bis zum 30.10.2026 nur im Text einer
+SQL-Datei, also galt sie nicht.** Was nicht als Daten im Repo steht, kann kein Programm
+fragen. Darum ist der erste Schritt keine Prüfung, sondern diese Angabe.
+
+Seit dem 30.10.2026 steht sie als `sqlstore.ColumnType` in
+`apps/server-db/classes/sqlstore/names.go` (Weg D, unten). Zwei Tests halten sie:
+`TestColumnTypeCoversEveryColumn` in `sqlstore` die Form – je Spalte ein Eintrag und
+sonst keiner –, und `TestColumnTypeIsWhatTheMigrationsWrite` in `migrate` den Inhalt:
+es liest die Platzhalter aus den Anweisungen heraus, die die Migrationen wirklich
+tragen, und vergleicht Eintrag für Eintrag. Gemessen: 55 Spalten aus 16 Anweisungen,
+keine Abweichung. Kontrolle, die sterben muss: ein Eintrag von `{{int}}` auf `{{key}}`
+verbogen – `ngc_blob.seq: the migration writes {{int}}, sqlstore.ColumnType says "key"`.
+Kontrolle, die leben muss: eine lokale Variable umbenannt – grün.
 
 ## Was heute passiert, wenn ein Spaltentyp abweicht
 
@@ -125,22 +143,54 @@ und vorgefundenem Typ.
   Ein Server, der bei Abweichung gar nicht startet, kann eine laufende Anlage nach einem
   Update **vollständig stilllegen** – und zwar auch dann, wenn die Datenbank in Ordnung
   ist und nur die Prüfung zu streng ist. Drei Wege dahin:
-  - MariaDB schreibt Typen anders zurück, als man sie hingeschrieben hat
-    (`BIGINT` kann als `bigint(20)` zurückkommen, `VARBINARY(255)` mit anderer
-    Schreibweise). Eine Prüfung, die darauf nicht gemessen ist, hält eine gesunde Anlage an.
+  - **Die Schreibweise.** MariaDB gibt Typen anders zurück, als man sie hingeschrieben
+    hat. Das ist jetzt gemessen, und es ist kein kleiner Unterschied: von 55 Spalten
+    kommen **20 anders geschrieben** zurück. Ein wortwörtlicher Vergleich des
+    Dialekt-Textes mit `COLUMN_TYPE` würde eine gesunde Anlage an 20 Spalten anhalten.
   - Bei einem rollenden Update spielt ein Controller mit Rolle db die Migrationen ein, die
     APIs starten danach. Startet eine API, bevor die Migration durch ist, sieht sie ein
     altes Schema – mit Weg A verweigert sie den Dienst, statt zu warten.
   - In einer Galera-Gruppe, in der nicht alle Knoten gleich weit sind, verweigern alle
     APIs, die den hinterherhängenden Knoten erwischen.
   **Für sich genommen ist A also sicherer und gleichzeitig der einzige Weg, der eine
-  Anlage ohne Datenfehler lahmlegen kann.** Vor A gehört deshalb eine Messung gegen eine
-  echte MariaDB, welche Schreibweise sie je Typ zurückgibt – ohne die ist A nicht reif.
+  Anlage ohne Datenfehler lahmlegen kann.**
+
+#### Die Vergleichsregel für MariaDB, gemessen
+
+Gemessen am 30.10.2026 gegen MariaDB 11.4 im Container, nach einer echten
+`migrate.Apply`-Migration. Je Platzhalter, was hingeschrieben wird und was zurückkommt:
+
+| Platzhalter | hingeschrieben | `DATA_TYPE` | `COLUMN_TYPE` |
+|---|---|---|---|
+| `{{key}}` | `VARBINARY(255)` | `varbinary` | `varbinary(255)` |
+| `{{text}}` | `VARBINARY(1024)` | `varbinary` | `varbinary(1024)` |
+| `{{doc}}` | `MEDIUMBLOB` | `mediumblob` | `mediumblob` |
+| `{{data}}` | `LONGBLOB` | `longblob` | `longblob` |
+| `{{int}}` | `BIGINT` | `bigint` | **`bigint(20)`** |
+
+Daraus folgt die Regel, die Weg A brauchen würde, und sie ist nicht die naheliegende:
+
+- **`COLUMN_TYPE` nie wortwörtlich vergleichen.** Es ist klein geschrieben und hängt bei
+  `BIGINT` ein `(20)` an. Das sind die 20 Spalten von oben.
+- **`DATA_TYPE` vergleichen**, klein geschrieben.
+- **Die Länge nur bei `varbinary` dazunehmen.** Die BLOB-Sorten tragen eine Länge, die aus
+  der Sorte selbst folgt (`mediumblob` → 16 777 215, `longblob` → 4 294 967 295) und die
+  nirgends hingeschrieben steht; sie mitzuvergleichen hält weitere 9 Spalten an.
+
+Mit dieser Regel: **55 Spalten geprüft, 0 Abweichungen.** Gegenprobe im selben Lauf:
+`ngc_blob.seq` auf `VARBINARY(255)` verbogen → `erwartet bigint, gefunden varbinary`,
+fällt auf. Damit ist die Messung, auf die Weg A gewartet hat, erbracht; offen bleibt an A
+nur noch das rollende Update, und das ist das stärkere der beiden Argumente.
 
 ### Weg B – lauter Befund, Server startet trotzdem
 
 Dieselbe Prüfung, aber eine Abweichung ist ein Eintrag im Log mit `ERROR`, ein Punkt im
 Zustandsbericht („Schema weicht ab") und sonst nichts.
+
+**Vorgabe für die Meldung:** in das Log gehen Tabellenname, Spaltenname, erwarteter und
+gefundener Typ – und **keine Werte aus der Datenbank**, auch nicht gekürzt. Eine
+Typabweichung fällt oft an einem Wert auf, und ein Wert aus `ngc_session` oder `ngc_user`
+ist ein Geheimnis. Geheimnisse nie ins Log (Regel aus `CLAUDE.md`).
 
 - **Fängt:** denselben Umfang wie A – aber nur für jemanden, der hinsieht.
 - **Kostet:** dasselbe wie A.
@@ -170,29 +220,35 @@ statt irgendeinen. Sie bleibt ein Test.
 - **Macht kaputt:** nichts – und fängt im Feld nichts. Der gemessene Fall (eine Datenbank,
   deren Spalte sich nachträglich unterscheidet) kommt in keinem Test vor.
 
-## Vorschlag
+## Stand und Vorschlag
 
-**D und B zusammen, A danach und nur mit der fehlenden Messung.**
+**D ist gebaut** (30.10.2026): `sqlstore.ColumnType`, die zwei Tests darauf, und die
+reparierte Typprüfung in `unlistedInDB`. Damit ist die Angabe da, auf der A, B und C alle
+stehen, und die Lücke in der vorhandenen Prüfung ist zu.
 
-- D ist umsonst und schließt die Lücke in der vorhandenen Prüfung sofort. Die Zuordnung
-  Spalte → Platzhalter, die D braucht, ist auch die Angabe, auf der A, B und C stehen –
-  sie ist also der erste Schritt in jedem Fall.
-- B bringt den Befund ins Feld, ohne eine Anlage anhalten zu können. Nach der Rangfolge
-  ist das ein Kompromiss zulasten der Sicherheit, aber er ist bewusst gewählt: eine
-  Prüfung, die beim ersten Lauf eine gesunde Anlage stilllegt, kostet mehr Vertrauen, als
-  sie Sicherheit bringt, und wird dann abgeschaltet.
-- A wird nachgezogen, sobald gemessen ist, welche Schreibweise MariaDB je Typ zurückgibt,
-  und sobald geklärt ist, was eine API tun soll, die vor der Migration startet (warten
-  statt verweigern).
-- C bleibt in der Hinterhand: der Weg für den Fall, dass eine Abweichung im Feld wirklich
-  auftritt und A noch nicht reif ist.
+**Als nächstes B.** Er bringt den Befund ins Feld, ohne eine Anlage anhalten zu können.
+Nach der Rangfolge ist das ein Kompromiss zulasten der Sicherheit, aber er ist bewusst
+gewählt: eine Prüfung, die beim ersten Lauf eine gesunde Anlage stilllegt, kostet mehr
+Vertrauen, als sie Sicherheit bringt, und wird dann abgeschaltet.
+
+**A danach.** Die Messung, auf die A gewartet hat, ist erbracht (Vergleichsregel oben,
+55 Spalten, 0 Abweichungen). Offen bleibt an A nur, was eine API tun soll, die vor der
+Migration startet – warten statt verweigern –, und die Frage einer Sollbruchstelle, damit
+eine falsche Prüfung keine gesunde Anlage dauerhaft unten hält. Beides ist nicht
+entschieden.
+
+**C bleibt in der Hinterhand**, für den Fall, dass eine Abweichung im Feld wirklich
+auftritt und A noch nicht reif ist.
 
 ## Was nicht gemessen ist
 
-- Welche Schreibweise MariaDB je NGC-Typ in `information_schema.COLUMNS` zurückgibt. Die
-  Messung oben hat `varbinary(255)` gesehen, aber nicht alle sechs Platzhalter durchgefahren.
-- Dasselbe gegen die Anlage (Galera, sechs VMs). Dafür braucht es eine Ansage an die
-  Leitsitzung; ohne sie ist hier nichts angefasst worden.
+- Dieselbe Messung gegen die Anlage (Galera, sechs VMs). Eine Spalte an der laufenden
+  Anlage zu verbiegen ist ein Eingriff mit eigener Ansage, und es ist offen, ob die
+  Messung überhaupt etwas beantwortet, das der Container nicht beantwortet. Hier ist an
+  der Anlage nichts angefasst worden.
 - Was ein abweichender Typ in `ngc_session`, `ngc_user` und `ngc_log` anrichtet. Gemessen
   ist `ngc_blob`, weil dort die Folge über `BlobFrom` weiterwandert; die anderen Tabellen
   sind nicht durchgefahren.
+- Andere MariaDB-Fassungen als 11.4. Die Schreibweise `bigint(20)` ist eine Eigenheit der
+  Fassung, nicht des Standards – MySQL 8 lässt die Breite weg. Weg A gehört gegen die
+  Fassung gemessen, die die Anlage wirklich fährt.
