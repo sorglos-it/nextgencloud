@@ -274,6 +274,24 @@ Programme. Finde ich keinen, ist das ein vollwertiges Ergebnis.
   Versuche" (24.10.). Nicht geklärt, und nicht Gegenstand dieses Blatts.
 - Warum in B1 sechs von vierzig Anfragen `500` bekamen und in B2 keine. Offene
   Frage aus `docs/ausfall-nachtrag.md`, hier nur verwiesen.
+- **Der Durchsatz in M2: 12 Anfragen in 60 s, also 5,0 s je Anfrage, gegen
+  0,022–0,056 s im gesunden Betrieb.** Das ist nicht „jede dritte falsch",
+  sondern zusätzlich etwa hundertmal langsamer. **Der Vorbehalt gehört
+  dazu und ist nicht aufzulösen:** die Zeit je einzelner Anfrage ist in dieser
+  Reihe nicht mitgeschrieben, und der Durchschnitt zweier Sorten (gute und
+  `500`er) ist keine Aussage über eine von beiden. Der Hinweis, den die Zahl
+  trägt: **ein abwesendes Mitglied im Lastverteiler ist teurer als ein
+  abgewiesener Versuch** — Material für die Lebensprobe (Weg C Posten 3), nicht
+  für diesen Auftrag. Hier bewusst nicht weiterverfolgt.
+- **Ob jeder weitere Controller-Absturz noch einen Prozesssatz dazulegt, über
+  sechs hinaus.** Zweimal gemessen (vier, dann sechs), beim dritten Mal
+  angehalten. Dass es linear wächst, ist aus zwei Punkten belegt und nicht aus
+  drei.
+- **M4** — `apache2` stirbt, kommt der einzige Eingang zurück? Offen und
+  **nicht gemessen**; die Messung ist für **nach** der Behebung vorgesehen, als
+  Abnahme von Weg C Posten 1, mit `kill -TERM` vor `kill -9` und eigenem,
+  vorher angesagtem Fenster. Belegt ist bis dahin nur die Unit-Zeile
+  (`Restart=on-abort`), und das ist kein Ersatz für eine Messung.
 
 ---
 
