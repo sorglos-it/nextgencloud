@@ -188,10 +188,38 @@ haertung_oeffnen() {
 		echo "einzelmaschine: no nftables table 'haertung' after 60s - nothing opened; if the template is hardened, 443 is shut and the interface will answer nobody"
 		return 0
 	}
-	auf_vm "$nft add rule inet haertung eingang ip saddr 10.0.0.0/8 tcp dport { 80, 443, 7443 } accept" >/dev/null
+	# WRITTEN DOWN FIRST, then loaded - and the order is the finding.
+	# "nft add rule" is a runtime change and /etc/nftables.conf begins with
+	# "flush ruleset", so the next reload of the service throws it away. That
+	# is not a theory: measured 29./30.10.2026 on VMID 310, the rule was gone
+	# nine hours later with no reboot in between, and the interface answered a
+	# connection timeout again. A firewall rule that lives only in memory is a
+	# rule that disappears at the moment nobody is looking.
+	#
+	# The rule re-OPENS table and chain instead of redeclaring them: nftables
+	# appends to an existing chain when the type line is left out, so the
+	# hardening keeps its policy drop and this adds three ports to it. A table
+	# of its own would not do - with a base chain at the same hook that says
+	# policy drop, a second chain accepting changes nothing.
+	auf_vm "mkdir -p /etc/nftables.d
+cat > /etc/nftables.d/10-ngc-ports.nft <<'EOF'
+# Written by tools/einzelmaschine.sh of github.com/sorglos-it/nextgencloud.
+# The small case carries web, api, db and services on ONE machine, and the
+# template lets only 22 through. 443 is the interface, 7443 the API (the
+# BROWSER calls it itself - /config.json names it in apis[]), 80 the one page
+# a plain http:// call gets. Same scope the template allows ssh from.
+table inet haertung {
+	chain eingang {
+		ip saddr 10.0.0.0/8 tcp dport { 80, 443, 7443 } accept
+	}
+}
+EOF
+grep -q 'nftables.d' /etc/nftables.conf || printf '\ninclude \"/etc/nftables.d/*.nft\"\n' >> /etc/nftables.conf
+$nft -f /etc/nftables.conf" >/dev/null
 	# Held against the machine, not against the exit code: a rule that did not
 	# take leaves an installation nobody can reach, and the install that follows
-	# would look like the thing that is broken.
+	# would look like the thing that is broken. Asked AFTER a reload, because
+	# surviving a reload is the half that was missing.
 	local got
 	got=$(auf_vm "$nft list chain inet haertung eingang | grep -c '443'")
 	if [ "${got:-0}" -gt 0 ]; then

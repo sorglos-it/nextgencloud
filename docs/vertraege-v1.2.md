@@ -228,7 +228,8 @@ gibt, aber erst nach dem Schreiben.
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
 | 96 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
-| 97 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; zwei Wände: gehärtete Vorlage lässt nur Port 22 durch, Wurzel-Dateisystem ohne `encrypt` — beide behoben, Station 2a neu; **offen: anna mit allen drei Rechten bekommt die App nicht, ohne eine Protokollzeile** | Messung |
+| 97 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; zwei Wände: gehärtete Vorlage lässt nur Port 22 durch, Wurzel-Dateisystem ohne `encrypt` — beide behoben, Station 2a neu; der offene Befund zu anna ist in **Punkt 98** berichtigt | Messung |
+| 98 | Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur | gilt – **berichtigt Punkt 97**; Meldung absichtlich erzeugt, Rechteänderung wirkt sofort; dazu: zweiter `install` mit anderem Namen sperrt alle aus, eine unlesbare Zeile verwirft das ganze Protokoll, Firewall-Regel überlebte kein Neuladen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7544,6 +7545,14 @@ und hätte diese Maschine grün genannt.
 
 ### Der Befund, der offen bleibt: eine zweite Person kann die App nicht benutzen
 
+> **Berichtigung vom 30.10.2026, und sie gehört an den Anfang dieses Abschnitts:
+> anna bekommt die App.** Am nächsten Tag antwortet ihr Fenster mit
+> `2026-10-30T12:45:54Z`. Was unten steht, ist richtig gemessen und bleibt stehen — aber es
+> ist **kein Dauerzustand**, und die Ursache des einen Tages ist **nicht mehr klärbar**:
+> eine Ablehnung wegen fehlendem Recht schreibt nirgends eine Zeile, auch nicht ins
+> Prüfprotokoll der Anlage. Was dieselbe Meldung erzeugt, was sofort wirkt und was die Anlage
+> darüber aufschreibt — nämlich nichts —, steht gemessen in **Punkt 98**.
+
 Wand 6 selbst ist **behoben und gemessen**: bei der Rolle `admin` stehen „Uhr · benutzen" und
 „Uhr · zeit" ohne Kasten da — „Diese Rolle darf jede eingerichtete App benutzen" — **ohne eine
 einzige Zeile in der Datenbank** (`adminApps`, `c0f0022`). Die frisch eingerichtete App ist für
@@ -7638,3 +7647,161 @@ Sackgassen nach dem Schließen des Fensters. Abgewogen ist die Einordnung der dr
 „Erscheinung statt Ursache" und jede Zeile der letzten Liste. **Nicht gemessen** ist, woran der
 Aufruf der zweiten Person scheitert — nur, dass er scheitert und dass es an keinem der drei
 geprüften Rechte liegt. Die Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.
+
+---
+
+## Punkt 98: Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur
+
+**Gemessen am 30.10.2026** auf derselben Maschine wie Punkt 96 und 97 (VMID 310). Punkt 97
+endete mit einem roten Befund: anna hielt alle drei Rechte und bekam die App trotzdem nicht,
+und **auf keiner Seite stand eine Zeile**. Dieser Punkt geht dem nach. Er berichtigt Punkt 97
+in einem Teil und erklärt, warum dort nichts zu finden war.
+
+### Die Berichtigung zuerst
+
+**anna bekommt die App.** Am 30.10.2026 um 12:45 antwortet ihr Fenster mit
+`2026-10-30T12:45:54Z`. Der rote Befund aus Punkt 97 ist damit **kein Dauerzustand** — und
+seine Ursache ist **nicht** geklärt, sondern **nicht mehr klärbar**, und genau das ist der
+Inhalt dieses Punktes.
+
+### Der Versuch, der die Meldung erzeugt — absichtlich
+
+Die Meldung aus Punkt 97 lässt sich herstellen. Der Rolle `leser` wurde das Recht
+`Uhr · zeit` weggenommen und wiedergegeben, anna wurde nach jedem Schritt gefragt:
+
+| Schritt | annas Fenster |
+|---|---|
+| Ausgangslage | `2026-10-30T12:47:40Z` |
+| `Uhr · zeit` **weggenommen** | **„Der Dienst dieser App hat nicht geantwortet."** |
+| `Uhr · zeit` **zurückgegeben** | `2026-10-30T12:49:13Z` |
+| danach `ngc-controller` neu gestartet | `2026-10-30T12:49:43Z` |
+
+**Zwei Dinge sind damit gemessen.** Erstens: diese Meldung ist genau das, was ein fehlendes
+**Aktionsrecht** erzeugt — sie nennt den Dienst, und der Dienst ist nicht das Problem.
+Zweitens: eine Rechteänderung wirkt **sofort**. Es braucht keinen Neustart, und die Vermutung,
+der Controller trage eine veraltete Vertrauensliste, ist damit widerlegt und nicht bestätigt.
+
+### Und warum nichts zu finden war
+
+Das Prüfprotokoll der Anlage (Reiter **Protokoll**) ist die einzige Stelle, die einen Kanal mit
+App, Aktion, Server und Ergebnis festhält — `relay.Forward` schreibt sie über `Log.Channel`.
+Dieselben zwei Zustände, im Protokoll nachgelesen:
+
+```
+13:48  anna  Kanal  ngc.desktop        apps       ok
+13:48  anna  Kanal  ngc.desktop        ui         ok
+13:48  anna  Kanal  ngc.desktop        ui-proof   ok
+       (ohne das Recht: KEINE Zeile fuer org.sorglos.uhr)
+
+13:49  anna  Kanal  org.sorglos.uhr    zeit   probe-2   ok
+13:49  anna  Kanal  org.sorglos.uhr    zeit   probe-2   ok
+```
+
+**Eine Ablehnung wegen fehlendem Recht erzeugt keine Zeile.** Sie fällt, bevor der Kanal
+weitergeleitet wird, und `relay.Forward` ist die einzige Stelle, die schreibt. Dazu schweigt
+das `journal` des Controllers (er bekommt den Aufruf nie) und das der API (sie protokolliert
+Ablehnungen nicht ins `journal`).
+
+**Damit hat weder der Benutzer noch der Verwalter irgendetwas in der Hand:**
+
+| wer | was er sieht |
+|---|---|
+| der Benutzer | „Der Dienst dieser App hat nicht geantwortet." |
+| der Verwalter im Protokoll | nichts — die Zeile fehlt |
+| der Betreiber im `journal` | nichts, auf beiden Seiten |
+
+Das ist der eigentliche Befund dieses Punktes. Nicht, dass eine Ablehnung still ist — das ist
+bei einem Rechteprüfer vertretbar —, sondern dass sie **überall gleichzeitig** still ist und
+die einzige sichtbare Meldung auf die falsche Fährte führt. Ein Verwalter, der das liest,
+sieht nach dem Dienst, nach dem Container, nach dem Controller. Die Antwort steht zwei Meter
+daneben in einem Kasten, den er schon angehakt hat.
+
+### Drei weitere Befunde desselben Tages
+
+#### 1. `ngc-all install` ein zweites Mal mit anderem Namen sperrt alle aus
+
+Der Prüflauf `erstlauf.sh` ruft `ngc-all.sh install` mit seinem Vorgabenamen `erstlauf` auf.
+Auf einer **laufenden** Anlage, die als `probe` in der Vertrauensliste steht, schreibt das
+`api.json` neu:
+
+```
+api.json node: erstlauf          Vertrauensliste kennt: probe
+```
+
+Die Folge, gemessen: `ngc-api` und `ngc-controller` laufen weiter, `apache` läuft,
+`/api/v1/setup` antwortet weiter **404**, im `journal` steht **keine** Zeile — und **jede**
+Anmeldung scheitert mit „Anmeldung fehlgeschlagen." Für **jeden** Benutzer. Die Anlage sieht
+von außen gesund aus und ist für niemanden mehr erreichbar.
+
+**Gegenprobe, und sie ist der Beweis:** derselbe Aufruf mit `NGC_NAME=probe` schreibt den
+Namen zurück, und beide Anmeldungen gehen sofort wieder. Nichts anderes wurde angefasst.
+
+`ngc-all.sh` behält bei einem zweiten Lauf jeden Schlüssel (`kept_key`, `kept_db_key` —
+`noiseKey`, `signKey`, `secretKey`, `challengeKey`, der Datenbankschlüssel). **Den Namen
+behält es nicht**, und der Name ist das, was die Anlage wiedererkennt.
+
+#### 2. Eine unlesbare Zeile macht das ganze Protokoll unsichtbar
+
+Unmittelbar nach dem Zurückschreiben stand im Reiter Protokoll:
+
+> Die Antwort der Anlage war nicht in Ordnung. Es wird nichts angezeigt.
+
+Die Kopfzeile der Tabelle stand da, **keine einzige Zeile** darunter — obwohl Hunderte
+vorhanden waren. Nachdem neue Zeilen unter dem richtigen Namen dazukamen, zeigt derselbe
+Reiter alles. **Das ist die Form von Wand 2 an einer anderen Stelle:** ein Feld, das der
+Vertragsprüfung nicht genügt, verwirft die **ganze** Antwort. Und es trifft ausgerechnet das
+Werkzeug, mit dem ein Verwalter einem Befund nachgeht.
+
+#### 3. Die Rechteseite behält einen abgebrochenen Haken
+
+Haken weggenommen, **„Rechte speichern"**, dann die Bestätigung **abgebrochen**:
+
+```
+gleiche Sitzung danach   Uhr · benutzen=true   Uhr · zeit=false
+frische Anmeldung        Uhr · benutzen=true   Uhr · zeit=true     <- die Wahrheit
+```
+
+Die Seite zeigt nach einem Abbruch den **gewünschten**, nicht den **geltenden** Stand. Wer den
+Abbruch macht und hinsieht, liest ein Recht als weggenommen, das noch gilt. Erst ein neues
+Anmelden zeigt, was die Anlage hält.
+
+### Und eine Berichtigung an der eigenen Behebung aus Punkt 97
+
+Die Firewall-Öffnung aus Punkt 97 war mit `nft add rule` gesetzt — **zur Laufzeit**.
+`/etc/nftables.conf` beginnt mit `flush ruleset`, also ist die Regel beim nächsten Laden des
+Dienstes weg. Gemessen: am 30.10. um 12:40 antwortete die Oberfläche von außen wieder mit
+einem Zeitablauf, die Regel war fort, und die Maschine war seit 03:40 oben — **kein** Neustart
+dazwischen, der Dienst allein hat gereicht.
+
+**Behoben:** die Regel steht jetzt in `/etc/nftables.d/10-ngc-ports.nft` und `nftables.conf`
+bekommt eine `include`-Zeile. Sie öffnet Tabelle und Kette wieder, statt sie neu zu erklären —
+so behält die Härtung ihr `policy drop` und bekommt drei Ports dazu. Eine **eigene** Tabelle
+täte es nicht: bei zwei Basisketten am selben Haken entscheidet das `drop` der einen, und ein
+`accept` der anderen ändert daran nichts. Gegenprobe: `systemctl restart nftables`, danach
+steht die Regel und die Oberfläche antwortet von außen mit `200`.
+
+### Was daraus zu bauen wäre
+
+1. **Eine Ablehnung wegen fehlendem Recht gehört ins Protokoll.** Eine Zeile mit App, Aktion
+   und dem Grund, und der Benutzer bekommt einen Satz, der das Recht nennt statt den Dienst.
+   Das ist der Unterschied zwischen „ich suche eine Stunde" und „ich setze einen Haken".
+2. **`ngc-all install` soll einen abweichenden Namen abweisen**, solange `api.json` einen
+   trägt — oder ihn wenigstens laut nennen. Ein stiller Namenswechsel ist der Verlust der
+   Anlage, und er sieht aus wie ein vergessenes Passwort.
+3. **Das Protokoll darf nicht an einer Zeile scheitern.** Eine Zeile, die der Vertragsprüfung
+   nicht genügt, gehört ausgelassen und gezählt, nicht gegen die ganze Antwort gerechnet.
+4. **Die Rechteseite soll nach einem Abbruch zurückspringen.** Ein Haken, der etwas anderes
+   sagt als die Anlage, ist schlimmer als gar keiner.
+5. **`erstlauf.sh` soll `--machine-name` durchreichen**, wie es `--machine-hostname` seit
+   Punkt 96 tut. Sonst setzt jeder Prüflauf auf einer laufenden Anlage ihren Namen auf
+   `erstlauf` — was Befund 1 auslöst.
+
+**Getrennt gehalten:** gemessen sind die vier Zeilen der Versuchstabelle, die Protokollzeilen
+um 13:48 und 13:49 samt der fehlenden, das Verhalten beider Anmeldungen vor und nach dem
+Zurückschreiben des Namens, die beiden Hakenstände nach dem Abbruch, das Verschwinden der
+Firewall-Regel ohne Neustart und ihr Bestand nach `systemctl restart nftables`. Abgewogen ist
+die Einordnung der Meldung als „falsche Fährte" und jede Zeile der letzten Liste. **Nicht
+gemessen** ist, warum anna am 29.10.2026 ohne Wirkung blieb, obwohl die Seite ihre Rechte als
+gesetzt zeigte — und das ist kein Versäumnis dieses Punktes, sondern sein Gegenstand: die
+Anlage hat darüber nichts aufgeschrieben, und nachträglich ist nichts mehr zu holen. Die
+Maschine 310 bleibt stehen.

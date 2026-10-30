@@ -94,6 +94,15 @@ mkey=${NGC_MACHINE_RELEASE_KEY:-}
 # installed on an address, and no run has ever measured the configuration a user
 # is told to build.
 mhost=${NGC_MACHINE_HOSTNAME:-}
+# The NODE name of the installation, the one the trust list knows it by. Phase B
+# otherwise calls ngc-all.sh with its own default "erstlauf", and on a machine
+# that is ALREADY installed under another name that rewrites api.json and locks
+# every user out: the services keep running, /api/v1/setup still answers 404,
+# nothing is logged, and every sign-in fails with "Anmeldung fehlgeschlagen"
+# (measured 30.10.2026 on VMID 310, Punkt 98; writing the name back repaired it
+# at once). ngc-all.sh keeps every KEY on a second run - it does not keep the
+# name, and the name is what the installation is recognised by.
+mname=${NGC_MACHINE_NAME:-}
 # Extra options for ssh and scp, for a target that is not in ~/.ssh/config -
 # a port, an identity, another config file. Taken from the environment so that
 # nothing here has to write into the user's ssh configuration.
@@ -126,6 +135,10 @@ while [ $# -gt 0 ]; do
 		;;
 	--machine-hostname)
 		mhost=${2:-}
+		shift 2
+		;;
+	--machine-name)
+		mname=${2:-}
 		shift 2
 		;;
 	-h | --help)
@@ -388,7 +401,7 @@ else
 	echo "erstlauf: phase B on $machine (its station lines are indented; the ones above come out of the sources):"
 	set +e
 	# shellcheck disable=SC2029
-	ssh $sshopts -- "$machine" "bash /tmp/erstlauf-maschine.sh --staged '$mstaged' --ulh '$mulh'${mkey:+ --test-release-key '$mkey'}${mhost:+ --hostname '$mhost'}" >"$mlog" 2>&1
+	ssh $sshopts -- "$machine" "bash /tmp/erstlauf-maschine.sh --staged '$mstaged' --ulh '$mulh'${mkey:+ --test-release-key '$mkey'}${mhost:+ --hostname '$mhost'}${mname:+ --name '$mname'}" >"$mlog" 2>&1
 	mrc=$?
 	set -e
 	sed 's/^/    /' "$mlog"
