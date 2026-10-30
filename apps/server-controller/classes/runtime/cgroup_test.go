@@ -659,8 +659,13 @@ func TestKillCgroupSaysSoWhenATaskSurvives(t *testing.T) {
 	if !errors.Is(err, ErrCgroup) {
 		t.Fatalf("err = %v, want it to carry ErrCgroup", err)
 	}
-	if !strings.Contains(err.Error(), "still holds a task") {
-		t.Fatalf("err = %v, want it to say what is still there", err)
+	// It names the CGROUP, which is what a reader needs to look further - not
+	// a fixed phrase. A case that pinned the wording would kill a mutant that
+	// only rewords the message, and then the wording would be the promise
+	// (messen.md: an expectation that only the mutant meets measures nothing;
+	// mutant 8 of 30.10.2026 died on exactly that and was right to).
+	if !strings.Contains(err.Error(), cgroupDirOf(name)) {
+		t.Fatalf("err = %v, want it to name the cgroup that is still occupied", err)
 	}
 	if waited == 0 {
 		t.Fatal("it did not look again even once")
