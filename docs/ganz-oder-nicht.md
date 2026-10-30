@@ -443,3 +443,27 @@ anzuhalten und zu melden. Das ist eingetreten, und M2 ist darum **nicht
 gefahren**. Die Erwartung dazu (der Riegel gegen die Neustart-Schleife greift
 nach der Rechnung nie) steht oben unverändert und ist **ungemessen**; sie trägt
 keine Zahl und darf keine bekommen, bis sie gefahren ist.
+
+## M3b — wächst es mit jedem Absturz? Erwartung, vor dem zweiten Schlag
+
+Freigegeben als die wichtigste offene Frage aus M3: **verdoppelt jeder weitere
+Absturz noch einmal?** Vier Instanzen sind ein Befund, sechs sind ein anderer —
+nämlich einer, der mit der Zeit wächst.
+
+Gemessen wird die Zahl aus `cgroup.procs` je App, **vorher und nachher**, nicht
+die Namen aus `pgrep`.
+
+**Erwartung: sechs, also +2 je Absturz.** Die Begründung ist der Weg, den M3
+freigelegt hat, und sie ist eine Kette aus zwei gemessenen Stücken: die
+`conmon` der zweiten Runde (4308, 4350) haben **ppid=1** und sitzen in
+`/ngc.apps/<app>`, also überleben sie den nächsten Schlag genauso wie die
+ersten; und `/run/ngc` wird beim Ende der Einheit gelöscht, womit podman sein
+Laufzeitwissen verliert, beim Start `system refresh` die vorhandenen Container
+für nicht laufend hält und neue anlegt. Beides noch einmal, also +2.
+
+**Was die Erwartung widerlegen würde, und worauf ich darum besonders sehe:**
+podman führt seine Container auch in einer Zustandsdatenbank, die **nicht** in
+`/run` liegt. Erkennt `system refresh` beim zweiten Mal, dass dort schon zwei
+Einträge je App stehen, könnte es bei vier bleiben — dann wäre die Verdoppelung
+ein einmaliger Übergang und keine wachsende Lücke. Das ist der freundlichere
+Ausgang, und er ist ebenso gut möglich wie meiner.
