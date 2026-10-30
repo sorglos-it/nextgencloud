@@ -227,7 +227,7 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
-| 96 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – **am laufenden Dienst auf `svc-2` belegt** (512/256 MiB im Kern, Fork-Bombe bei 508 gebremst, Knoten steht); `--cpus` dort ehrlich nicht durchgesetzt; der erste Stand hatte einen Fehler, den der Riegel selbst zeigte; beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
+| 96 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – **auf `svc-1` und `svc-2` eingespielt und gemessen** (512/256 MiB im Kern, drei Apps, Fork-Bombe bei 508 gebremst, Knoten steht); `--cpus` auf beiden ehrlich nicht durchgesetzt; der erste Stand hatte einen Fehler, den der Riegel selbst zeigte; beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
 | 97 | Ein Neustart des Controller-DIENSTES lässt die Apps unten — nur ein Neustart der MASCHINE holt sie zurück | gilt – Ursache auf die conmon-Zeile gemessen; Behebung ist **eine Zeile in `ulh`**, hier blockiert | Messung |
 
 ### Die Widersprüche auf einen Blick
@@ -7663,6 +7663,52 @@ Zum dritten Mal in derselben Messreihe hat außerdem ein gewöhnliches `podman e
 in die cgroup des Aufrufers gelegt und dabei ausgesehen wie „die Grenze trägt nicht" (600 gestartet,
 `pids.current` 7). Es ist jedes Mal das Messwerkzeug gewesen, nie der Riegel — und es ist der Grund,
 warum `CLONE_INTO_CGROUP` im Code auch in `Exec` steht.
+
+### Und auf `svc-1`, mit zwei Apps nebeneinander — 30.10.2026, 14:08 UTC
+
+Dasselbe eingespielt (0.3.0, `87a0f341…`, die laufende **0.2.2** liegt als
+`ngc-controller.vor-haertung` daneben) und die Maschine neu gestartet. `svc-1` trägt zwei Apps, und
+das ist der Grund, es dort zu wiederholen: die zweite ist die App **ohne** `needs:["root"]`.
+
+| | Terminal (uid 999) | Uhr (uid 995) |
+|---|---|---|
+| cgroup | `/ngc.apps/ngc-terminal-439982dd` | `/ngc.apps/ngc-uhr-ad8c00e2` |
+| `pids.max` | **512** | **512** |
+| `memory.max` | **268435456** | **268435456** |
+| `memory.swap.max` | **0** | **0** |
+| `cpu.max` | Datei gibt es nicht | Datei gibt es nicht |
+| `cgroup.procs` | `745 747` | `787 789` |
+| `EffectiveCaps` | 11 | **0** |
+| `podman inspect` sagt | 512 / 268435456 | 512 / 268435456 |
+
+Drei Dinge daran sind neu:
+
+1. **Zwei Apps, zwei Decken.** Jede sitzt in ihrem eigenen Zweig; keine zählt gegen die andere.
+2. **Der Posten aus Punkt 95 ist zusammengeführt:** `--cap-drop ALL` (Uhr: **null** Fähigkeiten)
+   und die Mengen-Grenzen liegen **gleichzeitig** an derselben Maschine an. Punkt 95 konnte das
+   eine zeigen, Punkt 96 auf `svc-2` das andere.
+3. **`podman inspect` und der Kern sagen jetzt dasselbe.** Vorher war das der Kern des Befundes:
+   `inspect` meldete 512 und 268435456, während der Kern 3466 und `max` hielt. Die Angabe ist von
+   einer Zusage zu einer Begleitung geworden — und sie stimmt.
+
+Die Controller-Einheit hält danach `pids.current` **10 von 3466**, und darin sitzen nur noch der
+Controller selbst und die zwei Pausenprozesse von rootlosem podman. Die Apps sind aus dem geteilten
+Fach heraus.
+
+**`cpu.max` fehlt auf beiden Knoten, aus derselben gemessenen Ursache** (die Wurzel gibt `cpu` beim
+Boot noch nicht nach unten). Zwei Knoten, dieselbe Zahl: das ist damit keine Eigenheit einer
+Maschine, sondern die Lage dieser Anlage.
+
+**Was diese Messung NICHT zeigt:** beide Apps tragen dieselben zwei Zahlen, und das sind die
+Vorgaben des Vertrags (`store.DefaultCPU`, `store.DefaultMemory`). Am laufenden Dienst ist damit
+**nicht** zu unterscheiden, ob die Decke aus dem jeweiligen Manifest kommt oder aus einer geteilten
+Zahl — dafür bräuchte es eine App mit eigenen Werten im Manifest. Diese Hälfte halten die Fälle
+(`TestTheActivationStartsTheContainerWithTheCeilingOfItsManifest`,
+`TestRestoreStartsAgainWhatRunsOutsideItsOwnLimits`) und die Mutanten 13 und 15.
+
+Auf `svc-1` wurde **keine** Fork- oder Speicherprobe gefahren: um 13:20 UTC hat dort eine andere
+Sitzung eine App-Aktion ausgeführt, der Knoten ist in Benutzung, und die Bremse ist am echten
+Terminal-Container auf `svc-2` schon gemessen. Gemessen ist hier, dass die Grenzen im Kern stehen.
 
 ### Was daraus zu bauen wäre (Ergänzung)
 
