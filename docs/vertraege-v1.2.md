@@ -227,7 +227,7 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
-| 96 | Eine App auf eine neue Fassung heben geht — aber nicht über den Weg, den die Oberfläche dafür hat | gilt – Hub 1.0.0 → 1.0.1 gemessen, **Daten und Benutzer bleiben**; Update-Seite kann nicht anbieten, weil die Anlage ein Programm von vor `5ff4bc8` fährt | Messung |
+| 96 | Eine App auf eine neue Fassung heben geht — aber nicht über den Weg, den die Oberfläche dafür hat | gilt – Hub 1.0.0 → 1.0.1 gemessen, **Daten und Benutzer bleiben**, App 262 ms weg; der stündliche Rundlauf kennt **keine Apps**, darum kommt der Knopf für eine App auf keinem Stand; enthält eine berichtigte Fehlmessung dieser Prüfrunde | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7442,39 +7442,49 @@ stehen dort mit drin: `updates/rows.go` liest `AppList` und rechnet `Available` 
 Der Laden trägt heute `1.0.1` **und** `1.0.2` für die Uhr, eingerichtet ist `1.0.1`. Die Zeile muss
 also `1.0.1 → 1.0.2` zeigen.
 
-**Der Knopf erscheint trotzdem nicht.** Er hängt an einem Zustand:
+**Der Knopf erscheint trotzdem nicht, und der Grund ist nicht ein Fehler, sondern eine Hälfte, die
+nicht gebaut ist.** Der Knopf hängt an einem Zustand:
 
 ```js
 if (u.state === catalog.UPDATE_DOWNLOADED) { … "Jetzt aktualisieren" … }
 ```
 
-und `updates/rows.go` (`fill`) setzt `row.State` nur aus einer **Meldung des Knotens**; ohne
-Meldung bleibt er leer. Die Meldung `UpdateDownloaded` entsteht, wenn der Rundlauf der API die
-Datei auf dem Knoten bereitlegt — über den Kanal `ngc.store/controller/stage`. Und genau der wird
-auf dieser Anlage abgewiesen.
+`updates/rows.go` (`fill`) setzt `row.State` nur aus einer **Meldung eines Knotens**; ohne Meldung
+bleibt er leer. Die Meldung `UpdateDownloaded` entsteht, wenn der stündliche Rundlauf die Datei auf
+dem Knoten bereitlegt. Und dieser Rundlauf kennt **keine Apps**:
 
-**Warum, mit Datum.** Der Griff, der diesen Kanal bedient, ist
-`apps/server-controller/classes/serve/update.go`, Funktion `stage`, und er ist in `main` gekommen
-mit `5ff4bc8` am **24.10.2026 13:03**. Die Programme auf der Anlage sind vom **24.10.2026 11:05**
-(`svc-1`) und **11:06/12:21** (`api-1`) — **rund zwei Stunden älter als die Behebung.** Der
-Kommentar in genau dieser Funktion beschreibt den Zustand, in dem die Anlage noch steht:
+- `Updates.Rollout` läuft über `rolloutOrder` — die NGC-Teile. Eine zweite Schleife über die Apps
+  gibt es nicht.
+- `nodesFor(part)` wählt Knoten über `tunnel.Components(h.Roles)`, also über NGC-Teile.
+- `stageAndInstall` nimmt ein `rel *store.Release` — eine **Fassung von NGC**, kein App-Paket. Es
+  gibt in diesem Weg keine Stelle, die ein `*.ngc` anfassen könnte.
 
-> „Until this function existed, a stage channel found no handler at all and ended E_INTERNAL in
-> Server.core … which is what an update round of an API ran into at its FIRST node, every hour".
+Also wird ein App-Paket **nie** bereitgelegt, kein Knoten meldet je `UpdateDownloaded` für eine
+App, `row.State` bleibt für Apps **immer** leer, und der Knopf wird für eine App **auf jedem
+Programmstand** nicht gezeichnet. Die Wahl „automatisch / auf Klick / nur melden" wird für
+App-Zeilen mitgezeichnet, und **nichts im Baum liest sie für eine App**: sie ist ein Versprechen
+ohne Gegenstück.
 
-Und so ist es bis heute. Im Journal von `api-1`, stündlich, zuletzt am **29.10.2026 19:42**:
+Das ist der eigentliche Befund dieses Punkts zur Frage „angeboten oder von selbst": **weder**. Die
+Anzeige der neuen Fassung ist gebaut, das Einspielen aus der Oberfläche heraus ist für Apps nicht
+gebaut. Der Weg, der funktioniert, ist der von Hand: im Laden die neue Fassung einrichten. Den ist
+die Uhr am 25.10. gegangen.
 
-```
-WARN the update round stopped error="updates: the round stopped at a node"
-```
-
-Damit steht die Kette ganz: **der Rundlauf stirbt am stage-Kanal → kein Knoten meldet
-`UpdateDownloaded` → kein Zustand in der Zeile → kein Knopf.** Weder „automatisch" noch „auf
-Klick" kann greifen, und das liegt nicht an einem Fehler im Update-Weg, sondern daran, dass die
-Anlage ein Programm von **vor** der Behebung fährt.
-
-Der Weg, der funktioniert, ist der von Hand: im Laden die neue Fassung einrichten. Den ist die Uhr
-am 25.10. gegangen.
+**Eine eigene Fehlmessung, und sie steht hier, statt sie zu löschen.** Diese Prüfrunde hat die
+Kette zuerst anders gelesen: der stündliche Rundlauf schreibt seit Tagen
+`WARN the update round stopped error="updates: the round stopped at a node"` (im Journal von
+`api-1`, zuletzt am 29.10.2026 19:42), der Griff für den Kanal `ngc.store/controller/stage` ist
+erst mit `5ff4bc8` am 24.10.2026 13:03 in `main` gekommen, und **kein** Controller der Anlage ist
+jünger: `db-1` fährt 0.2.1 vom 24.10. 11:49, `svc-1` 0.2.2 vom 11:05, `svc-2` 0.2.1 vom 11:07,
+`api-1` 0.2.2 vom 11:06. Daraus wurde geschlossen, der Rundlauf stürbe am stage-Kanal, und ein
+Rollout der Programme würde den Knopf einschalten. **Das ist widerlegt**, an einer Datei:
+`/var/lib/ngc/staged/ngc-controller` auf `db-1` ist vom **30.10.2026 12:36**, die `ngc-api` daneben
+vom selben Tag 04:36 — der stage-Schritt **läuft**, heute, auf dem alten Programm. Der Rundlauf
+stirbt also eine Stufe später, und er stirbt an NGC-Teilen, nicht an Apps. Für den Knopf einer App
+ist er ohnehin ohne Belang, weil er Apps nie anfasst. Woran er wirklich stirbt, steht im
+NGC-**Protokoll** und nicht im Journal; eine frühere Sitzung hat dort `E_FORBIDDEN` beim
+install-Schritt gemessen (stehende Zustimmung gegen Root-Aufgabe, `shared/` und damit eingefroren).
+**Diese Prüfrunde hat das nicht nachgemessen** und übernimmt es als fremde Messung.
 
 ### Gemessen: der Zustand des Ladens, und eine Falle darin
 
@@ -7498,10 +7508,14 @@ verlässliche Folge steht im Katalog selbst. Die Datei wird offenbar nicht mitge
 
 Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
 
-- **Dass ein Rollout der Programme den Knopf einschaltet.** Die Kette oben ist gemessen bis zum
-  stage-Kanal, und der Griff dafür liegt in `main`. Dass eine Anlage mit einem Programm von nach
-  dem 24.10. 13:03 die Zeile `1.0.1 → 1.0.2` **mit** Knopf zeigt, ist geschlussfolgert und nicht
-  gefahren.
+- **Dass die Zeile `1.0.1 → 1.0.2` heute wirklich auf dem Schirm steht.** Gelesen ist der Weg, auf
+  dem sie entsteht (`rows.go`, `available`), und der Zustand des Ladens, aus dem sie rechnet. Auf
+  die Update-Seite einer angemeldeten Sitzung hat diese Prüfrunde nicht geschaut — das kann nur ein
+  Mensch, und es ist die eine offene Gegenprobe dieses Punkts. Steht dort ein Knopf, ist der
+  Abschnitt oben falsch.
+- **Dass ein Rollout der Programme am Knopf einer App etwas ändert.** Nein, nach der Lesart oben:
+  der Rundlauf kennt keine Apps, auf keinem Stand. Ein Rollout behebt die **NGC-Teile** und die
+  stündliche Warnung, nicht das Anbieten einer App.
 - **Dass die 262 ms typisch sind.** Eine Messung, eine App, ein kleines Abbild.
 - **Was bei einer Fassung passiert, die nicht läuft.** Nicht gemessen, in keiner Richtung. Der
   Quelltext sagt zweierlei, das zusammengenommen unbequem ist: ein Fehlschlag lässt die Zeile der
@@ -7516,12 +7530,17 @@ Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
 
 ### Was daraus zu bauen wäre
 
-1. **Die Programme auf der Anlage heben**, auf einen Stand ab `5ff4bc8` (24.10. 13:03). Ohne das
-   ist der ganze Update-Weg der Oberfläche totes Gerät, und der stündliche Rundlauf schreibt
-   weiter jede Stunde eine Warnung.
-2. **`/root/store/seq` mitschreiben oder abschaffen.** Eine Zahl, die an zwei Stellen steht und an
+1. **Den Rundlauf über die Apps führen** — oder die Wahl „automatisch / auf Klick / nur melden"
+   bei App-Zeilen ausblenden, bis es sie gibt. Im Moment zeigt die Oberfläche eine Einstellung,
+   die für Apps nichts bewirkt, und einen Knopf, der für Apps nie kommt. Das ist der Posten, an dem
+   „eine App auf eine neue Fassung heben" vom Handgriff zum Weg wird.
+2. **Die Programme auf der Anlage heben**, auf einen Stand ab `5ff4bc8` (24.10. 13:03) — aus einem
+   anderen Grund als zuerst gedacht: nicht für den Knopf einer App, sondern damit der stündliche
+   Rundlauf für die NGC-Teile aufhört, jede Stunde eine Warnung zu schreiben. Die Wand dahinter
+   (`E_FORBIDDEN` beim install-Schritt) ist damit nicht behoben.
+3. **`/root/store/seq` mitschreiben oder abschaffen.** Eine Zahl, die an zwei Stellen steht und an
    einer falsch ist, ist schlechter als keine.
-3. **Den Satz „encrypted data directory" im Quelltext richtigstellen** oder die Verschlüsselung
+4. **Den Satz „encrypted data directory" im Quelltext richtigstellen** oder die Verschlüsselung
    bauen. Im Moment verspricht der Kommentar mehr, als die Anlage hält.
-4. **Das alte Abbild nach einem Hub entfernen.** Braucht ein Feld in `shared/dbapi` — eingefroren,
+5. **Das alte Abbild nach einem Hub entfernen.** Braucht ein Feld in `shared/dbapi` — eingefroren,
    also blockiert.
