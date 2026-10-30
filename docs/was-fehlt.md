@@ -15,11 +15,11 @@ Punkte im Entscheidungsbuch, drei veröffentlichte Fassungen. Trotzdem fehlt ein
 | `docs/bis-zur-veroeffentlichung.md` — H1–H10 + H4a, R1–R17, B1–B8 | **36** |
 | `docs/messungen-m1-m3.md` — offene Lücken | **3** |
 | `docs/vertraege-v1.2.md`, Punkte 63–95 — „zu bauen" / „offen" / „nicht gemessen" | **24** |
-| Meldungen anderer Stränge, alle am 30.10.2026 gemessen (A8a–A8c, A19a, A28a, S14, S15, U16, U17) | **9** |
-| **gefunden, mit Doppelungen** | **107** |
+| Meldungen anderer Stränge, alle am 30.10.2026 gemessen (A8a–A8c, A19a, A28a, S14, S15, U16–U18) | **10** |
+| **gefunden, mit Doppelungen** | **108** |
 
-Nach Abzug der Doppelungen (dieselbe Sache steht oft an drei Stellen) bleiben **63 eigene
-Einträge**: **14 sperren**, **32 halten auf**, **17 stören nur uns**.
+Nach Abzug der Doppelungen (dieselbe Sache steht oft an drei Stellen) bleiben **64 eigene
+Einträge**: **14 sperren**, **32 halten auf**, **18 stören nur uns**.
 
 **Was sich seit dem 18.10.2026 geschlossen hat** — am 30.10.2026 selbst nachgesehen, nicht
 übernommen:
@@ -137,8 +137,9 @@ Das ist der halbe Weg. Was bleibt, steht unten.
 | **U15** | `docs/STAND.md` ist vom **10.10.2026** und beschreibt eine Lage, die es nicht mehr gibt („nichts davon ist je gelaufen"). Wer es zuerst liest, liest 20 Tage Rückstand. | eigener Vergleich 30.10. |
 | **U16** | `web-api-1` steht in der Vertrauensliste als `controller` statt als `web`. | am 30.10.2026 von einem anderen Strang gemessen |
 | **U17** | Die Einheit des Controllers verlangt `RuntimeDirectoryMode=0700`, danach steht der Ordner auf 711 — erklärt (der Controller setzt ihn selbst), heißt aber: **aus einem Dateimodus lässt sich nicht auf die aufgespielte Fassung schließen**. | am 30.10.2026 von einem anderen Strang gemessen |
+| **U18** | **Die Oberfläche prüft erst, mit wem sie spricht, nachdem sie den Anmeldebeweis geschickt hat.** Der Kettenpfad für die Vertrauensliste verlangt eine Sitzung (`login/trust.go:34` über `h.Live`), also läuft `verifyAPI` erst nach `loginFinish`. **Das ist kein Leck:** das Passwort verlässt den Browser nie — `contracts/proof.js` leitet im Worker einen Schlüssel ab und schickt eine Unterschrift über die Bytes der Client-Bescheinigung, an Nonce und Zweck gebunden; ein abgefangener Beweis gilt für diese eine Bescheinigung und diesen einen Nonce. Die Argon2-Parameter der ungeprüften Gegenstelle hält `proof.validateKDF` gegen den Vertrag, bevor abgeleitet wird. Bleibt eine **Frage an den Entwurf**: ist „erst beweisen, dann prüfen, wem" so gewollt? | am 30.10.2026 von einem anderen Strang gemessen |
 
-**Das sind 17 Sachen.**
+**Das sind 18 Sachen.**
 
 ---
 
@@ -205,12 +206,12 @@ Hier steht nichts Neues — nur, welche der Zeilen oben keinem Agenten gehören.
   Fremder NGC damit sinnvoll benutzt. Wer anders urteilt, verschiebt eine Zeile.
 - **Keine Zahl in Stunden oder Tagen.** Die Spalte „Was es braucht" sagt nur: bauen, messen
   oder entscheiden. Schätzungen wären erfunden.
-- **Neun Einträge habe ich nicht selbst gemessen** (A8a, A8b, A8c, A19a, A28a, S14, S15,
-  U16, U17). Sie kommen als Meldungen anderer Stränge vom 30.10.2026, übernommen und
+- **Zehn Einträge habe ich nicht selbst gemessen** (A8a, A8b, A8c, A19a, A28a, S14, S15,
+  U16, U17, U18). Sie kommen als Meldungen anderer Stränge vom 30.10.2026, übernommen und
   nicht nachgeprüft.
 - **Eine „Container-Verdoppelung" wurde gemeldet, ohne Einzelheiten.** Sie steht hier
   darum nicht als eigener Eintrag.
-- **Die 107 enthalten Doppelungen**, und die Zahl der eigenen Einträge (63) ist von Hand
+- **Die 108 enthalten Doppelungen**, und die Zahl der eigenen Einträge (64) ist von Hand
   zusammengeführt. Wer anders schneidet, kommt auf eine andere Zahl.
 - **Die Übernahmen aus `bis-zur-veroeffentlichung.md` sind vom 18.10.2026.** Was ich am
   30.10. selbst nachgesehen habe, steht in der Quellenspalte mit Datum; der Rest ist
