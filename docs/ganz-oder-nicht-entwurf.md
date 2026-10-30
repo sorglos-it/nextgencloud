@@ -196,3 +196,69 @@ schwerste Fall nicht die fehlende Kopplung, sondern **zwei Verwalter für einen
 Container** — und dann steht hier ein anderer Entwurf, in dem der Controller
 seine Container beim Start wiedererkennen oder abräumen muss. Darum ist M3 die
 Messung, die der Zustimmung am meisten wert ist.
+
+---
+
+# Nachtrag vom 30.10.2026: M3 verschiebt die Rangfolge
+
+Die drei Wege oben standen, bevor M3 gefahren war. Gemessen ist jetzt
+(`docs/ganz-oder-nicht.md`, M3): ein `kill -9` auf den Controller lässt die
+App-Container als Waisen laufen, **und** der nach fünf Sekunden
+zurückkehrende Controller legt eigene daneben. Vier lebende `conmon`, zwei je
+App, beide Paare in derselben cgroup, und nach außen war **nichts** zu sehen:
+Oberfläche und Anmeldung durchgehend `200`.
+
+**Das ist kein Stabilitätsposten mehr.** Ein Container, den kein Verwalter
+kennt, läuft mit den Rechten seines App-Benutzers weiter, und die Oberfläche
+kann ihn nicht zeigen. Nach der Rangfolge Sicherheit > Stabilität >
+Geschwindigkeit steht er damit **vor** allem, was oben steht.
+
+## Was sich an der Empfehlung ändert
+
+**Neuer Posten 0, vor Weg C:** der Controller muss beim Start die Container
+seiner Apps **wiedererkennen oder abräumen**, bevor er neue anlegt. Welches von
+beiden, ist eine Entscheidung und keine Technik: wiedererkennen hält die App
+durchlaufend und ist das Freundlichere, abräumen ist das Einfachere und kostet
+den Benutzer einen Neustart seiner App. Gemessen ist nur, dass heute **keines
+von beiden** geschieht.
+
+**Weg C Posten 1 und 2 werden dadurch gefährlicher, nicht harmloser.**
+`Restart=always` auf einem Dienst bedeutet: jeder Absturz kommt zurück, und
+nach M3 heißt „kommt zurück" am Controller **„legt noch einen Satz Container
+an"**. Ob jeder weitere Absturz noch einmal verdoppelt, ist nicht gemessen
+(dort angehalten) — aber solange das offen ist, ist eine schnellere Rückkehr
+keine Verbesserung. **Posten 0 kommt vor Posten 1.**
+
+**Weg A sieht in diesem einen Licht besser aus, und bleibt doch abgelehnt.**
+Hätte der Knoten eine Kopplung, die beim Tod des Controllers alles auf svc-1
+abräumt, gäbe es die Waisen nicht. Das ist das stärkste Argument für die
+Herkunfts-Idee, das diese Messreihe erbracht hat, und es gehört hierhin. Es
+ändert die Empfehlung trotzdem nicht: die drei gemessenen Nicht-Ausfälle (B2,
+B3, B5) bleiben, und Weg A macht aus ihnen Ausfälle. Posten 0 behebt die Waisen
+an der Ursache — ein Verwalter, der seine Container nicht wiedererkennt — statt
+sie durch einen größeren Ausfall zu verdecken. **Eine Kopplung, die ein
+Aufräumproblem löst, löst es, indem sie mehr kaputt macht.**
+
+**Weg B wird durch M3 wichtiger.** „Zwei Instanzen je App laufen, die
+Oberfläche zeigt eine" ist genau der halbe Zustand, den Weg B sichtbar machen
+soll — und er ist jetzt ein gemessener Fall und kein gedachter. Die Vorgabe des
+Koordinators bleibt: nach außen nur „vollständig" oder „ein Teil fehlt", und
+nur für den angemeldeten Verwalter.
+
+## Reihenfolge, neu
+
+1. **Posten 0** — der Controller erkennt seine Container wieder oder räumt sie
+   ab. Sicherheit, und damit vor allem anderen.
+2. **M2 messen** — greift der Riegel gegen die Neustart-Schleife? Offen,
+   angehalten, und Voraussetzung für Posten 1 und 2.
+3. **Weg C Posten 3** (Lebensprobe im Lastverteiler) — unabhängig von beidem
+   und durch M1 bestätigt: die erste Anmeldung nach einem Absturz bekommt eine
+   nackte Apache-Seite, in der kein Feld `code` steht.
+4. **Weg C Posten 1 und 2** (`Restart=always`, `on-failure`) — erst nach 1 und 2.
+5. **Weg B** — wenn Posten 0 steht.
+6. **Weg A** — nicht.
+
+Und der Satz aus „Der Satz, der vor jeder Wegwahl kommt" gilt unverändert und
+wird durch M3 nur dringender: die Kopplung oder ihr Fehlen muss als Satz in
+`docs/` stehen. Heute steht dort nichts, und ein Zufall, der sich wie eine
+Entscheidung benimmt, hat gerade zwei Container je App erzeugt.
