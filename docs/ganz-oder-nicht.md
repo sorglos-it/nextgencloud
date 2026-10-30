@@ -596,3 +596,43 @@ auf gemessenem Grund: der Riegel, der eine Neustart-Schleife bremsen soll,
 `StartLimitIntervalUSec` an `RestartSec` anzupassen, fügt der Anlage eine
 unbegrenzte Schleife hinzu — und am Controller füttert jede Runde davon die
 Verdoppelung aus M3b.
+
+## Berichtigung zu M3/M3b: es sind nicht zwei Behälter, sondern einer mit zwei Prozesssätzen
+
+Gemessen von einem Nachbarstrang auf denselben Prozessen, und es macht den
+Befund **schärfer**, nicht kleiner: `conmon` 787 und `conmon` 4350 tragen
+**dieselbe Behälter-Kennung** `f42bcd313a5e017e…08a6b410`, und
+`containers.json` kennt genau **einen** Behälter. Dazu ein `catatonit -P`
+(4328).
+
+Meine Formulierung „zwei Container-Instanzen je App laufen" war darum zu
+freundlich zu podman und zu unfreundlich zur Lage. Richtig ist:
+
+**Ein Behälterdatensatz, mehrere laufende Prozesssätze. podman glaubt, es laufe
+einer.**
+
+Zwei Folgen, und die zweite ist die, die den Befund aus der Sichtbarkeit
+heraushebt:
+
+1. **Wer nach doppelten Behältern sucht, findet nichts.** Eine Prüfung über
+   `podman ps` oder `containers.json` sieht einen **gesunden** Knoten. Nur die
+   Prozesse und die cgroup zeigen es. Eine Überwachung, die den Behälter fragt,
+   kann diesen Zustand nicht finden — dieselbe Falle wie das `SELECT 1` aus
+   `docs/ausfall-nachtrag.md`, das einen Knoten ohne Quorum für gesund erklärt.
+2. **Alle `ngc-hold` schreiben auf denselben Datenordner.** Bei der Uhr ist das
+   harmlos. Bei einer App mit einer Datenbank darin ist es ein Weg zu
+   beschädigten Daten. Damit ist es kein reiner Sichtbarkeitsbefund mehr.
+
+**Und eine meiner offenen Fragen ist damit beantwortet:** beide tragen Abbild
+**1.0.1**, gleiche Abbild-Schicht, gleiche Programm-Prüfsumme. Der Verdacht,
+der alte Satz hänge auf einer veralteten Fassung, ist **widerlegt** — es ist
+derselbe Behälter, also kann er es nicht.
+
+**Meine Einschränkung bleibt trotzdem stehen, und sie wird durch die
+Berichtigung nicht kleiner:** gemessen ist, dass mehrere Prozesssätze laufen
+und auf denselben Ordner schreiben **können** — nicht, dass sie es gerade tun.
+Es lauscht kein Port, und die Prozesse sind Halteprozesse. Nicht größer
+schreiben, als es ist.
+
+Die Behebung baut der Strang „Die Härtung wirklich durchsetzen"; die Fassung
+0.3.0 gehört ihm. Hier wird gemessen, nicht gebaut.
