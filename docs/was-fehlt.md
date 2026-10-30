@@ -15,10 +15,11 @@ Punkte im Entscheidungsbuch, drei veröffentlichte Fassungen. Trotzdem fehlt ein
 | `docs/bis-zur-veroeffentlichung.md` — H1–H10 + H4a, R1–R17, B1–B8 | **36** |
 | `docs/messungen-m1-m3.md` — offene Lücken | **3** |
 | `docs/vertraege-v1.2.md`, Punkte 63–95 — „zu bauen" / „offen" / „nicht gemessen" | **24** |
-| **gefunden, mit Doppelungen** | **98** |
+| Meldung eines anderen Strangs, am 30.10.2026 gemessen (A8a, A8b) | **2** |
+| **gefunden, mit Doppelungen** | **100** |
 
-Nach Abzug der Doppelungen (dieselbe Sache steht oft an drei Stellen) bleiben **54 eigene
-Einträge**: **12 sperren**, **27 halten auf**, **15 stören nur uns**.
+Nach Abzug der Doppelungen (dieselbe Sache steht oft an drei Stellen) bleiben **56 eigene
+Einträge**: **12 sperren**, **29 halten auf**, **15 stören nur uns**.
 
 **Was sich seit dem 18.10.2026 geschlossen hat** — am 30.10.2026 selbst nachgesehen, nicht
 übernommen:
@@ -73,6 +74,8 @@ Das ist der halbe Weg. Was bleibt, steht unten.
 | **A6** | Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat — das nächste `OPEN` darauf verschwindet lautlos. | Punkt 86 | bauen |
 | **A7** | Nach „Aufnehmen" zeigt die Liste den Server weiter, der Anker bleibt bei `seq: 1`. Ob ausbleibende Auffrischung oder halber Vorgang: **nicht gemessen**. | B6 · Punkt 62 | messen, dann bauen |
 | **A8** | Die fünfte Schutzeinstellung der Oberfläche ist nicht gemessen — die Oberfläche sagt über sich selbst, dass sie eine nicht kennt. | B8 · Punkt 56 | messen |
+| **A8a** | **Ein Teil kann wegbrechen, ohne dass es jemand sieht.** Controller auf svc-1 aus: alle App-Container weg — die Anlage meldete trotzdem 40 von 40 guten Anmeldungen. NGC hat keine Stelle, die sagt „mir fehlt ein Teil". | am 30.10.2026 von einem anderen Strang gemessen | bauen |
+| **A8b** | **NGC startet ohne eine Klage, wenn ein Spaltentyp vom Erwarteten abweicht** — und liest danach eine falsche Reihenfolge. Gemessen an `ngc_blob`, auf SQLite und auf MariaDB. | am 30.10.2026 von einem anderen Strang gemessen | bauen |
 
 ### Riegel, die gebaut sind und nicht greifen
 
@@ -195,7 +198,9 @@ Hier steht nichts Neues — nur, welche der Zeilen oben keinem Agenten gehören.
   Fremder NGC damit sinnvoll benutzt. Wer anders urteilt, verschiebt eine Zeile.
 - **Keine Zahl in Stunden oder Tagen.** Die Spalte „Was es braucht" sagt nur: bauen, messen
   oder entscheiden. Schätzungen wären erfunden.
-- **Die 98 enthalten Doppelungen**, und die Zahl der eigenen Einträge (54) ist von Hand
+- **A8a und A8b habe ich nicht selbst gemessen.** Sie kommen als Meldung eines anderen
+  Strangs vom 30.10.2026. Ich habe sie übernommen, nicht nachgeprüft.
+- **Die 100 enthalten Doppelungen**, und die Zahl der eigenen Einträge (56) ist von Hand
   zusammengeführt. Wer anders schneidet, kommt auf eine andere Zahl.
 - **Die Übernahmen aus `bis-zur-veroeffentlichung.md` sind vom 18.10.2026.** Was ich am
   30.10. selbst nachgesehen habe, steht in der Quellenspalte mit Datum; der Rest ist
