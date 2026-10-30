@@ -26,6 +26,23 @@ In drei von fünf gemessenen Fällen war „sieht heil aus" dagegen die **richti
 Auskunft: es fehlte wirklich nichts. Das ist der Grund, warum die naheliegende
 Lösung die falsche sein könnte.
 
+## Der Satz, der vor jeder Wegwahl kommt
+
+**Diese Entscheidung steht nirgends aufgeschrieben — sie steht in der
+Abwesenheit von vier Zeilen.**
+
+CLAUDE.md dieses Repos sagt: was nicht im Repo steht, gilt nicht. Also ist der
+heutige Zustand **keine Entscheidung, sondern ein Zufall, der sich wie eine
+benimmt**: niemand hat je geschrieben „die NGC-Dienste sind absichtlich
+entkoppelt", und niemand hat je geschrieben, dass sie gekoppelt sein sollen.
+Die Entkopplung ist das, was systemd ohne Zutun tut.
+
+**Darum gilt, unabhängig davon, welcher der drei Wege gewählt wird: die
+Kopplung — oder ihr Fehlen — muss als Satz in `docs/` stehen.** Fällt die Wahl
+auf „nichts koppeln", ist das ein Satz, der geschrieben werden muss, und nicht
+der Zustand, in dem man schon ist. Das ist die einzige Zeile dieses Blatts, die
+in jedem Fall fällig ist, auch wenn an der Anlage nichts geändert wird.
+
 ## Weg A — alles mitnehmen (die Herkunfts-Idee)
 
 Jeder Knoten bekommt eine Kopplung, die den ganzen Knoten abräumt, sobald ein
@@ -65,16 +82,27 @@ unten gewesen. **Weg A macht aus zwei gemessenen Nicht-Ausfällen zwei echte.**
    Punkt, dessen Ausfall alles mitnimmt — genau die Stelle, die der Auftrag als
    schon bekannt nennt.
 
+**Und das ist die Stelle, an der eine Idee aus einem Durchsatz-Wettbewerb an
+einer echten Anlage scheitert.** Dort läuft ein Programm mit mehreren Prozessen
+auf einer Maschine, und „stirbt einer, bringt der Elternprozess die anderen um"
+ist richtig, weil die Prozesse ohne einander nichts können. Hier sind es sechs
+Maschinen mit verschiedenen Aufgaben, von denen drei einen Ausfall des Nachbarn
+gemessen **überlebt** haben. Die Regel ist nicht falsch — sie gilt für einen
+Aufbau, der dieser nicht ist.
+
 ## Weg B — den halben Zustand sichtbar machen, nicht verbieten
 
 Nichts wird abgeräumt. Stattdessen bekommt die Anlage, was ihr fehlt: eine
 Stelle, die sagt, dass ein Teil weg ist. Drei Stücke, von innen nach außen:
 
-1. **Eine Vollständigkeits-Auskunft in `ngc-api`**, die nennt, welche Teile sie
-   gerade erreicht (Datenbank, die Controller der Vertrauensliste, der Laden) —
-   mit Namen und Zahlen, nie mit Werten, und **ohne Anmeldung nur als
-   „vollständig / unvollständig"**, damit sie keine Landkarte der Anlage an
-   Unangemeldete gibt.
+1. **Eine Vollständigkeits-Auskunft in `ngc-api`**, und zwar mit genau zwei
+   möglichen Antworten: **„vollständig"** oder **„ein Teil fehlt"**. Welcher
+   Teil, wie viele, welche Fassung — nichts davon, und nur für den
+   **angemeldeten Verwalter**. Das ist eine Vorgabe des Koordinators und keine
+   Anregung: nach Sicherheit > Stabilität heißt „sichtbar machen" nicht
+   „ausplaudern". Eine Auskunft, die „die Datenbank ist weg" sagt, nennt dem
+   Unangemeldeten den Moment, in dem Anmeldeversuche nicht mitgeschrieben
+   werden.
 2. **Eine Lebensprobe im Lastverteiler**, damit ein totes API-Mitglied draußen
    bleibt. Das behebt gemessen die 6 von 40 `500`-Antworten: `retry=5` holt das
    tote Mitglied heute alle fünf Sekunden zurück, und `failontimeout=On` greift
