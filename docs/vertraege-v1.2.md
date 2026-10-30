@@ -7572,6 +7572,101 @@ Weg abgebrochen. Was dabei herauskam, ist für den Weg selbst brauchbar:
 Anlage anrichtet. Die Vorhersage aus dem Quelltext steht unten unter „Abgewogen" und ist
 unverändert offen.
 
+### Gemessen am 30.10.2026: ein zweiter Hub, und er kostet wieder keine Daten — aber er lässt zwei Fassungen gleichzeitig laufen
+
+Am 30.10.2026 um 18:18:05 UTC wurde die Uhr auf `svc-1` ein zweites Mal gehoben, von 1.0.1 auf
+1.0.2, aus der Oberfläche heraus von Hand. Der Hauptbefund des Punkts steht damit zum dritten Mal:
+
+**Der Hub kostet keine Daten, und er kostet sie auch auf einer gestörten Maschine nicht.** Vor und
+nach dem Hub Byte für Byte dasselbe:
+
+```
+zugriffe            43     sha256 0e55092af0746630c98d1b2e0d960617c33f8ea7b55739fd18cb7cd5342a28ca
+vor-dem-update.txt  61 B   sha256 0ec76c9ff6d8b69610bc144496d6fe03595f62ee3f14024c770dfb6940b68465
+Eigentuemer                ngc-uhr-ad8c00e2  uid 995  gid 987   Rechte 600
+Zeitstempel                zugriffe 13:20:21 UTC, Markierung 25.10. 19:49:08 — unveraendert
+```
+
+Die Markierung liegt seit dem 25.10. da und hat jetzt **zwei** Hübe überlebt. Der Zähler stand vor
+und nach dem Hub auf 43, also hat auch keiner der beiden Prozesssätze (siehe unten) dazwischen
+hineingeschrieben.
+
+**Die Ausfallzeit: 249,9 ms.** Aus den podman-Ereignissen im Journal von `svc-1`:
+
+```
+18:18:05.346764  image loadfromarchive  7291709bcd5a  .../staged/accept-1568701847/files/services/amd64.tar
+18:18:05.432050  container died         f42bcd313a5e  (image=localhost/ngc/uhr:1.0.1)
+18:18:05.510222  container cleanup      f42bcd313a5e
+18:18:05.565224  container remove       f42bcd313a5e
+18:18:05.591286  image pull             7291709bcd5a  localhost/ngc/uhr:1.0.2
+18:18:05.622194  container create       5ec5da237f4b  (image=localhost/ngc/uhr:1.0.2)
+18:18:05.677880  container init         5ec5da237f4b
+18:18:05.681901  container start        5ec5da237f4b
+```
+
+Gestorben 18:18:05.432050, gestartet 18:18:05.681901 — **249,851 ms** weg. Ganzer Vorgang ab dem
+Entpacken 335,1 ms. Zum Vergleich die erste Messung vom 25.10.2026: 262 ms weg, 341 ms ganzer
+Tausch. Zwei Messungen, zwei Maschinenzustände, dieselbe Größenordnung; die Reihenfolge
+anhalten → entfernen → anlegen → starten ist in beiden identisch, es gibt keinen Parallellauf der
+beiden Fassungen während des Tauschs.
+
+**Diese Maschine war beim Messen gestört, und das muss neben der Zahl stehen.** Ein anderer Strang
+hatte `ngc-controller` auf `svc-1` um 17:00:42 UTC mit `kill -9` abgeschossen; der Controller kam
+um 17:00:47 zurück und startete um 17:05:58 noch einmal. Jeder dieser Starts legte einen weiteren
+Prozesssatz je eingerichteter App an, ohne den vorherigen zu beenden. Zustand unmittelbar vor dem
+Hub, um 17:14:56 UTC: `pgrep -c -u ngc-uhr-ad8c00e2 ngc-hold` = **3**, dasselbe für das Terminal
+= **3**. Ein Hub auf einer Maschine mit drei Prozesssätzen misst nicht den sauberen Hub.
+
+Die Dauer oben ist davon dennoch unberührt, und zwar nachweislich: in den podman-Ereignissen des
+Tauschs kommen **nur** `f42bcd313a5e` und `5ec5da237f4b` vor. Der Tausch hat die beiden anderen
+Sätze nicht angefasst. Ohne diesen Beleg wäre die Zahl wertlos gewesen.
+
+**Und hier der eigentliche Befund dieses zweiten Hubs: nach dem Hub laufen zwei verschiedene
+Fassungen der Uhr gleichzeitig auf demselben Datenordner.** Gemessen um 18:19:09 UTC, Schicht aus
+`/proc/<pid>/mountinfo` und Prüfsumme von `/proc/<pid>/root/usr/lib/ngc/ngc-uhr`:
+
+```
+pid  789  start 14:08:24  overlay/4500702b93a7  prog 1846f6d3a4cf…  = uhr:1.0.1
+pid 4352  start 17:00:47  overlay/4500702b93a7  prog 1846f6d3a4cf…  = uhr:1.0.1
+pid 7321  start 18:18:05  overlay/24dc2ae6a07f  prog 74792027b62f…  = uhr:1.0.2
+```
+
+Alle drei in cgroup `/ngc.apps/ngc-uhr-ad8c00e2` (`procs=6`, `pids.current=21`), alle im Zustand
+`S`, alle mit demselben Datenordner `/var/lib/ngc/apps/org.sorglos.uhr`. Die Zuordnung der
+Schichten ist über die Eltern-Schicht belegt: `24dc2ae6a07f` → Eltern `f8a1cfa1d53b` → Abbild
+`7291709bcd5a` = `localhost/ngc/uhr:1.0.2`; `4500702b93a7` → Eltern `e254f868805d` → Abbild
+`15964a559108` = `localhost/ngc/uhr:1.0.1`.
+
+Der Hub selbst hat dabei **keinen** Satz dazugelegt — die Zahl blieb 3 — aber er hat nur den
+**einen** Satz getauscht, den podman kannte. Die beiden Waisen laufen weiter auf der alten Fassung.
+Es gibt also keinen zweiten Weg in diesen Fehler hinein, und auch keinen heraus.
+
+**Dazu der Teil, der jede naheliegende Behebung aushebelt: podman hat den alten Behälterdatensatz
+gelöscht, während dessen Prozesse weiterlaufen.** `container remove f42bcd313a5e` um
+18:18:05.565224, und `overlay-containers/containers.json` kennt danach genau einen Behälter,
+`5ec5da237f4b`; `f42bcd313a5e` kommt darin nicht mehr vor. Die Prozesse 789 und 4352 laufen
+trotzdem. Daraus folgt:
+
+- **Die Waisen sind über podman nicht mehr erreichbar.** Kein `podman ps` zeigt sie, kein
+  `podman stop` oder `podman rm` erreicht sie. Sie verschwinden nur durch `kill` auf die PID oder
+  durch einen Neustart der Maschine. Wer über podman aufräumt, lässt bestehende Waisen stehen und
+  ist auf einer frischen Maschine trotzdem grün.
+- **Die Waisen nageln die alten Abbilder fest.** Schicht `4500702b93a7` ist weiter von zwei
+  Prozessen gemountet, also ist das 1.0.1-Abbild nicht löschbar. Der Abbild-Haufen aus dem
+  Abschnitt weiter oben wuchs mit diesem Hub von **2 Abbildern / 93 MB** auf **3 / 97 MB** und
+  lässt sich nicht aufräumen, solange Waisen laufen. Zwei Fehler, die sich gegenseitig halten.
+- **Das Messgerät für die Behebung** ist darum nicht die Prozesszahl allein: `pgrep -c -u
+  <app-benutzer> ngc-hold` **und** die Zahl der Einträge in `containers.json` müssen
+  übereinstimmen. Am 30.10. standen sie auf **3** und **1**. Die Abweichung zwischen den beiden
+  Zahlen ist der Fehler, nicht die 3.
+
+**Was dieser zweite Hub NICHT misst:** den Hub auf einer unberührten Maschine. Die Verdoppelung
+stammt aus einer Controller-Fassung 0.3.0 vom 30.10. 14:08, die ein anderer Strang gebaut hat; die
+Behebung läuft dort. Die Gegenmessung auf einer frischen Maschine steht aus. Dass zwei Fassungen
+gleichzeitig laufen, ist eine Folge der Verdoppelung und **kein** Befund über den Hub-Weg selbst —
+wohl aber der Beweis, dass die Verdoppelung schwerer ist als ein Schönheitsfehler: sie führt zu
+zwei verschiedenen Programmen auf einem Datenbestand.
+
 ### Abgewogen, nicht gemessen
 
 Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
