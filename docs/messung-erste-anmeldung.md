@@ -200,3 +200,61 @@ mit zwei APIs hat dieser Mechanismus eine echte Chance; auf ngc-ein mit einer
 einzigen API kann dort nichts wechseln -- dort hat die Leitsitzung drei Läufe
 gegen `https://ngc.test:7443/api/v1/setup` gemessen, alle 200, 6 ms, kein
 langsamer erster Lauf. Die Frage liegt bei Thomas.
+
+## V1 ist gefallen (30.10.2026)
+
+Thomas' `hosts`-Datei hat als einzige NGC-Zeile `10.2.3.216 ngc.test
+store.ngc.test`. Sein Browser landet auf **ngc-ein**, der Einzelmaschine: ein
+API-Knoten (`node: ein`, ein Dienst, ein Balancer-Mitglied). **Es gibt dort kein
+api-2, auf das verteilt werden könnte.**
+
+- **V1 widerlegt**, und damit der api-2-Mechanismus für Thomas' Erscheinung.
+  Grund: diese `hosts`-Zeile.
+- An der **Sechs-VM-Anlage** bleibt der Mechanismus richtig und bleibt ein
+  echter Mangel. Er erklärt nur nicht, was Thomas erlebt.
+- Einschränkung: das ist seine Namenszuordnung, nicht sein Klick. Tippt er eine
+  IP direkt, kann er woanders landen. Die Frage bleibt offen, aber die
+  Beweislast hat sich gedreht.
+- V2 und V3 bleiben als Trennschnitt gültig.
+
+Damit war die Vorsorge das Wertvolle, nicht die Vermutung: weil die drei
+Vorhersagen vor der Messung eingecheckt waren, ist jetzt zu sehen, welche
+gefallen ist, statt dass sie nachträglich umgedeutet wird.
+
+## Was auf einer Einzelmaschine überhaupt noch asymmetrisch sein kann
+
+Eingegrenzt über den Satz, den Thomas sieht. „Anmeldung fehlgeschlagen." ist
+NICHT jeder Fehler: ein `E_UNREACHABLE` zeichnet „Dienst nicht erreichbar"
+(`auth/login.js`, `unreachableText`), ein `E_LOCKED` den Zähler. Damit fällt
+eine ganze Klasse weg:
+
+- **Ein kalter Zwischenspeicher der Vertrauensliste im Dienst ist
+  ausgeschlossen.** `finish.go:104-115`: scheitert `h.S.Trust(ctx)`, antwortet
+  der Pfad `E_UNREACHABLE`, und die Maske sagt „Dienst nicht erreichbar" --
+  nicht den Satz, den Thomas sieht.
+
+Was bleibt, mit je einem Trennschnitt, den der Mitschnitt zieht:
+
+1. **Die Nonce** (`finish.go:254`, `OnceUse`; `live.go:454`,
+   `OncePurge(now - MaxSkew)`). Auf einer Einzelmaschine fällt der
+   Uhrenvergleich zwischen Knoten weg, nicht aber ein **Sprung** der Uhr
+   zwischen `login/start` und `login/finish`. Trennschnitt: dann antwortet
+   `login/finish` mit **E_LOGIN, nicht mit 200**.
+2. **Der WebSocket.** `Link.connect(socketURL(), ...)` läuft in `login()` NACH
+   `verifyAPI`, und ein gewöhnlicher Fehler dort ergibt denselben einen Satz.
+   Dieser Schritt war bisher in keinem Verdacht. Trennschnitt: `login/start`,
+   `login/finish` und `trust?from=1` sind alle **200**, und die `ws`-Zeile ist
+   die, die stirbt.
+3. **Die Vertrauensliste von ngc-ein.** Ihre Fassung ist nicht lesbar
+   (verschlüsselte Datei, Absicht). Ein einziger Knoten kann in Fassung 1 nicht
+   fehlen -- sonst käme niemand je hinein --, aber sein Signierschlüssel kann
+   **gewechselt** worden sein. Trennschnitt: das scheitert bei JEDEM Versuch,
+   nicht bei jedem zweiten, und die Konsole sagt dann
+   `session: malformed certificate`.
+4. **Etwas im Browser, das der erste Versuch aufwärmt.** E3 schließt die
+   Argon2-Frist aus; bleiben der Modulabruf und IndexedDB. Trennschnitt: dann
+   stirbt es VOR `login/finish`, und dessen Zeile fehlt im Mitschnitt ganz.
+
+**Die ganze Messung reduziert sich damit auf eine Frage:** welche der vier
+Zeilen `login/start`, `login/finish`, `trust?from=1`, `ws` ist die letzte, die
+gelungen ist? Die Liste für Thomas gilt für ngc-ein unverändert.
