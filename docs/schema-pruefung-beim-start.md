@@ -123,6 +123,67 @@ Nein, und der Unterschied ist wichtig:
 ein zu großes Ergebnis sind dort kein Schönheitsfehler: sie wandern weiter, und es gibt
 keinen Fehler, an dem jemand es merken könnte.
 
+## Wo der Riegel steht, entscheidet, ob er hält
+
+Das ist der wichtigste Befund dieser Arbeit, und er ist am 30.10.2026 an fünf Tabellen
+gemessen:
+
+> **Wo der Riegel in Go steht, hält er. Wo er in SQL steht, kippt er auf SQLite um.**
+
+„Kippt um" und nicht „fällt aus" – der Unterschied ist genau der zwischen Stabilität und
+Sicherheit. SQLite ordnet jeden Text hinter jede Zahl, also wird ein Vergleich nicht
+falsch, sondern **gegenteilig**. Gemessen an einer Zeile, deren Wert 1000 ist:
+
+| Vergleich | ungebogen (`integer`) | verbogen (`text`) | richtig |
+|---|---|---|---|
+| `expires > 5000` | 0 | **1** | 0 |
+| `expires >= 5000` | 0 | **1** | 0 |
+| `expires < 5000` | 1 | **0** | 1 |
+| `expires <= 5000` | 1 | **0** | 1 |
+
+Alle vier kippen. Damit entscheidet die **Richtung** des Vergleichs, wie schlimm es wird:
+
+- Ein Riegel, der „erlaubt" als `> ` oder `>=` schreibt, **lässt alles durch**.
+- Ein Riegel, der „frei" oder „abgelaufen" als `<` oder `<=` schreibt, **weist alles ab**
+  oder räumt nichts – unangenehm, aber die sichere Richtung.
+
+### Was das an den fünf Tabellen angerichtet hat
+
+| Stelle | Riegel steht in | gemessen |
+|---|---|---|
+| `ngc_once.expires` (`onceUse`, `expires > ?`) | **SQL** | **SICHERHEITSBEFUND:** abgelaufener Einmalwert wird angenommen und gibt sein Geheimnis heraus (`data="geheim2"`, `err=nil`). MariaDB 11.8.6 weist korrekt ab. |
+| `ngc_log.ts` (`LogQuery`, `ORDER BY ts DESC … LIMIT`) | SQL | **Prüflog verliert Einträge:** Blättern mit `Limit=1` liefert `[9]` nach einer Seite statt `[100 10 9]` nach drei. Beide Wege, kein Fehler. Auf SQLite geben die Folgeseiten gar nichts. |
+| `ngc_blob.seq` (`blobFrom`, `seq >= ?`) | SQL | falsche Reihenfolge auf beiden Wegen, auf SQLite zusätzlich zu viele Zeilen |
+| `ngc_user.locked` | **Go** (`coreapp/users.go:90`) | hält. Konto bleibt gesperrt, beide Wege |
+| `ngc_session.expires` | **Go** (`login/live.go:114`) | hält. Sitzung bleibt abgelaufen, beide Wege. Nur `SessionPurge` räumt auf SQLite nicht – Stabilität |
+| `ngc_lock.until` (`lockTake`, `until <= ?`) | SQL | hält – weil `<=` in die **sichere** Richtung kippt. Ein zweiter Halter bekommt das Schloss nicht (`ok=false`, beide Wege) |
+
+`LockTake` prüft `until` in Go **gar nicht** ([once.go:130](../apps/server-db/classes/sqlstore/once.go)),
+ebenso `takeLock` der Migrationen ([migrate.go:171](../apps/server-db/classes/migrate/migrate.go)).
+Dass beide trotzdem halten, ist kein Verdienst des Codes, sondern die Richtung des
+Vergleichs. Eine Umkehrung in die andere Richtung – etwa `until > ?` für „gehalten" – wäre
+zwei Server, die gleichzeitig DDL in ein Schema schreiben.
+
+**Breit gesucht**, wie die Leitsitzung verlangt hat: alle SQL-Anweisungen in `apps/` mit
+einem Größenvergleich im `WHERE`, ohne `vendor/` und ohne Testdaten. Es sind sechs, sie
+stehen alle in der Tafel oben. `ngc_once.expires` ist die einzige, die „erlaubt" als `>`
+schreibt, und damit die einzige, bei der die Umkehrung einen Sicherheitsriegel öffnet.
+
+### Was daraus behoben ist
+
+Der Riegel in `OnceUse` ist auf dem Zweig `once-riegel` nachgezogen: nach dem UPDATE wird
+der Ablauf **ein zweites Mal in Go** geprüft. Es ist ein zweiter Riegel, kein Ersatz – die
+Entscheidung bleibt beim UPDATE.
+
+**Eine Prüfung VOR dem UPDATE ist nicht möglich**, und das ist keine Bequemlichkeit:
+`TestOnceUseDecidesWithItsWrite` liest den Quelltext und weist eine Leseprüfung vor dem
+Schreiben ab, und `TestOnlyOneUseGetsTheValue` misst mit 32 Nebenläufern über 400 Runden,
+warum – der Wert wird von dem Schreiben verbraucht, das ihn herausgibt. Ein Lesen davor
+wäre ein Zeitfenster für zwei Aufrufer.
+
+Das Prüflog ist **nicht** behoben: es gehört zu Weg A oder B, nicht zu einem einzelnen
+Riegel.
+
 ## Vier Wege, und was jeder kostet
 
 Rangfolge nach `Z:\GitHub\claude-md`: Sicherheit > Stabilität > Geschwindigkeit.
@@ -182,6 +243,24 @@ Mit dieser Regel: **55 Spalten geprüft, 0 Abweichungen.** Gegenprobe im selben 
 fällt auf. Damit ist die Messung, auf die Weg A gewartet hat, erbracht; offen bleibt an A
 nur noch das rollende Update, und das ist das stärkere der beiden Argumente.
 
+**Nachgefahren gegen die Fassung, die die Anlage wirklich fährt.** Die Tafel oben stand
+zuerst auf MariaDB 11.4; die Anlage fährt `11.8.6-MariaDB-0+deb13u1 from Debian`. Am
+30.10.2026 gegen genau diese Fassung nachgemessen – aus `debian:trixie` plus
+`apt-get install mariadb-server`, nicht vom Hersteller, weil die Anlage das Debian-Paket
+fährt; die Fassungszeichenkette stimmt wörtlich mit der von db-1 überein. **Ergebnis
+unverändert:** `bigint(20)` schreibt auch 11.8.6, 20 von 55 Spalten kommen anders
+geschrieben zurück, und die enge Regel hält mit 0 Abweichungen. Der Vorbehalt
+„`bigint(20)` ist eine Eigenheit der Fassung" ist damit geprüft und ausgeräumt.
+
+### Und die zweite Linie, die keine MariaDB hat
+
+Die Tafel oben deckt nur die MariaDB-Seite. `ngc-ein` fährt keine MariaDB, sondern eine
+verschlüsselte SQLite – und **auf SQLite ist der Schaden in jeder einzelnen Messung
+schlimmer**: der Filter kippt dort zusätzlich zur Reihenfolge, das Prüflog gibt leere
+Folgeseiten, und der Sicherheitsbefund an `ngc_once` tritt überhaupt nur dort auf. Eine
+Prüfung, die nur die MariaDB-Seite deckt, lässt also die gefährlichere Seite ungeprüft –
+und es ist die Maschine, auf der der Browser eines einzelnen Benutzers landet.
+
 ### Weg B – lauter Befund, Server startet trotzdem
 
 Dieselbe Prüfung, aber eine Abweichung ist ein Eintrag im Log mit `ERROR`, ein Punkt im
@@ -226,6 +305,10 @@ statt irgendeinen. Sie bleibt ein Test.
 reparierte Typprüfung in `unlistedInDB`. Damit ist die Angabe da, auf der A, B und C alle
 stehen, und die Lücke in der vorhandenen Prüfung ist zu.
 
+**Der Sicherheitsriegel in `OnceUse` ist nachgezogen** (Zweig `once-riegel`), unabhängig
+von A bis D: er behebt eine Folge der Lücke, nicht die Lücke. Der Grund, warum ein
+Spaltentyp überhaupt abweichen kann, bleibt A oder B.
+
 **Als nächstes B.** Er bringt den Befund ins Feld, ohne eine Anlage anhalten zu können.
 Nach der Rangfolge ist das ein Kompromiss zulasten der Sicherheit, aber er ist bewusst
 gewählt: eine Prüfung, die beim ersten Lauf eine gesunde Anlage stilllegt, kostet mehr
@@ -243,12 +326,14 @@ auftritt und A noch nicht reif ist.
 ## Was nicht gemessen ist
 
 - Dieselbe Messung gegen die Anlage (Galera, sechs VMs). Eine Spalte an der laufenden
-  Anlage zu verbiegen ist ein Eingriff mit eigener Ansage, und es ist offen, ob die
-  Messung überhaupt etwas beantwortet, das der Container nicht beantwortet. Hier ist an
-  der Anlage nichts angefasst worden.
-- Was ein abweichender Typ in `ngc_session`, `ngc_user` und `ngc_log` anrichtet. Gemessen
-  ist `ngc_blob`, weil dort die Folge über `BlobFrom` weiterwandert; die anderen Tabellen
-  sind nicht durchgefahren.
-- Andere MariaDB-Fassungen als 11.4. Die Schreibweise `bigint(20)` ist eine Eigenheit der
-  Fassung, nicht des Standards – MySQL 8 lässt die Breite weg. Weg A gehört gegen die
-  Fassung gemessen, die die Anlage wirklich fährt.
+  Anlage zu verbiegen ist ein Eingriff mit eigener Ansage. Die Frage, die der Container
+  **nicht** beantwortet, ist eine andere als die nach den Typen: ob in einer Galera-Gruppe
+  die Knoten überhaupt verschiedene Schemata tragen können, also ob ein Knoten mit altem
+  Schema erreichbar bleibt. Die ist am Zustand der Knoten ablesbar, **ohne** Eingriff, und
+  sie gehört zu Weg A. Hier ist an der Anlage nichts angefasst worden.
+- Das Prüflog ist gemessen, aber nicht behoben – es gehört zu Weg A oder B.
+- Von den vier Zeittabellen sind je eine Spalte durchgefahren (`expires`, `locked`, `ts`,
+  `until`), nicht alle. `ngc_app`, `ngc_pending` und die Dokumentspalten sind offen.
+- MySQL 8 lässt die Breite bei `BIGINT` weg. Für NGC ist das heute ohne Belang (die Anlage
+  fährt MariaDB 11.8.6, nachgemessen), aber eine Prüfung nach Weg A, die auf `bigint`
+  besteht, wäre dort nicht automatisch richtig.
