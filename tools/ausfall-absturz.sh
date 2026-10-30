@@ -206,9 +206,25 @@ SKRIPT
   case "$Z" in ''|0|*[!0-9]*) echo "ABBRUCH: /run/ngc-absturz.sh ist nicht angekommen ('$Z' Zeilen)."; exit 3;; esac
   echo "    geprueft: Schlagskript liegt auf $KNOTEN, $Z Zeilen"
   echo
-  echo ">>> Dauerschleife: kill -9 auf ngc-api alle 2 s, ${SCHLEIFE}s lang"
-  $SSH "root@$ADDR" "setsid timeout $((SCHLEIFE+30)) /run/ngc-absturz.sh $SCHLEIFE >/dev/null 2>&1 < /dev/null &" 2>&1 | tr -d '\r'
+  echo ">>> $(date -u '+%H:%M:%S') UTC  Dauerschleife: kill -9 auf ngc-api alle 2 s, ${SCHLEIFE}s lang"
+  # BERICHTIGT am 30.10.2026, nachdem der erste Lauf NICHTS gemessen hat.
+  # Vorher stand hier "setsid timeout … &" innerhalb des ssh-Befehls. Der
+  # ssh-Klient endete mit dem Befehl, und die Schleife ging mit ihm - genau
+  # die Falle "ein Halteprozess aus dem Bash-Werkzeug haelt die Gegenseite
+  # nicht offen" aus messen.md, nur mit ssh statt wsl. Der Lauf meldete
+  # dabei 40/40 gute Anmeldungen und sah wie ein Ergebnis aus ("der Riegel
+  # greift nicht, nichts passiert"), war aber eine Messung des GESUNDEN
+  # Betriebs. Jetzt bleibt der Klient fuer die ganze Dauer am Leben, weil er
+  # im Vordergrund derselben Schale laeuft, die auch die Anmeldungen macht.
+  $SSH "root@$ADDR" "timeout $((SCHLEIFE+30)) sh /run/ngc-absturz.sh $SCHLEIFE" >/dev/null 2>&1 &
+  SCHLAEGER=$!
   sleep 3
+  # Und die Pruefung, die beim ersten Lauf gefehlt hat: nicht, dass die DATEI
+  # angekommen ist, sondern dass die SCHLEIFE LAEUFT. Eine angekommene Datei
+  # ist keine laufende Schleife.
+  L=$($SSH "root@$ADDR" "wc -l < /run/ngc-absturz-pids.txt 2>/dev/null" 2>&1 | tr -d '\r ')
+  case "$L" in ''|0|*[!0-9]*) kill "$SCHLAEGER" 2>/dev/null; echo "ABBRUCH: die Schleife schreibt nicht ('$L'). Sie laeuft nicht, nichts gemessen."; exit 3;; esac
+  echo "    geprueft: die Schleife laeuft und schreibt ($L Zeilen nach 3 s)"
   echo
   echo "    Anmeldungen im Takt, solange die Schleife laeuft."
   echo "    Gezaehlt wird, WAS EIN NUTZER DABEI SIEHT - nicht nur, ob der"
@@ -241,8 +257,17 @@ SKRIPT
   echo "    Ein voller Rumpf aus der Schleife, damit der Wortlaut im Blatt steht:"
   echo "      $(anm_voll)"
   echo
+  wait "$SCHLAEGER" 2>/dev/null
   echo "    Die PID-Reihe des Knotens (so viele Neustarts hat es wirklich gegeben):"
-  $SSH "root@$ADDR" "cat /run/ngc-absturz-pids.txt" 2>&1 | tr -d '\r' | sed 's/^/      /'
+  REIHE=$($SSH "root@$ADDR" "cat /run/ngc-absturz-pids.txt" 2>&1 | tr -d '\r')
+  printf '%s\n' "$REIHE" | sed 's/^/      /'
+  # Die Gegenprobe gegen den eigenen Lauf: hat sich die PID ueberhaupt
+  # bewegt? Eine Reihe aus einer einzigen PID heisst, dass kein Schlag
+  # getroffen hat, und dann ist jede Zahl oben eine Zahl ueber den gesunden
+  # Betrieb - so ist der erste M2-Lauf gescheitert.
+  VERSCH=$(printf '%s\n' "$REIHE" | grep -o 'pid=[0-9]*' | sort -u | grep -vc 'pid=0$')
+  echo "    verschiedene MainPIDs in der Reihe (ohne 0): $VERSCH"
+  [ "${VERSCH:-0}" -ge 2 ] || echo "    ACHTUNG: weniger als zwei verschiedene PIDs - die Schleife hat nicht getroffen, die Zahlen oben gelten NICHT."
   echo
   echo "    Hat der Riegel gegriffen? Das sagt diese Zeile, nicht meine Rechnung:"
   $SSH "root@$ADDR" "systemctl show ngc-api -p Result -p NRestarts -p ActiveState -p StartLimitBurst -p StartLimitIntervalUSec" 2>&1 | tr -d '\r' | sed 's/^/      /'

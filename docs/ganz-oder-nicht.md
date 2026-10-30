@@ -510,3 +510,89 @@ Hier wurde wieder angehalten, wie abgesprochen. **Nicht gemessen** ist, was bei
 hoher Zahl passiert (Speicher, `pids.max`), und ob ein Neustart der Maschine
 alle Generationen abräumt. Die Waisen bleiben stehen: sie sind der Beweis, und
 die Behebung gehört der Fassung 0.3.0 und damit einem anderen Strang.
+
+## M2 — gemessen: der Riegel greift nicht. Und der erste Lauf hat nichts gemessen
+
+### Der erste Lauf, und warum er kein Ergebnis war
+
+Um 17:07 UTC lief M2 einmal und meldete **40 von 40 guten Anmeldungen, 0
+schlecht**. Das sah wie ein Befund aus — „der Riegel greift nicht, es passiert
+nichts Schlimmes" — und es war eine Messung des **gesunden Betriebs**. Die
+Schlagschleife ist nie gelaufen.
+
+Drei Zeilen belegen es, und zwei davon standen schon in der Ausgabe:
+`cat /run/ngc-absturz-pids.txt: No such file or directory`, `NRestarts=1`
+(unverändert aus M1), und `MainPID=1374` vor, während und nach dem Lauf.
+
+**Die Ursache ist dieselbe wie die WSL-Falle in `messen.md`, nur mit `ssh`.**
+Im Skript stand `setsid timeout … /run/ngc-absturz.sh &` **innerhalb** des
+ssh-Befehls; der ssh-Klient endete mit dem Befehl, und die Schleife ging mit
+ihm. Die Vorrichtungsprüfung, die ich eingebaut hatte, prüfte, dass die
+**Datei angekommen** war — nicht, dass die **Schleife läuft**. Eine angekommene
+Datei ist keine laufende Schleife, und das war die Lücke.
+
+Berichtigt: der Klient läuft jetzt im Vordergrund derselben Schale, die auch
+die Anmeldungen macht, und nach 3 s wird geprüft, dass die Reihe schon
+**schreibt**. Dazu eine Gegenprobe am Ende, die beim ersten Lauf gefehlt hat:
+**hat sich die MainPID überhaupt bewegt?** Eine Reihe aus einer einzigen PID
+heißt, dass kein Schlag getroffen hat.
+
+### Der zweite Lauf, 17:10:58–17:11:59 UTC
+
+`kill -9` auf `ngc-api` (api-2) alle 2 s, 60 s lang. Die PID-Reihe, im
+Zweisekundentakt auf dem Knoten selbst geschrieben:
+
+```
+17:10:59 pid=1374   17:11:05 pid=2389   17:11:11 pid=2412   17:11:17 pid=2435
+17:11:23 pid=2458   17:11:29 pid=2481   17:11:35 pid=2504   17:11:41 pid=2527
+17:11:47 pid=2550   17:11:53 pid=2573
+```
+
+Zwischen je zwei PIDs zwei Abtastungen mit `pid=0`. **Zehn verschiedene
+MainPIDs in 60 Sekunden**, `restart counter is at 11` im Journal, `NRestarts=11`.
+
+| | erwartet (gerechnet) | gemessen |
+|---|---|---|
+| greift `StartLimitBurst=5`? | **nein, nie** | **nein** — 11 Neustarts, kein Aufgeben |
+| Takt der Neustarts | alle 5 s | **alle 6 s** (5 s Frist + 1 s Start) |
+| Dienst gibt auf? | nein | **nein**, `ActiveState=active` am Ende |
+| Anlage meldet es? | nein | **nein**, `error.log` und api-1-Journal leer |
+
+**Die Erwartung war richtig, und zwar aus der richtigen Rechnung:**
+`RestartSec=5` setzt die Starts so weit auseinander, dass in ein Fenster von
+`StartLimitIntervalUSec=10s` höchstens zwei bis drei fallen, und
+`StartLimitBurst=5` wird nie erreicht. Ein Dienst, der sich endlos abschießt,
+startet hier **endlos** weiter.
+
+### Was ein Nutzer dabei sieht — die Zahl, die dazugehört
+
+**8 gute von 12 Anmeldungen, 4 mit `HTTP 500`.** Jede der vier mit Uhrzeit und
+Wortlaut mitgeschrieben:
+
+```
+17:11:16  500  <html><head><title>500 Proxy Error</title>…
+17:11:23  500  <html><head><title>500 Proxy Error</title>…
+17:11:37  500  <html><head><title>500 Proxy Error</title>…
+17:11:49  500  <html><head><title>500 Proxy Error</title>…
+```
+
+Also **jede dritte Anmeldung**, über die ganze Minute verteilt, nicht in einem
+Block. Viermal derselbe Wortlaut, und es ist wieder **keine NGC-Antwort** —
+dieselbe nackte Apache-Seite wie in M1.
+
+**Und eine Zahl, die ich nicht erwartet hatte:** es waren **12** Anfragen in
+60 s, also **5,0 s je Anfrage** im Schnitt. Im gesunden Betrieb hat dasselbe
+Skript im selben Lauf 0,022–0,056 s gemessen. Die Anlage antwortet also nicht
+nur jedes dritte Mal falsch, sie antwortet auch **rund hundertmal langsamer**.
+Gemessen ist der Durchschnitt über den Lauf; die Zeit je einzelner Anfrage habe
+ich in dieser Reihe **nicht** mitgeschrieben, und darum sage ich nicht, ob sich
+die Verzögerung auf die guten, die schlechten oder beide verteilt.
+
+### Was das für den Entwurf heißt
+
+`Restart=always` auf `apache2` und `nginx` (Weg C, Posten 1 und 2) steht damit
+auf gemessenem Grund: der Riegel, der eine Neustart-Schleife bremsen soll,
+**bremst heute nichts**. Eine Neustart-Regel zu verschärfen, ohne
+`StartLimitIntervalUSec` an `RestartSec` anzupassen, fügt der Anlage eine
+unbegrenzte Schleife hinzu — und am Controller füttert jede Runde davon die
+Verdoppelung aus M3b.
