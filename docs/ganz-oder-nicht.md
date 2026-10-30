@@ -203,3 +203,54 @@ Programme. Finde ich keinen, ist das ein vollwertiges Ergebnis.
   Versuche" (24.10.). Nicht geklärt, und nicht Gegenstand dieses Blatts.
 - Warum in B1 sechs von vierzig Anfragen `500` bekamen und in B2 keine. Offene
   Frage aus `docs/ausfall-nachtrag.md`, hier nur verwiesen.
+
+---
+
+# Gemessen
+
+## M5 — Austritt mit Code 0 nach einem Fehler: nicht gefunden (30.10.2026)
+
+Gemessen am Code, nicht an der Anlage, über `ausfallkopplung` = `origin/main`
+25b8f24e. Zuerst die Orte, an denen ein Austrittscode überhaupt entsteht:
+`os.Exit(` kommt in `apps/` **außerhalb von Tests viermal** vor, und jedes Mal
+in derselben Form — der Code ist der Rückgabewert einer Funktion, kein
+Literal:
+
+```
+apps/server-api/main.go:55         os.Exit(run(os.Args[1:]))
+apps/server-controller/main.go:14  os.Exit(node.Main(...))
+apps/cli/main.go:24                os.Exit(classes.Run(...))
+apps/uhr/main.go:14                os.Exit(classes.Main(...))
+```
+
+Damit ist die Frage auf zwei Funktionen eingeengt, und beide sind von der
+ersten bis zur letzten Zeile gelesen:
+
+| Weg | Fehlerfälle | Code |
+|---|---|---|
+| `ngc-api` `serve` (`main.go:155–172`) | Konfiguration unlesbar · `server.Build` scheitert · `srv.Run` bricht ab | **1** in allen drei |
+| `ngc-api` `run` (`main.go:58–89`) | unbekannter Befehl · kaputte Flagge | **2** |
+| `ngc-controller` `runWith` (`node/run.go:522–558`) | Konfiguration · Noise-Schlüssel · Speicher öffnet nicht · Vertrauensliste unlesbar · `Run` bricht ab | **1** in allen fünf |
+| `ngc-controller` `Main` (`node/main.go:131–173`) | kaputte Flagge · unbekanntes Kommando | **2** |
+
+`return 0` steht in beiden Programmen **nur** hinter `-version`, hinter `-h`
+und hinter dem geordneten Halt (`SIGTERM` über `signal.NotifyContext`, dann
+`msgStopped`).
+
+**Befund: meine Erwartung war falsch, und das ist die gute Nachricht.** Ich
+hatte einen Weg erwartet, der nach einem erkannten Fehler mit 0 endet und den
+`Restart=on-failure` darum nicht aufgefangen hätte. Es gibt ihn nicht. Für die
+beiden Go-Dienste ist `on-failure` die **richtige** Regel, und sie ist nicht
+aus Versehen richtig — der geordnete Halt ist die einzige Stelle, die 0
+zurückgibt.
+
+Das verschiebt den Befund 2 von oben, ohne ihn aufzuheben: die Lücke bei den
+Neustart­regeln liegt **nicht** bei NGCs eigenen Programmen, sondern bei
+`apache2` (`on-abort`) und `nginx` (`no`) — zwei Fremddienste mit den
+Debian-Vorgaben, die niemand angefasst hat. Der Eingang der Anlage hängt damit
+an der schwächsten der drei Regeln.
+
+**Was das nicht sagt:** ob ein abgestürzter Dienst wirklich zurückkommt. Hier
+ist gemessen, welcher Code zurückgegeben **wird**, nicht was systemd daraus
+macht. Das ist Stufe „am Code gelesen", nicht „ausgeführt" — M1 bis M4 bleiben
+offen, und sie brauchen einen Eingriff an der Anlage.
