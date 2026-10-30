@@ -227,6 +227,9 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
+| 96 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
+| 97 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; zwei Wände: gehärtete Vorlage lässt nur Port 22 durch, Wurzel-Dateisystem ohne `encrypt` — beide behoben, Station 2a neu; der offene Befund zu anna ist in **Punkt 98** berichtigt | Messung |
+| 98 | Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur | gilt – **berichtigt Punkt 97**; Meldung absichtlich erzeugt, Rechteänderung wirkt sofort; dazu: zweiter `install` mit anderem Namen sperrt alle aus, eine unlesbare Zeile verwirft das ganze Protokoll, Firewall-Regel überlebte kein Neuladen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7294,3 +7297,511 @@ der Probe 1, die Tabelle der Einhängungen und die Rechte an `/var/lib/ngc`. Abg
 Folge der drei tmpfs für den Arbeitsspeicher des Wirts, die Dringlichkeit von Posten 2 und jede
 Zeile der letzten Liste. Nicht gemessen ist, ob `nosuid` auf `/data` wirkt — das steht in Punkt 72
 und ist dort als geschlossen, nicht gemessen gekennzeichnet; dieser Punkt ändert daran nichts.
+
+---
+
+## Punkt 96: Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht
+
+**Gemessen am 29.10.2026** auf einer **neu aus der Vorlage geklonten** Maschine: VMID **310**,
+`ngc-probe`, **10.2.3.219**, Debian 13 (trixie), Kern `6.12.113+deb13-cloud-amd64`, angelegt mit
+`tools/einzelmaschine.sh` aus der Vorlage 300. Nummer und Adresse sind **am Gast nachgesehen**
+(`qm status 310` → „Configuration file … does not exist"; Ping auf 10.2.3.219 ohne Antwort), nicht
+gerechnet. Seit den Behebungen zwischen dem 19. und 25.10.2026 hatte niemand mit den
+Installationsskripten eine Maschine von null aufgebaut.
+
+### Der Befund in einem Satz
+
+**Die `ulh`-Skripte liefen durch. Kein einziger Handgriff an `ngc-all.sh` oder `ngc-web.sh`.**
+Was nicht lief, war der Prüflauf dieses Hauses: `tools/erstlauf.sh` und
+`tools/erstlauf-maschine.sh` brachen an vier Stellen ab oder urteilten falsch, und zwar an
+Stellen, die eine frische Maschine zuverlässig trifft und eine von Hand gewachsene nie.
+
+### Was an `ulh` gemessen gehalten hat
+
+| | gemessen |
+|---|---|
+| `einzelmaschine.sh anlegen` | lief durch, ssh nach ~15 s, 2 Kerne, 3922 MiB |
+| `ngc-all.sh install` | Ausstiegscode **0**, Pakete selbst nachinstalliert (`ensure_packages`) |
+| **Wand 1 ist weg** | `ReadWritePaths=/var/lib/ngc /etc/ngc`, in der **echten** Sandbox belegt: `/etc/ngc/trust-anchor.json` ist schreibbar |
+| Dienst | `ngc-api` **active**, `NRestarts=0`, ein `MainPID` über 10 s gehalten |
+| Fassung | `ngc-api 0.2.2 (contract 1)` — **kein** `0.0.0-dev` |
+| `ngc-web.sh install` | lief durch; Apache **active**, `/` → `http=200` mit `<title>NGC</title>`, `/api/v1/setup` **durch Apache** → `200` |
+| Name | `CN=ngc.test`, `SAN: DNS:ngc.test`, `/config.json` nennt `rp.id` `ngc.test` |
+| Uhr-Paket | Abbild gebaut, beide Ströme getrennt: STDOUT **21** Byte Zeit, STDERR **33** Byte Meldung |
+| Prüfladen | `store ok`; über das Netz `catalog http=200 verify=0` (647 Byte), `paket http=200 verify=0` (85623296 Byte) |
+
+**Die Behebung von Wand 1 aus `ulh` hält also, und sie hält am laufenden Dienst, nicht nur im
+Text.** `docs/installation-kleines-system.md`, Schritt 3, sagt bis heute „das ist Wand 1 von
+sechs, und sie steht noch" und verlangt einen Drop-in. **Das ist überholt** — der Drop-in ist
+nicht mehr nötig, und wer ihn anlegt, legt eine Zeile an, die schon im Skript steht.
+
+### Die vier Befunde am Prüflauf
+
+1. **`erstlauf.sh` kannte `${NGC_ETC}` nicht.** Station 1 löst die Variablen von `ngc-api.sh`
+   selbst auf, aber nur `NGC_DATA`, `NGC_TLS`, `NGC_STATE_DIR`. Seit der Behebung lautet die Zeile
+   `ReadWritePaths=${NGC_DATA} ${NGC_ETC}` — und der Lauf brach ab mit „still holds an unresolved
+   variable". **Die Behebung selbst hat den Prüflauf blind gemacht.** Ein Wort in einer Liste.
+2. **`erstlauf-maschine.sh` verlangte vorab die Pakete, die `ngc-all.sh` selbst nachinstalliert.**
+   Die Vorsperre forderte `openssl jq curl`; die Vorlage trägt **kein `jq`**, und der Lauf
+   verweigerte damit genau die Maschine, um die es geht. `NGC_PACKAGES` von `ngc-all.sh` sind
+   `openssl jq curl ca-certificates podman`, und `ensure_packages` holt jedes fehlende. **Eine
+   Voraussetzung, die der Prüfling selbst erfüllt, ist keine Voraussetzung der Prüfung.**
+3. **Die fscrypt-Probe irrte, und zwar in die beruhigende Richtung.** Der Lauf meldete „this
+   kernel has no CONFIG_FS_ENCRYPTION … no app can be set up here, whatever else is right". Der
+   Kern **kann** es: `/boot/config-6.12.113+deb13-cloud-amd64` sagt `CONFIG_FS_ENCRYPTION=y`.
+   Zwei Gründe, beide klein: `/proc/config.gz` gibt es auf Debian **nicht** — die Konfiguration
+   liegt als `/boot/config-$(uname -r)` —, und `/sys/fs/ext4/features/encryption` ist eine
+   **Datei**, geprüft wurde mit `-d` auf ein Verzeichnis. **Ein rotes Urteil prüft niemand nach.**
+4. **Der Testschlüssel wurde nur in `ngc-all.sh` getauscht, nicht in `ngc-web.sh`.** Beide tragen
+   denselben Release-Schlüssel und prüfen dasselbe Release. `ngc-web.sh install` wies darum jedes
+   Release ab, das dieser Lauf bauen kann (`release wrong: signature does not verify`), die
+   Oberfläche wurde **nie** installiert — und Station 3 sagte auf **jedem** Lauf, den es je gab,
+   die Oberfläche müsse „erst installiert werden". **Sechs Stationen dahinter waren nicht
+   unerreichbar, weil sie schwer sind, sondern weil der Lauf an einem Riegel hing, den er selbst
+   schon zu ersetzen beschlossen hatte.**
+
+Dazu zwei kleinere:
+
+5. **`erstlauf.sh` konnte `--hostname` nicht durchreichen.** Phase B nimmt sonst die IPv4-Adresse
+   der Standardroute. Schritt 0 der Anleitung sagt, warum das nicht der kleine Fall ist: das
+   Zertifikat lautet auf den **Namen**, und ein Passschlüssel hängt an `rp.id`, die ein Name ist —
+   über eine Adresse ist keiner anzulegen und keiner zu benutzen. **Kein Lauf vor dem 29.10.2026
+   hat also die Einrichtung gemessen, zu der die Anleitung anleitet.**
+6. **`build-release.sh` nennt einen Weg, den es selbst versperrt.** Es druckt
+   „`tools/sign-release.sh <dir> <key.pem>`" und löscht in Zeile 344 die Datei
+   `release.payload.json`, die `sign-release.sh` zwingend braucht — der Aufruf endet mit
+   „release.payload.json is missing". Richtig ist die **letzte** Zeile derselben Ausgabe,
+   `ngc-store release`, und die nimmt eine **andere** Art Schlüsseldatei als `sign-release.sh`
+   (kein openssl-PEM; `ngc-store` legt sie selbst an).
+
+### Der Riegel, an dem der Weg aufhört — und er ist kein Fehler
+
+Alles ab Station 3 hängt an **einem Menschen im Browser**. Gemessen, nicht angenommen:
+
+```
+19:49:22  ngc-api gestartet
+19:50:22  WARN trust list could not be read   error="state: no trust list yet"
+19:50:22  WARN catalogs could not be fetched  error="state: no trust list yet"
+```
+
+**Vor der Vertrauensliste holt die API gar keinen Katalog** — Station 6 („Katalog da") ist also
+nicht eine Frage von Warten, sondern von Koppeln und Aufnehmen, und beides geschieht im Browser.
+Der Kopplungscode entsteht dort, die Aufnahme des Controllers wird dort unterschrieben, und ein
+neuer Benutzer ist eine neue Fassung der Vertrauensliste, unterschrieben mit dem Schlüssel jener
+Person. Nichts auf der Maschine hält diesen Schlüssel.
+
+**Und dabei steht eine Zahl, die der Anleitung widerspricht:** die erste Katalogrunde kam
+**genau eine Minute** nach dem Neustart, nicht nach einer Stunde (`FirstCatalog = time.Minute`).
+`docs/installation-kleines-system.md`, Schritt 11, sagt „es gibt keinen Abruf beim Start und keine
+Handauslösung … warten, bis zu 60 Minuten". Ein Neustart von `ngc-api` **ist** die Handauslösung.
+
+### Der Schlüssel, der mit seiner Maschine weg ist
+
+Der geheime Release-Schlüssel der laufenden Anlagen lag als `/root/ngc-keys/release.key` auf der
+Messmaschine 10.2.3.208. **Die Maschine ist weg (Punkt 95), und der Schlüssel ist auf keiner der
+erreichbaren Maschinen** (`/root/ngc-keys/` existiert auf 10.2.3.210, .216 und .219 nicht; die
+anderen antworten von hier aus nicht auf ssh). Dessen öffentlicher Teil steht in `ngc-all.sh`,
+`ngc-api.sh`, `ngc-controller.sh` und `ngc-web.sh`.
+
+**Damit ist heute kein Release herstellbar, das die ausgelieferten Skripte annehmen.** Dieser Lauf
+ist deshalb mit einem **Testschlüssel** gefahren, und jede Zeile, die daran hängt, sagt das: die
+Unterschriftsprüfung selbst läuft unverändert, dass **NGCs eigener** Schlüssel in den Skripten
+richtig ist, ist hier **nicht** gemessen.
+
+### Was gebaut wurde
+
+Alle sechs Befunde sind behoben, **alle in `nextgencloud`, keiner in `ulh`** — das ist der
+eigentliche Ertrag: an den Installationsskripten war nichts zu tun. Dazu eine neue Station:
+
+**Station 2w „Oberfläche installieren"**, zwischen 2 und 3, mit Buchstaben statt Nummer, weil
+`docs/erstlauf.md` die zehn Nummern zitiert. Sie installiert `ngc-web.sh` mit demselben
+getauschten Schlüssel, rechnet den Pin aus dem Zertifikat der API selbst aus (ein eingefügter Pin
+wäre eine Messung der Einfügung) und hält vier Dinge: Apache läuft, `/` gibt 200 mit NGCs eigener
+Seite, `/api/v1/setup` antwortet **durch Apache**, und `/config.json` nennt `rp.id` = der Name.
+Danach: **11 Stationen, 0 rot.**
+
+### Was daraus noch zu bauen wäre
+
+1. **Schritt 3 der Anleitung berichtigen.** Wand 1 ist in `ngc-kette` behoben; der Drop-in ist
+   überholt. Die Gegenprobe mit `systemd-run` bleibt richtig und nützlich.
+2. **Schritt 11 der Anleitung berichtigen.** Der Neustart von `ngc-api` ist die Handauslösung, und
+   vor der Vertrauensliste wird ohnehin nichts geholt — die Stunde ist nicht der erste Hinderer.
+3. **Die zwei Unterschriftswege von `build-release.sh` auf einen zusammenziehen**, oder die
+   überholte Zeile streichen. Zwei widersprüchliche Anweisungen in einer Ausgabe sind schlimmer
+   als eine fehlende.
+4. **Den Release-Schlüssel entscheiden.** Solange er nicht existiert, ist jede Messung am
+   Installationsweg mit Testwurzel gefahren, und das ist ein Loch, das kein Skript schließt.
+5. **Station 3 bis 10 brauchen einen Browser im Lauf.** Was ein Mensch klicken muss, ist in Punkt
+   71 und in der Anleitung aufgeschrieben; gemessen wird es nirgends. Erst ein Lauf, der sich
+   anmelden kann, macht aus „unmeasurable" eine Zahl.
+
+**Getrennt gehalten:** gemessen sind die Tabelle oben, die sechs Befunde samt ihrer Ursache im
+Quelltext, die drei Protokollzeilen zur Vertrauensliste, die Minute bis zur ersten Katalogrunde,
+die Abwesenheit des Schlüssels auf den erreichbaren Maschinen und die 11 Stationen nach der
+Behebung. Abgewogen ist, dass Station 2w einen Buchstaben bekommt statt acht Nummern zu
+verschieben, und jede Zeile der letzten Liste. **Nicht gemessen** ist alles ab Station 3 — kein
+Controller ist gekoppelt, keiner aufgenommen, keine App eingerichtet, kein Fenster geöffnet. Die
+Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.
+
+---
+
+## Punkt 97: Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein
+
+**Gemessen am 29.10.2026** auf derselben frischen Maschine wie Punkt 96 (VMID **310**,
+`ngc-probe`, **10.2.3.219**, aus der Vorlage geklont). Punkt 96 endete, wo der Prüflauf endet:
+bei Station 3, weil alles dahinter einen Menschen im Browser braucht. **Dieser Punkt geht den
+Rest** — Einrichtungsseite, Verwalter, Kopplungscode, Aufnehmen mit Systemrechten, Katalog,
+App einrichten, Recht „benutzen", Fenster öffnen.
+
+Der Browser ist ein echter Chromium, und der **Name wird vom Browser selbst aufgelöst**
+(`--host-resolver-rules`) statt aus einer `hosts`-Datei — das ist Schritt 0 der Anleitung,
+ohne dass jemand eine Systemdatei anfassen muss.
+
+### Der Weg, Station für Station
+
+| Station | Stand | Beleg |
+|---|---|---|
+| 5 Einrichtungsseite | **gemessen** | `GET / → 200`, „NGC einrichten … Einmal-Code … Weiter" |
+| 6 erster Verwalter | **gemessen** | Schritt 2 mit Kennung, `wss://ngc.test:7443/tunnel`, Fingerabdruck; danach der Schreibtisch und **ein** Keks `ngc_session`, `httpOnly`, `secure` |
+| 7 Kopplungscode | **gemessen** | 337 Zeichen, beginnt mit `ngc-pair:` |
+| 8 `ngc-all configure` | **gemessen** | „Die Kopplung hat geklappt", `trust-anchor.json` entsteht, `controller.json` da, `ngc-controller` **active**, Rollen `["web","api","db","services"]` |
+| 9 aufnehmen + Systemrechte | **gemessen** | Haken für die unterschreibende Person **vorgekreuzt**, Rolle `admin` **nicht**; danach „Mit Systemrechten: thomas" |
+| 10 Gegenprobe | **gemessen** | neuer Browser zeigt **„Bei NGC anmelden"**, `/api/v1/setup` → **404**, `/config.json` trägt den Anker |
+| 11 Katalog | **gemessen** | nach `systemctl restart ngc-api` in **einer Minute** geholt, ohne Fehlerzeile |
+| 12 App einrichten | **gemessen** | „Die App ist eingerichtet.", Rechnerauswahl bot `probe-2` |
+| 13 Oberfläche zieht nach | **gemessen** | „Uhr" stand **sofort** in der Leiste, ohne Neuladen |
+| 10 App ist bedienbar | **gemessen** | Fenster zeigt `2026-10-29T20:55:48Z`, „Noch einmal lesen" gibt `20:55:57Z` |
+
+**Der Beleg auf der Maschine, nicht im Bild:** Behälter `ngc-uhr-ad8c00e2` aus
+`localhost/ngc/uhr:1.0.0`, zwei `container exec` um **20:55:48** und **20:55:57** — dieselben
+zwei Zeiten, die im Fenster standen. Eigener Benutzer `ngc-uhr-ad8c00e2` (uid 999, Heimat
+`/var/lib/ngc/apps/org.sorglos.uhr`, Hülle `nologin`), dessen Ordner `0700` ihm gehört und im
+`0711`-Elternordner liegt — genau die Durchgangsrechte, die Station 7 fordert. Und
+`a service wrote to stderr app=org.sorglos.uhr service=uhr action=zeit`: der zweite Strom ging
+ins Protokoll, nicht ins Fenster.
+
+### Die erste Wand: die gehärtete Vorlage lässt nur Port 22 durch
+
+**Bevor irgendein Browser irgendetwas sah, kam ein Zeitablauf.** Die Vorlage 300 trägt seit dem
+24.10.2026 die Härtung, und die ist streng:
+
+```
+table inet haertung
+  chain eingang   policy drop
+    iif lo accept · ct state established,related accept
+    ip saddr 10.0.0.0/8 tcp dport 22 accept
+```
+
+**Genau ein Port.** Apache horcht auf 443 und 80, die API auf 7443 — und **kein Skript in
+beiden Verzeichnissen öffnet einen Port**. `ngc-all.sh` und `ngc-web.sh` sind Installierer,
+keine Firewall-Werkzeuge, und das ist richtig so; die Regeln der sechs Maschinen wurden je
+Rolle **von Hand** gesetzt und liegen **in keinem Repository** (`docs/messreste-je-maschine.md`
+führt „nftables" als Hinterlassenschaft auf jeder einzelnen).
+
+**Und das Tückische daran: von der Maschine aus ist es unsichtbar.** `curl` auf dem Rechner
+geht durch `iif lo accept`, also meldet jede Probe, die **dort** läuft, eine gesunde
+Installation — auch die neue Station 2w aus Punkt 96. Eine Maschine, die allein aus den
+Skripten entsteht, hat damit eine Oberfläche, die **niemand** erreicht, und einen Prüflauf,
+der grün ist.
+
+**Behoben, zweifach:**
+
+- `einzelmaschine.sh` öffnet 80, 443 und 7443 für `10.0.0.0/8` — denselben Bereich, den die
+  Vorlage schon für 22 erlaubt. Dabei zwei eigene Fehler, beide gemessen und beide im Skript
+  vermerkt: die Prüfung lief zuerst auf dem **Proxmox-Wirt** statt auf der VM, und `nft` liegt
+  nicht im PATH der `sh`-Hülle, durch die der Befehl geht — beide Male kam eine leere Antwort
+  zurück und das Skript sagte „nichts war im Weg" über eine Maschine, die es nicht angesehen
+  hatte. Dazu wartet es jetzt: **ssh antwortet nach ~15 s, nftables ist dann noch nicht
+  geladen**, und „noch nicht da" sieht für eine einzelne Probe aus wie „nicht da".
+- `erstlauf.sh` hat eine neue **Station 2a „Oberfläche antwortet von außen"**, die von dem
+  Rechner aus fragt, auf dem der Mensch mit dem Browser sitzt — unter dem **Namen**, mit
+  `--resolve`. Sie ist eine eigene Station und keine Zeile in 2w, weil sie etwas anderes misst:
+  nicht „ist es installiert", sondern „kommt jemand hin".
+
+### Die zweite Wand: das Dateisystem, nicht der Kern
+
+Die erste Aktivierung antwortete **„Das hat der Rechner nicht angenommen. Bitte es noch einmal
+versuchen."** — und **weder** das Protokoll des Controllers **noch** das der API schrieb ein
+Wort. Die Ursache lag zwei Schichten tiefer:
+
+```
+Kern      CONFIG_FS_ENCRYPTION=y                              kann
+/dev/sda1 has_journal ext_attr ... (kein "encrypt")           kann NICHT
+```
+
+`runtime.ErrNoFscrypt` sagt selbst „this **filesystem** cannot encrypt a directory". Das
+Debian-Cloud-Abbild legt seine Wurzel **ohne** das `encrypt`-Merkmal an, und ein bestehendes
+ext4 bekommt es nur mit `tune2fs -O encrypt` im **ausgehängten** Zustand — was die Wurzel nie
+ist. **Damit kann auf einer Maschine aus `einzelmaschine.sh` keine einzige App laufen.**
+
+Und die zweite Platte, die genau dafür da ist („what lets fscrypt be measured without touching
+the mounted root filesystem", `EXTRA` in `einzelmaschine.sh`), war **unformatiert und nicht
+eingehängt** — 16 GiB, die das Skript anhängt und dann nie anfasst.
+
+**Behoben:** `einzelmaschine.sh` legt die zweite Platte jetzt als `ext4 -O encrypt` an, hängt
+sie als `/var/lib/ngc/apps` ein und setzt `0711`; danach lief die Aktivierung sofort durch.
+Und `erstlauf-maschine.sh` fragt bei Station 7 jetzt **beides** — vorher fragte es nur den Kern
+und hätte diese Maschine grün genannt.
+
+### Der Befund, der offen bleibt: eine zweite Person kann die App nicht benutzen
+
+> **Berichtigung vom 30.10.2026, und sie gehört an den Anfang dieses Abschnitts:
+> anna bekommt die App.** Am nächsten Tag antwortet ihr Fenster mit
+> `2026-10-30T12:45:54Z`. Was unten steht, ist richtig gemessen und bleibt stehen — aber es
+> ist **kein Dauerzustand**, und die Ursache des einen Tages ist **nicht mehr klärbar**:
+> eine Ablehnung wegen fehlendem Recht schreibt nirgends eine Zeile, auch nicht ins
+> Prüfprotokoll der Anlage. Was dieselbe Meldung erzeugt, was sofort wirkt und was die Anlage
+> darüber aufschreibt — nämlich nichts —, steht gemessen in **Punkt 98**.
+
+Wand 6 selbst ist **behoben und gemessen**: bei der Rolle `admin` stehen „Uhr · benutzen" und
+„Uhr · zeit" ohne Kasten da — „Diese Rolle darf jede eingerichtete App benutzen" — **ohne eine
+einzige Zeile in der Datenbank** (`adminApps`, `c0f0022`). Die frisch eingerichtete App ist für
+den Verwalter sofort sichtbar und damit auch vergebbar.
+
+Und die Vergabe an einen zweiten Menschen geht auch, bis zu einem Punkt. Gemessen, mit einer
+Rolle `leser`, die ausdrücklich **nicht** `admin` ist (ein Admin sieht ohnehin jede App, an ihm
+wäre nichts zu messen):
+
+```
+anna, Rolle leser, ohne Recht   Startmenue: []
+Recht "Uhr · benutzen" vergeben
+anna, Rolle leser, mit Recht    Startmenue: ["Uhr"]
+```
+
+**Das ist Wand 6, sauber gezeigt.** Aber das Fenster, das sich dann öffnet, sagt:
+
+> Der Dienst dieser App hat nicht geantwortet.
+
+Und das bleibt so. Gegenprobe in **derselben Minute**, dasselbe System, dieselbe App:
+
+```
+thomas  2026-10-29T21:12:02Z | Die Zeit kommt vom Server.
+anna    — | Der Dienst dieser App hat nicht geantwortet.
+```
+
+Was anna zu diesem Zeitpunkt hält, nachgesehen und nicht angenommen:
+
+| | |
+|---|---|
+| `Uhr · benutzen` | **gesetzt** |
+| `Uhr · zeit` (die Aktion) | **gesetzt** |
+| Systemrechte auf `probe-2` | **gesetzt** („Mit Systemrechten: anna, thomas") |
+
+**Die naheliegende Ursache ist damit widerlegt, nicht bestätigt.** Es lag nicht am fehlenden
+Aktionsrecht und nicht an `trust.MayRoot` — beide wurden nacheinander gegeben, und beide Male
+blieb die Antwort dieselbe. Und auf **keiner** Seite steht eine Zeile: der Controller
+protokolliert nichts, die API protokolliert nichts. Der Aufruf erreicht den Controller gar
+nicht; bei thomas erreicht er ihn.
+
+**Was das heißt:** der Weg „App einrichten → Recht vergeben → ein anderer Mensch benutzt sie"
+ist **nicht** durchgängig. Er endet eine Station vor dem Ziel, und zwar still.
+
+### Drei Stellen, an denen die Oberfläche die Erscheinung statt der Ursache nennt
+
+Alle drei sind an diesem Tag aufgetreten und haben je einen Umweg gekostet:
+
+1. **„Das hat der Rechner nicht angenommen."** — Ursache war das Dateisystem ohne `encrypt`.
+   Kein Protokolleintrag auf beiden Seiten.
+2. **„Diese Quelle antwortet nicht. Bitte die Adresse prüfen."** — der Laden hatte mit
+   **`http=200`** geantwortet, im Zugriffsprotokoll steht der Abruf des `Go-http-client`.
+   Abgelehnt wurde der **Inhalt**: der Katalog war auf die Kennung `uhr-probe` unterschrieben,
+   die Vertrauensliste nennt fest `global` (`STORE_GLOBAL`, `contracts/trust.js`). Der echte
+   Grund liegt in `s.error` und wird nicht angezeigt (`store.js:298`).
+3. **„Der Dienst dieser App hat nicht geantwortet."** — siehe oben; die Rechte waren alle da.
+
+### Zwei Dinge, die die Anleitung nicht sagte und die jeden aufhalten
+
+1. **Nach „Server aufnehmen" kommt noch ein Fenster:** „Bitte bestätigen — Diese Dauerfreigabe
+   wird in die Vertrauensliste eingetragen. Bitte noch einmal das Passwort eingeben." Das ist
+   die Unterschrift. Wer dort abbricht, hat **nichts** aufgenommen, und der Schirm sieht
+   danach aus wie vorher. Dasselbe Fenster kommt bei Rolle anlegen, Benutzer anlegen, Rechte
+   vergeben und Systemrechte ändern.
+2. **Ein geschlossenes Fenster zwischen Schritt 6 und Schritt 8 macht die Anlage unbrauchbar,
+   und es gibt keinen Weg zurück.** Die Oberfläche zeigt wieder die Einrichtung (ohne Anker
+   hält `index.php` jede Anlage für neu, auch mit gültiger Sitzung), und der Einmal-Code ist
+   **verbraucht**: `/api/v1/setup` gibt `404`, `/var/lib/ngc/setup-code` ist gelöscht. Es gibt
+   eine Seite, die nach einem Code fragt, und keinen Code mehr, den sie annimmt. Das ist in
+   diesem Lauf **zweimal** passiert und hat zweimal eine Neuinstallation gekostet. Die
+   Anleitung warnte „nicht den Browser schließen" — ohne zu sagen, was sonst geschieht.
+
+### Was daraus noch zu bauen wäre
+
+1. **Dem Befund mit der zweiten Person nachgehen.** Er ist der einzige rote in diesem Lauf und
+   er trifft den Zweck der Anlage: mehrere Menschen, eine App. Der erste Schritt ist kein Code,
+   sondern ein **Protokolleintrag** — solange beide Seiten schweigen, rät jeder.
+2. **Die drei Sätze oben an ihre Ursache binden.** Wo ein Grund im Programm bekannt ist, gehört
+   er auf den Schirm oder wenigstens ins Protokoll. „Bitte die Adresse prüfen" bei `http=200`
+   ist eine Anweisung, die in die Irre führt.
+3. **Die Ladenkennung in `ngc-all.sh` fragen oder dokumentieren.** Wer sich einen Laden
+   ausdenken muss (Punkt 96), kann heute nicht wissen, dass die Kennung `global` sein muss.
+4. **Das `encrypt`-Merkmal zu einer Voraussetzung machen, die beim Installieren geprüft wird.**
+   `ngc-all.sh` prüft openssl 3.0 und podman und sagt bei beiden laut, was fehlt. Hier fehlt
+   etwas Gleichwertiges — und es fällt erst bei der ersten App auf, Stunden später.
+
+**Getrennt gehalten:** gemessen sind die Stationentabelle, die zwei Zeiten im Fenster und die
+zwei `exec` im Protokoll des Controllers, Benutzer und Rechte des App-Ordners, annas Startmenü
+vorher und nachher, die drei Rechte, die sie zuletzt hielt, die Gegenprobe thomas/anna in
+derselben Minute, das Fehlen jeder Protokollzeile auf beiden Seiten, die Merkmale von
+`/dev/sda1` und `/dev/sdb`, der `http=200` des Ladens im Zugriffsprotokoll und beide
+Sackgassen nach dem Schließen des Fensters. Abgewogen ist die Einordnung der drei Meldungen als
+„Erscheinung statt Ursache" und jede Zeile der letzten Liste. **Nicht gemessen** ist, woran der
+Aufruf der zweiten Person scheitert — nur, dass er scheitert und dass es an keinem der drei
+geprüften Rechte liegt. Die Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.
+
+---
+
+## Punkt 98: Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur
+
+**Gemessen am 30.10.2026** auf derselben Maschine wie Punkt 96 und 97 (VMID 310). Punkt 97
+endete mit einem roten Befund: anna hielt alle drei Rechte und bekam die App trotzdem nicht,
+und **auf keiner Seite stand eine Zeile**. Dieser Punkt geht dem nach. Er berichtigt Punkt 97
+in einem Teil und erklärt, warum dort nichts zu finden war.
+
+### Die Berichtigung zuerst
+
+**anna bekommt die App.** Am 30.10.2026 um 12:45 antwortet ihr Fenster mit
+`2026-10-30T12:45:54Z`. Der rote Befund aus Punkt 97 ist damit **kein Dauerzustand** — und
+seine Ursache ist **nicht** geklärt, sondern **nicht mehr klärbar**, und genau das ist der
+Inhalt dieses Punktes.
+
+### Der Versuch, der die Meldung erzeugt — absichtlich
+
+Die Meldung aus Punkt 97 lässt sich herstellen. Der Rolle `leser` wurde das Recht
+`Uhr · zeit` weggenommen und wiedergegeben, anna wurde nach jedem Schritt gefragt:
+
+| Schritt | annas Fenster |
+|---|---|
+| Ausgangslage | `2026-10-30T12:47:40Z` |
+| `Uhr · zeit` **weggenommen** | **„Der Dienst dieser App hat nicht geantwortet."** |
+| `Uhr · zeit` **zurückgegeben** | `2026-10-30T12:49:13Z` |
+| danach `ngc-controller` neu gestartet | `2026-10-30T12:49:43Z` |
+
+**Zwei Dinge sind damit gemessen.** Erstens: diese Meldung ist genau das, was ein fehlendes
+**Aktionsrecht** erzeugt — sie nennt den Dienst, und der Dienst ist nicht das Problem.
+Zweitens: eine Rechteänderung wirkt **sofort**. Es braucht keinen Neustart, und die Vermutung,
+der Controller trage eine veraltete Vertrauensliste, ist damit widerlegt und nicht bestätigt.
+
+### Und warum nichts zu finden war
+
+Das Prüfprotokoll der Anlage (Reiter **Protokoll**) ist die einzige Stelle, die einen Kanal mit
+App, Aktion, Server und Ergebnis festhält — `relay.Forward` schreibt sie über `Log.Channel`.
+Dieselben zwei Zustände, im Protokoll nachgelesen:
+
+```
+13:48  anna  Kanal  ngc.desktop        apps       ok
+13:48  anna  Kanal  ngc.desktop        ui         ok
+13:48  anna  Kanal  ngc.desktop        ui-proof   ok
+       (ohne das Recht: KEINE Zeile fuer org.sorglos.uhr)
+
+13:49  anna  Kanal  org.sorglos.uhr    zeit   probe-2   ok
+13:49  anna  Kanal  org.sorglos.uhr    zeit   probe-2   ok
+```
+
+**Eine Ablehnung wegen fehlendem Recht erzeugt keine Zeile.** Sie fällt, bevor der Kanal
+weitergeleitet wird, und `relay.Forward` ist die einzige Stelle, die schreibt. Dazu schweigt
+das `journal` des Controllers (er bekommt den Aufruf nie) und das der API (sie protokolliert
+Ablehnungen nicht ins `journal`).
+
+**Damit hat weder der Benutzer noch der Verwalter irgendetwas in der Hand:**
+
+| wer | was er sieht |
+|---|---|
+| der Benutzer | „Der Dienst dieser App hat nicht geantwortet." |
+| der Verwalter im Protokoll | nichts — die Zeile fehlt |
+| der Betreiber im `journal` | nichts, auf beiden Seiten |
+
+Das ist der eigentliche Befund dieses Punktes. Nicht, dass eine Ablehnung still ist — das ist
+bei einem Rechteprüfer vertretbar —, sondern dass sie **überall gleichzeitig** still ist und
+die einzige sichtbare Meldung auf die falsche Fährte führt. Ein Verwalter, der das liest,
+sieht nach dem Dienst, nach dem Container, nach dem Controller. Die Antwort steht zwei Meter
+daneben in einem Kasten, den er schon angehakt hat.
+
+### Drei weitere Befunde desselben Tages
+
+#### 1. `ngc-all install` ein zweites Mal mit anderem Namen sperrt alle aus
+
+Der Prüflauf `erstlauf.sh` ruft `ngc-all.sh install` mit seinem Vorgabenamen `erstlauf` auf.
+Auf einer **laufenden** Anlage, die als `probe` in der Vertrauensliste steht, schreibt das
+`api.json` neu:
+
+```
+api.json node: erstlauf          Vertrauensliste kennt: probe
+```
+
+Die Folge, gemessen: `ngc-api` und `ngc-controller` laufen weiter, `apache` läuft,
+`/api/v1/setup` antwortet weiter **404**, im `journal` steht **keine** Zeile — und **jede**
+Anmeldung scheitert mit „Anmeldung fehlgeschlagen." Für **jeden** Benutzer. Die Anlage sieht
+von außen gesund aus und ist für niemanden mehr erreichbar.
+
+**Gegenprobe, und sie ist der Beweis:** derselbe Aufruf mit `NGC_NAME=probe` schreibt den
+Namen zurück, und beide Anmeldungen gehen sofort wieder. Nichts anderes wurde angefasst.
+
+`ngc-all.sh` behält bei einem zweiten Lauf jeden Schlüssel (`kept_key`, `kept_db_key` —
+`noiseKey`, `signKey`, `secretKey`, `challengeKey`, der Datenbankschlüssel). **Den Namen
+behält es nicht**, und der Name ist das, was die Anlage wiedererkennt.
+
+#### 2. Eine unlesbare Zeile macht das ganze Protokoll unsichtbar
+
+Unmittelbar nach dem Zurückschreiben stand im Reiter Protokoll:
+
+> Die Antwort der Anlage war nicht in Ordnung. Es wird nichts angezeigt.
+
+Die Kopfzeile der Tabelle stand da, **keine einzige Zeile** darunter — obwohl Hunderte
+vorhanden waren. Nachdem neue Zeilen unter dem richtigen Namen dazukamen, zeigt derselbe
+Reiter alles. **Das ist die Form von Wand 2 an einer anderen Stelle:** ein Feld, das der
+Vertragsprüfung nicht genügt, verwirft die **ganze** Antwort. Und es trifft ausgerechnet das
+Werkzeug, mit dem ein Verwalter einem Befund nachgeht.
+
+#### 3. Die Rechteseite behält einen abgebrochenen Haken
+
+Haken weggenommen, **„Rechte speichern"**, dann die Bestätigung **abgebrochen**:
+
+```
+gleiche Sitzung danach   Uhr · benutzen=true   Uhr · zeit=false
+frische Anmeldung        Uhr · benutzen=true   Uhr · zeit=true     <- die Wahrheit
+```
+
+Die Seite zeigt nach einem Abbruch den **gewünschten**, nicht den **geltenden** Stand. Wer den
+Abbruch macht und hinsieht, liest ein Recht als weggenommen, das noch gilt. Erst ein neues
+Anmelden zeigt, was die Anlage hält.
+
+### Und eine Berichtigung an der eigenen Behebung aus Punkt 97
+
+Die Firewall-Öffnung aus Punkt 97 war mit `nft add rule` gesetzt — **zur Laufzeit**.
+`/etc/nftables.conf` beginnt mit `flush ruleset`, also ist die Regel beim nächsten Laden des
+Dienstes weg. Gemessen: am 30.10. um 12:40 antwortete die Oberfläche von außen wieder mit
+einem Zeitablauf, die Regel war fort, und die Maschine war seit 03:40 oben — **kein** Neustart
+dazwischen, der Dienst allein hat gereicht.
+
+**Behoben:** die Regel steht jetzt in `/etc/nftables.d/10-ngc-ports.nft` und `nftables.conf`
+bekommt eine `include`-Zeile. Sie öffnet Tabelle und Kette wieder, statt sie neu zu erklären —
+so behält die Härtung ihr `policy drop` und bekommt drei Ports dazu. Eine **eigene** Tabelle
+täte es nicht: bei zwei Basisketten am selben Haken entscheidet das `drop` der einen, und ein
+`accept` der anderen ändert daran nichts. Gegenprobe: `systemctl restart nftables`, danach
+steht die Regel und die Oberfläche antwortet von außen mit `200`.
+
+### Was daraus zu bauen wäre
+
+1. **Eine Ablehnung wegen fehlendem Recht gehört ins Protokoll.** Eine Zeile mit App, Aktion
+   und dem Grund, und der Benutzer bekommt einen Satz, der das Recht nennt statt den Dienst.
+   Das ist der Unterschied zwischen „ich suche eine Stunde" und „ich setze einen Haken".
+2. **`ngc-all install` soll einen abweichenden Namen abweisen**, solange `api.json` einen
+   trägt — oder ihn wenigstens laut nennen. Ein stiller Namenswechsel ist der Verlust der
+   Anlage, und er sieht aus wie ein vergessenes Passwort.
+3. **Das Protokoll darf nicht an einer Zeile scheitern.** Eine Zeile, die der Vertragsprüfung
+   nicht genügt, gehört ausgelassen und gezählt, nicht gegen die ganze Antwort gerechnet.
+4. **Die Rechteseite soll nach einem Abbruch zurückspringen.** Ein Haken, der etwas anderes
+   sagt als die Anlage, ist schlimmer als gar keiner.
+5. **`erstlauf.sh` soll `--machine-name` durchreichen**, wie es `--machine-hostname` seit
+   Punkt 96 tut. Sonst setzt jeder Prüflauf auf einer laufenden Anlage ihren Namen auf
+   `erstlauf` — was Befund 1 auslöst.
+
+**Getrennt gehalten:** gemessen sind die vier Zeilen der Versuchstabelle, die Protokollzeilen
+um 13:48 und 13:49 samt der fehlenden, das Verhalten beider Anmeldungen vor und nach dem
+Zurückschreiben des Namens, die beiden Hakenstände nach dem Abbruch, das Verschwinden der
+Firewall-Regel ohne Neustart und ihr Bestand nach `systemctl restart nftables`. Abgewogen ist
+die Einordnung der Meldung als „falsche Fährte" und jede Zeile der letzten Liste. **Nicht
+gemessen** ist, warum anna am 29.10.2026 ohne Wirkung blieb, obwohl die Seite ihre Rechte als
+gesetzt zeigte — und das ist kein Versäumnis dieses Punktes, sondern sein Gegenstand: die
+Anlage hat darüber nichts aufgeschrieben, und nachträglich ist nichts mehr zu holen. Die
+Maschine 310 bleibt stehen.
