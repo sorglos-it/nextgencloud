@@ -53,8 +53,14 @@ func aKernel(t *testing.T, offer ...string) *fakeKernel {
 	}
 	k := &fakeKernel{t: t, root: t.TempDir(), offer: offer,
 		drop: map[string]bool{}, placed: true}
+	// A root cgroup that HAS these controllers and also hands them down. The
+	// two are different files on a real machine and were the bug of
+	// 30.10.2026: cgroup.controllers is what this cgroup has,
+	// cgroup.subtree_control is what its children get. Here both carry the
+	// same set, and the case about the difference sets them apart itself
+	// (TestEnsureCgroupAsksTheParentAndNotTheRoot).
 	k.write(filepath.Join(k.root, "cgroup.controllers"), strings.Join(offer, " "))
-	k.write(filepath.Join(k.root, "cgroup.subtree_control"), "")
+	k.write(filepath.Join(k.root, "cgroup.subtree_control"), strings.Join(offer, " "))
 
 	was := paths
 	t.Cleanup(func() { paths = was })
@@ -97,13 +103,33 @@ func aKernel(t *testing.T, offer ...string) *fakeKernel {
 			return nil
 		}
 		if filepath.Base(path) == "cgroup.subtree_control" {
-			// The kernel adds to this file, it does not replace it, and it
-			// takes only what it was handed down itself.
+			// The kernel adds to this file, it does not replace it - and a
+			// write naming ONE controller it does not have is rejected
+			// ENTIRELY, taking the others of the same write with it.
+			//
+			// That last half was missing here until 30.10.2026, and it is why
+			// every case of this file passed while the real kernel refused on
+			// svc-2: a stand-in that quietly drops what it cannot do is more
+			// generous than the contract, and then it measures its own
+			// generosity (messen.md). Measured shape of the real thing:
+			// "+pids +io" into a parent offering "cpu memory pids" leaves the
+			// file EMPTY and answers ENOENT.
+			// What is available is what THIS cgroup has, not what the root
+			// has - the same distinction the code under test got wrong.
+			mine := map[string]bool{}
+			for _, c := range strings.Fields(k.read(filepath.Dir(path) + "/cgroup.controllers")) {
+				mine[c] = true
+			}
+			var ask []string
 			for _, c := range strings.Fields(value) {
 				c = strings.TrimPrefix(c, "+")
-				if k.has(c) {
-					k.append(path, c)
+				if !mine[c] {
+					return os.ErrNotExist
 				}
+				ask = append(ask, c)
+			}
+			for _, c := range ask {
+				k.append(path, c)
 			}
 			return nil
 		}
@@ -125,6 +151,14 @@ func aKernel(t *testing.T, offer ...string) *fakeKernel {
 		return attr, nil
 	}
 	return k
+}
+
+// handsDown sets what the root of the tree gives to its children
+// (cgroup.subtree_control), apart from what it HAS (cgroup.controllers). On a
+// real machine the two differ, and a case that cannot tell them apart cannot
+// see the bug of 30.10.2026.
+func (k *fakeKernel) handsDown(cs ...string) {
+	k.write(filepath.Join(k.root, "cgroup.subtree_control"), strings.Join(cs, " "))
 }
 
 func (k *fakeKernel) has(c string) bool {
@@ -272,6 +306,47 @@ func TestACgroupWithoutTheCPUControllerStillStartsTheApp(t *testing.T) {
 	}
 	if k.of("ngc-uhr-1", "cpu.max") != "" {
 		t.Error("a cpu.max was written where no cpu controller was handed down")
+	}
+}
+
+// 5b. THE CASE THE FIRST VERSION OF THIS FILE NEEDED AND DID NOT HAVE: one
+// controller that is not there must not cost the other two.
+//
+// The root of the tree HAS the cpu controller and does not HAND IT DOWN - two
+// different files, and at boot they really differ, because systemd enables a
+// controller only once a unit needs it. The first version asked the parent for
+// all three in ONE write, and a write naming one controller the parent does
+// not offer is rejected ENTIRELY: pids and memory went down with cpu, nothing
+// was enabled, and the app did not start. Measured on svc-2 on 30.10.2026 by
+// rolling it out.
+//
+// What has to hold is therefore about the WRITE, not about which file is read:
+// each controller on its own, so pids and memory hold while cpu is honestly
+// reported missing. Reading the parent rather than the root is kept because it
+// is the right file and gives the right reason in the error - but it is not
+// what this case holds, and a mutation of it stays alive on purpose
+// (the mutation list says so).
+func TestOneMissingControllerDoesNotCostTheOthers(t *testing.T) {
+	k := aKernel(t, "cpuset", "cpu", "io", "memory", "hugetlb", "pids", "rdma", "misc")
+	k.handsDown("memory", "pids") // what svc-2 looked like at boot
+	held, err := ensureCgroup("ngc-uhr-1", Limits{Memory: 128})
+	if err != nil {
+		t.Fatalf("err = %v, want the app to start on pids and memory", err)
+	}
+	if !held.PIDs || !held.Memory {
+		t.Fatalf("held = %s, want pids and memory - they must not go down with cpu", held)
+	}
+	if held.CPU {
+		t.Error("held claims cpu, which the root does not hand down")
+	}
+	// The intermediate check, without which this case could pass on a parent
+	// that offers nothing at all: the two that must hold really are in the
+	// kernel, with the numbers asked for.
+	if got, want := k.of("ngc-uhr-1", "pids.max"), strconv.Itoa(PIDsLimit); got != want {
+		t.Errorf("pids.max = %q, want %q", got, want)
+	}
+	if got, want := k.of("ngc-uhr-1", "memory.max"), strconv.Itoa(128<<20); got != want {
+		t.Errorf("memory.max = %q, want %q", got, want)
 	}
 }
 

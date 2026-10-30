@@ -202,8 +202,10 @@ func ensureCgroup(name string, l Limits) (Held, error) {
 	// Is this a cgroup v2 tree at all? Without this file there is none, and
 	// everything below would make ordinary directories somewhere and read back
 	// exactly what it wrote - a brake that measures itself.
-	root := controllersIn(paths.cgroupRoot + "/cgroup.controllers")
-	if len(root) == 0 {
+	// Is this a cgroup v2 tree at all? Only that is asked of the root here -
+	// WHICH controllers it hands down is asked of the parent below, for the
+	// reason given there.
+	if len(controllersIn(paths.cgroupRoot+"/cgroup.controllers")) == 0 {
 		return Held{}, errors.Join(ErrCgroup,
 			errors.New("no cgroup v2 tree under "+paths.cgroupRoot))
 	}
@@ -211,21 +213,46 @@ func ensureCgroup(name string, l Limits) (Held, error) {
 	if err := paths.mkdir(parent, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return Held{}, errors.Join(ErrCgroup, err)
 	}
-	// Only what the root really hands down is asked for. Asking for a
-	// controller the root does not have fails the whole write, and then none of
-	// the three would be enabled - one missing controller would cost the other
-	// two.
-	var want []string
+	// WHAT THE PARENT ITSELF OFFERS, and one write per controller. Both halves
+	// of that sentence are a measured bug of the first version of this file,
+	// found on svc-2 on 30.10.2026 by rolling it out:
+	//
+	//  1. It asked what the ROOT of the tree HAS (cgroup.controllers, eight
+	//     entries on that machine) instead of what it HANDS DOWN
+	//     (cgroup.subtree_control, three). Those are different files, and the
+	//     difference is not academic: at boot systemd enables a controller
+	//     only once a unit needs it, so cpu was not yet below the root when
+	//     the controller came up a tenth of a second after it.
+	//  2. It asked for all three in ONE write. A write naming a controller the
+	//     parent does not offer is rejected ENTIRELY - measured on svc-2:
+	//     "+pids +io" into a parent offering "cpu memory pids" leaves
+	//     subtree_control EMPTY, pids refused along with io. The same two,
+	//     written one at a time, leave "pids".
+	//
+	// Together they did exactly what the comment above warned about: one
+	// controller that was not there yet cost the other two, nothing was
+	// enabled, and the app did not start. It did not start UNBRAKED, which is
+	// the one thing that went right - the readback below refused, named the
+	// directory and said pids=false memory=false cpu=false.
+	//
+	// So: read the parent after making it, ask it only for what it says it
+	// has, and ask for each one on its own.
+	offers := controllersIn(parent + "/cgroup.controllers")
+	var bad []error
 	for _, c := range []string{"pids", "memory", "cpu"} {
-		if root[c] {
-			want = append(want, "+"+c)
+		if !offers[c] {
+			bad = append(bad, fmt.Errorf("%s offers no %s controller", parent, c))
+			continue
 		}
-	}
-	if len(want) > 0 {
-		// An error is not read here and the readback below is: writing
-		// +memory a second time answers EINVAL on some kernels although the
-		// controller is on, and that answer would stop a start that is fine.
-		_ = paths.cgroupWrite(parent+"/cgroup.subtree_control", strings.Join(want, " "))
+		// The error is kept and not raised: writing +memory a second time
+		// answers EINVAL on some kernels although the controller is on, and
+		// that answer would stop a start that is fine. What decides is the
+		// readback of the child, below - but an error that nobody keeps is how
+		// this file's own bug stayed invisible for one rollout, so it travels
+		// with the refusal when there is one.
+		if err := paths.cgroupWrite(parent+"/cgroup.subtree_control", "+"+c); err != nil {
+			bad = append(bad, fmt.Errorf("%s: +%s: %w", parent, c, err))
+		}
 	}
 	dir := cgroupDirOf(name)
 	if err := paths.mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
@@ -244,7 +271,6 @@ func ensureCgroup(name string, l Limits) (Held, error) {
 		mem = store.DefaultMemory
 	}
 	var held Held
-	var bad []error
 	if have["pids"] {
 		held.PIDs = writeLimit(dir+"/pids.max", strconv.Itoa(pids), &bad)
 	}

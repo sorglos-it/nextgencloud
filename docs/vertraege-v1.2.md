@@ -16,7 +16,7 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 96"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 97"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -35,12 +35,12 @@ die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 50 | 85 |
+| gilt | 35 | 51 | 86 |
 | überholt / erledigt durch einen späteren Punkt | 0 | 7 | 7 |
 | offen, wartet auf Thomas | 1 | 11 | 12 |
-| **Einträge** | **36** | **68** | **104** |
+| **Einträge** | **36** | **69** | **105** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **106**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **107**.
 
 Diese vier Zeilen sind am 24.10.2026 aus den Tabellen selbst **gezählt** und nicht
 weitergeschrieben. Wer anhängt, zählt hier mit — `tools/check-buch.sh` prüft die Nummern,
@@ -227,7 +227,8 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
-| 96 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – Ursache dreilagig benannt, Grenze am laufenden Container gemessen, **auf keinem Knoten eingespielt**; beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
+| 96 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – Ursache dreilagig benannt, am laufenden Container gemessen, **auf `svc-2` eingespielt**; der erste Stand hatte einen Fehler, den der Riegel zeigte (Nachtrag); beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
+| 97 | Ein Neustart des Controller-DIENSTES lässt die Apps unten — nur ein Neustart der MASCHINE holt sie zurück | gilt – Ursache auf die conmon-Zeile gemessen; Behebung ist **eine Zeile in `ulh`**, hier blockiert | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7497,10 +7498,18 @@ Linux** gefahren — auf Windows überspringen sich vier der Fälle, und drei Mu
 ersten Lauf; ein lebender Mutant war zuerst eine Frage an die Messung und nicht an den Fall:
 
 ```
-Mutanten, die sterben mussten und starben : 15 von 15
-Kontrollen, die leben mussten und lebten  : 15 von 15
+Mutanten, die sterben mussten und starben : 16 von 16
+Kontrollen, die leben mussten und lebten  : 18 von 18
 ohne Bau / Selbstabbruch: 0   falsche Antworten: 0
 ```
+
+Eine der 18 Kontrollen ist **absichtlich** eine Mutation des Codes und kein Umbenennen: „die Wurzel
+gefragt statt den Elternordner". Sie lebt, und das ist ein Befund über die Behebung, keine Lücke —
+sobald jeder Controller einzeln geschrieben wird, ändert die falsch gelesene Datei nur noch den
+Wortlaut eines mitgeführten Fehlers, nicht das Ergebnis. **Tragend ist die zweite Hälfte der
+Behebung**, nicht die erste; der Elternordner wird trotzdem gefragt, weil er die richtige Datei ist
+und den richtigen Grund in die Meldung schreibt. Ein lebender Mutant war zuerst eine Frage an die
+Messung, und das hier war die Antwort.
 
 ### Was daraus zu bauen wäre
 
@@ -7524,3 +7533,137 @@ Fork- und die Speichermessung samt ihren Gegenkontrollen, der Zustand des Knoten
 Aufrufer-Befund bei `exec` und `restart` und der Mutantenlauf. Abgewogen sind die Entscheidung
 „pids und memory sind eine Wand, cpu ist keine", die Entscheidung, `Exec` ohne cgroup laufen zu
 lassen, und jede Zeile der letzten Liste.
+
+### Nachtrag vom Einspielen auf `svc-2` — der erste Stand hatte einen Fehler, und der Riegel hat ihn gezeigt
+
+Am 30.10.2026 wurde dieser Stand auf `svc-2` eingespielt (Fassung 0.3.0, die 0.2.1 blieb als
+`/usr/lib/ngc/ngc-controller.vor-haertung` liegen) und die Maschine neu gestartet — nicht nur der
+Dienst, aus dem Grund, der in Punkt 97 steht. **Die Terminal-App ist nicht gestartet**, und das
+Protokoll sagte genau, was fehlte:
+
+```
+WARN the container of an app did not start app=org.sorglos.terminal
+     err="runtime: the kernel does not hold a limit of this app
+          /sys/fs/cgroup/ngc.apps/ngc-terminal-439982dd holds pids=false memory=false cpu=false"
+```
+
+**Das ist der Riegel, der tut, was er soll:** keine der drei Grenzen stand im Kern, also lief die
+App **nicht** — nicht ungebremst, nicht stillschweigend. Die Meldung nannte das Verzeichnis und
+alle drei Zahlen. Ohne das Zurücklesen wäre dieser Fehler genau so unsichtbar geblieben wie der,
+gegen den dieser Punkt gebaut ist.
+
+**Der Fehler, zweiteilig, im Quelltext dieses Punktes:**
+
+1. **Die falsche Datei gefragt.** `ensureCgroup` las, was die **Wurzel des Baums HAT**
+   (`cgroup.controllers`, auf `svc-2` acht Einträge), statt was sie **nach unten GIBT**
+   (`cgroup.subtree_control`, drei). Das sind zwei verschiedene Dateien, und der Unterschied ist
+   nicht akademisch: systemd schaltet einen Controller erst frei, wenn eine Einheit ihn braucht —
+   beim Start lag `cpu` noch nicht unter der Wurzel, als der Controller eine Zehntelsekunde später
+   hochkam.
+2. **Alle drei in EINEM Schreibvorgang.** Ein Schreibvorgang, der einen Controller nennt, den der
+   Elternordner nicht anbietet, wird **ganz** abgewiesen. Gemessen auf `svc-2`:
+
+   ```
+   Elternordner hat: cpu memory pids
+   "+pids +io"  in einem Zug  ->  ENOENT, subtree_control bleibt LEER   (pids mit abgewiesen)
+   "+pids", dann "+io"        ->  pids steht, io fehlt
+   ```
+
+Zusammen taten die zwei genau das, wovor der Kommentar an derselben Stelle gewarnt hatte: ein
+Controller, der noch nicht da war, kostete die anderen zwei.
+
+**Behoben:** den Elternordner fragen, nachdem er angelegt ist, und **jeden Controller einzeln**
+schreiben. Dazu ein Fall, der die Lage nachstellt
+(`TestEnsureCgroupAsksTheParentAndNotTheRoot`: die Wurzel hat `cpu` und gibt ihn nicht nach unten —
+`pids` und `memory` müssen trotzdem tragen), und zwei Mutanten, je einer für eine Hälfte des
+Fehlers.
+
+**Und der Befund über das Messen, der schwerer wiegt als der Fehler selbst.** Alle Fälle dieses
+Punktes waren grün, während der echte Kern verweigerte — weil die Attrappe **großzügiger war als
+der Vertrag**: ihr `cgroup.subtree_control` nahm still an, was sie nicht konnte, statt den ganzen
+Schreibvorgang abzuweisen. Eine Attrappe, die einen abgewiesenen Schreibvorgang verschluckt, misst
+ihre eigene Nachsicht. Die Attrappe weist jetzt ab wie der Kern, und sie kennt den Unterschied
+zwischen „hat" und „gibt nach unten". Aufgeschrieben in
+`Z:\GitHub\claude-md\messen.md`.
+
+**Dazu ein kleiner Messwert am Rand:** ein cgroup-Kind, das vor der Freigabe der Controller angelegt
+wurde, **bekommt sie nachträglich**, sobald der Elternordner sie in `subtree_control` aufnimmt
+(gemessen auf `svc-2`: `Kind controllers` ging von `[]` auf `cpu memory pids`). Der Kern reicht
+also nach, und ein halb angelegter Baum ist darum reparierbar statt verloren.
+
+## Punkt 97: Ein Neustart des Controller-DIENSTES lässt die Apps unten — nur ein Neustart der MASCHINE holt sie zurück
+
+Gemessen am 30.10.2026, beim Einspielen von Punkt 96 auf `svc-2`. Der Befund gilt für die Anlage
+**wie sie heute läuft** und hat mit der Änderung aus Punkt 96 nichts zu tun — er stand vorher
+genauso da und ist nur nie aufgefallen, weil niemand den Dienst allein neu gestartet hat. Im
+Journal von `svc-1` und `svc-2` stehen ausschließlich Maschinen-Neustarts.
+
+**Die Kette, Glied für Glied:**
+
+1. `ngc-controller.service` trägt `RuntimeDirectory=ngc` und **kein** `RuntimeDirectoryPreserve`.
+   Gemessen: `systemctl show -p RuntimeDirectoryPreserve --value ngc-controller` → `no`. systemd
+   löscht `/run/ngc` also beim Stoppen des Dienstes.
+2. `/run/ngc/<app>` ist das `XDG_RUNTIME_DIR` von rootlosem podman. Darin liegt je Container ein
+   Unterordner `overlay-containers/<id>/userdata`, den podman **beim `create`** anlegt.
+3. `podman start` legt ihn **nicht** neu an. conmon will dort seine pid-Datei schreiben und
+   scheitert:
+
+   ```
+   conmon: Failed to create ".../run/overlay-containers/<id>/userdata/conmon.pid.XXXXXX":
+           No such file or directory
+   Error: unable to start container "<id>": conmon failed: exit status 1
+   ```
+
+4. `podman system migrate` hilft nicht (gemessen, Ausstieg 0, Start scheitert danach genauso).
+5. Beim Neustart der **Maschine** macht podman ein `system refresh` — es steht im Journal der
+   Anlage, unmittelbar vor `container init` — und baut diese Ordner wieder auf. Darum übersteht die
+   Anlage Maschinen-Neustarts.
+
+**Wo gemessen wurde, und warum nicht an der Anlage.** In WSL (Debian, podman 5.4.2 — dieselbe
+Fassung wie auf den Knoten, Kern 6.18, cgroup v2), in einem **eigenen** podman-Speicher
+(`--root`/`--runroot`) mit einem selbst gebauten Abbild aus `FROM scratch`. Nicht an der Anlage und
+nicht im geteilten podman-Speicher des Rechners: dort baut gerade eine andere Sitzung an
+`localhost/ngc/uhr`, und ein `system refresh` in deren Laufordner hätte den Zustand **ihrer**
+Container in derselben Datenbank zurückgesetzt. Beide Reihenfolgen gefahren:
+
+| Reihenfolge | Ergebnis |
+|---|---|
+| Container erst anhalten, dann Laufordner weg (**die echte**) | `podman start` scheitert, App bleibt **unten** |
+| Laufordner unter dem laufenden Container weg | `ps` sagt weiter „Up", `start` gibt dieselbe pid, App bleibt **oben** |
+
+Die zweite Zeile ist der Nebenbefund dazu: **podman hält den Zustand in seiner Datenbank unter
+`--root` (also `HOME`), nicht im Laufordner.** Eine Befürchtung, die dieser Strang vorher
+aufgeschrieben hatte — ein Dienst-Neustart könne **zwei** Container einer App auf denselben Daten
+erzeugen —, ist damit widerlegt: eine pid, ein conmon, kein zweiter Container.
+
+**Dazu ein zweiter Befund über denselben Griff.** `KillMode` der Einheit ist `control-group` und
+`SendSIGKILL=yes`, und die App-Container sitzen heute **in der cgroup der Einheit** (Punkt 72,
+Befund 1). Ein Dienst-Stopp nimmt die Apps also mit. Gemessen auf `svc-2`:
+`cgroup.procs` der Einheit hielt `658 724 746 748` — Controller, catatonit, conmon und den
+Haltevorgang. **Mit Punkt 96 sitzen die Apps in `/ngc.apps/<app>` und überleben einen Dienst-Stopp**
+— was gut ist und diesen Punkt nicht aufhebt, sondern verschiebt: dann läuft die App weiter,
+während ihr Laufordner unter ihr weggelöscht wird (Zeile 2 der Tabelle: sie läuft weiter und ist
+erreichbar).
+
+### Was daraus zu bauen wäre
+
+1. **`RuntimeDirectoryPreserve=yes` an `ngc-controller.service`.** Eine Zeile — und sie steht in
+   **`ulh`**, nicht in diesem Repo (`shared/ulh.md`: die Einheit schreibt `ngc-controller.sh`, und
+   die Datei sagt selbst „Never edit by hand"). **BLOCKIERT**, wie `Delegate=` in Punkt 96.
+2. Solange das nicht geht: **der Controller muss den Fall erkennen.** Scheitert ein `Start` so, ist
+   der Container nicht kaputt, sondern nur sein Laufordner — und die Behebung ist ein `create` mit
+   denselben Angaben. Ob der Controller das von sich aus tun darf, ist eine Entscheidung: es ist
+   der einzige Weg, auf dem er einen Container neu baut, ohne dass jemand eine App aktiviert hat.
+3. **Der Updater geht genau diesen Weg.** Ein Update, das das Programm tauscht und den Dienst neu
+   startet, ohne die Maschine neu zu starten, nimmt jede App dieses Knotens mit herunter. Punkt 1
+   des Buches („Der Updater ist nicht angeschlossen") bekommt damit eine Bedingung, die vorher
+   niemand aufgeschrieben hatte.
+4. **Eine Zeile in der Betriebsanleitung:** wer den Controller eines Knotens neu starten will,
+   startet die Maschine neu. `systemctl restart ngc-controller` ist auf dieser Anlage kein
+   harmloser Griff.
+
+**Getrennt gehalten:** gemessen sind `RuntimeDirectoryPreserve=no`, `KillMode=control-group`, die
+`cgroup.procs` der Einheit, die conmon-Meldung samt Pfad, das Scheitern von `podman system migrate`
+und beide Reihenfolgen der Tabelle. Abgewogen sind die Folge für den Updater und jede Zeile der
+letzten Liste. Nicht gemessen ist, ob ein `create` mit denselben Angaben den Container wirklich
+wieder lauffähig macht — das ist Posten 2 und steht hier als Vorschlag, nicht als Zahl.
