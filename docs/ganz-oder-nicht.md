@@ -309,3 +309,137 @@ an der schwächsten der drei Regeln.
 ist gemessen, welcher Code zurückgegeben **wird**, nicht was systemd daraus
 macht. Das ist Stufe „am Code gelesen", nicht „ausgeführt" — M1 bis M4 bleiben
 offen, und sie brauchen einen Eingriff an der Anlage.
+
+## M1 — `kill -9` auf `ngc-api` (api-2), gemessen am 30.10.2026, 16:58 UTC
+
+Werkzeug: `tools/ausfall-absturz.sh M1`, von diesem PC aus (Windows,
+`curl.exe`), dieselbe Anfrage wie `tools/ausfall-dienst.sh` — sonst wären die
+Zahlen mit B1 nicht vergleichbar. Die Maschine blieb an (`ping` nachgewiesen).
+
+Vorrichtung geprüft, bevor eine Zahl fiel: Dienst `active`, `MainPID=623`, und
+nach dem Schlag war PID 623 **weg** (`kill -0`). Ohne diese Prüfung hätte jede
+Zahl danach den gesunden Betrieb gemessen.
+
+| | erwartet | gemessen |
+|---|---|---|
+| kommt der Dienst zurück? | ja, nach `RestartSec=5` | **ja, in 5 s**: Schlag 16:58:48, zurück 16:58:53 |
+| Beleg dafür | PID-Reihe | **MainPID 623 → 0 (2 s `activating`) → 1374** |
+| wie sieht systemd das? | Signal, nicht Austritt | **`code=killed, status=9/KILL`, `Failed with result 'signal'`** |
+| Bild von außen | wie B1: schnell, einzelne `500` | **eine einzige `500`, und zwar die erste** |
+
+Die fünf ersten Anmeldungen, einzeln:
+
+```
+1. 500 in 0,0247 s   <html><head><title>500 Proxy Error</title>…
+2. 200 in 0,0290 s
+3. 200 in 0,0268 s
+4. 200 in 0,0269 s
+5. 200 in 0,0276 s
+```
+
+**Die Zeile, die ein Nachbarstrang braucht, und sie widerlegt seinen
+Verdächtigen.** Gefragt war, welchen der zwei Sätze eine scheiternde Anmeldung
+zeigt: „Anmeldung fehlgeschlagen." oder „Dienst nicht erreichbar.". Die Antwort
+ist **keiner von beiden** — es kommt überhaupt keine NGC-Antwort, sondern die
+nackte Apache-Seite. `login.js:449` entscheidet am Feld `code`, und das gibt es
+in dieser Antwort nicht. Ein abgeschossener API-Knoten erzeugt also nicht den
+falschen Satz, er erzeugt **keinen**.
+
+**Erwartung gegen Messung:** ich hatte „dasselbe Bild wie B1" erwartet, also
+eine Streuung von `500` über die ganze Lücke. Gemessen ist es schärfer: genau
+**eine** Anfrage fällt, die erste. Der Unterschied zu B1 (dort 6 von 40 über
+drei Minuten) ist die **Dauer** — fünf Sekunden statt drei Minuten geben dem
+`retry=5` des Lastverteilers nur ein Fenster statt sechsunddreißig.
+
+Nebenbei gemessen, gegen die Regel aus `messen.md`: `NRestarts` stand hier
+**nicht** auf 0, sondern auf 1, und blieb es. Die Regel „`NRestarts` ist kein
+Neustartzähler" bleibt trotzdem richtig — sie sagt, dass eine 0 kein Beleg für
+„nichts passiert" ist, nicht dass die Zahl immer falsch ist. Der Beleg hier ist
+und bleibt die PID-Reihe.
+
+## M3 — `kill -9` auf `ngc-controller` (svc-1), 30.10.2026, 17:00 UTC
+
+**Beide Ausgänge der Erwartung sind eingetreten, und genau darin liegt der
+Befund.** Ich hatte geschrieben, dass cgroup und `RuntimeDirectory` in
+verschiedene Richtungen zeigen und ich nicht weiß, welche gewinnt. Keine
+gewinnt: die Waisen überleben **und** die App kommt zurück.
+
+### Vorher gemessen, bevor der Schlag fiel
+
+Selbst nachgesehen, nicht übernommen: `ngc-controller 0.3.0 (contract 1)`,
+Prüfsumme `87a0f34133b76650`, Datei vom 30.10. 14:07. `/sys/fs/cgroup/ngc.apps`
+trägt beide App-cgroups. Und der Punkt, der die Erwartung schon halb
+entschied: **beide `conmon` hatten vor dem Schlag ppid=1** und saßen in
+`/ngc.apps/<app>` — sie hingen also nie an der cgroup der Einheit.
+`RuntimeDirectory=ngc`, `RuntimeDirectoryPreserve=no` ebenfalls bestätigt.
+
+### Gemessen
+
+Schlag auf `MainPID=655` um **17:00:42 UTC**. systemd:
+`code=killed, status=9/KILL`, `Failed with result 'signal'`,
+`restart counter is at 1`, zurück **17:00:47** als PID 4267 — fünf Sekunden.
+api-1 sah den Abbruch: `controller tunnel ended node=svc-1 seconds=10337`.
+
+Danach, aus `/proc` gelesen und nicht aus `pgrep` (die doppelten Namen hätten
+ein Zählfehler sein können):
+
+```
+pid=745  Zustand=S ppid=1 seit 14:08:24  cgroup /ngc.apps/ngc-terminal-439982dd
+pid=787  Zustand=S ppid=1 seit 14:08:24  cgroup /ngc.apps/ngc-uhr-ad8c00e2
+pid=4308 Zustand=S ppid=1 seit 17:00:47  cgroup /ngc.apps/ngc-terminal-439982dd
+pid=4350 Zustand=S ppid=1 seit 17:00:47  cgroup /ngc.apps/ngc-uhr-ad8c00e2
+```
+
+Vier lebende `conmon`, an jedem ein lebendes Kind `/ngc/ngc-hold hold`. Die
+cgroup bestätigt es von der anderen Seite:
+
+```
+/sys/fs/cgroup/ngc.apps/ngc-uhr-ad8c00e2/cgroup.procs = 787 789 4350 4352
+pids.current = 14
+```
+
+**Beide Paare liegen in derselben cgroup.** Die 14:08:24 sind die Startzeit der
+Fassung 0.3.0 — das sind die Container von damals, und sie haben den Schlag
+überlebt.
+
+### Punkt 97 ist nicht eingetreten, und das berichtigt eine fremde Erwartung
+
+`/run/ngc` wurde gelöscht **und um 17:00:47 neu angelegt** — beide
+App-Unterordner tragen diesen Zeitstempel. Das Journal zeigt zweimal
+`podman … system refresh`. Eine App, die neu gestartet werden muss, kommt also
+doch zurück. Was **nicht** zurückkommt, ist der alte Container: er geht nicht
+weg.
+
+### Warum das ein Sicherheitsbefund ist und nicht nur eine Stabilitätsfrage
+
+Ein Container läuft weiter, den kein Verwalter mehr kennt, mit den Rechten
+seines App-Benutzers, und die Oberfläche kann ihn nicht sehen. Dazu teilen
+beide Instanzen eine cgroup, deren Schranken nach dem bekannten Punkt ohnehin
+nicht greifen — sie tragen jetzt die doppelte Last.
+
+**Was ausdrücklich NICHT gemessen ist, weil hier angehalten wurde:** ob jeder
+weitere Absturz noch einmal verdoppelt. Das ist die naheliegende nächste
+Messung und sie ist offen.
+
+**Und eine Einschränkung, damit der Befund nicht größer klingt, als er ist:**
+die Container führen `ngc-hold hold`, einen Halteprozess, und es lauscht kein
+Port (`ss -tlnp` zeigt auf svc-1 nur `systemd-resolve` und `sshd`). Gemessen
+ist **„zwei Container-Instanzen je App laufen"**, nicht „zwei Uhren bedienen
+Benutzer". Welches Abbild sie tragen, ist nicht gelesen: `podman ps` als
+App-Benutzer scheitert an `mkdir /run/user/0/libpod: permission denied`. Stufe:
+am Knoten gemessen, nicht in der Oberfläche gesehen.
+
+### Was von außen zu sehen war: nichts
+
+Oberfläche `200`, Anmeldung `200` in 0,021–0,031 s, durchgehend. **Die Anlage
+hat diesen Vorfall mit keiner Zeile und keiner Antwort nach außen gemeldet** —
+und damit ist die Kernfrage des Auftrags ein zweites Mal beantwortet, diesmal
+an einem Fall, den ich selbst gefahren habe.
+
+## M2 — angehalten, nicht gemessen
+
+Die Leitsitzung hatte für den Fall „Waisen überleben" angeordnet, die Reihe
+anzuhalten und zu melden. Das ist eingetreten, und M2 ist darum **nicht
+gefahren**. Die Erwartung dazu (der Riegel gegen die Neustart-Schleife greift
+nach der Rechnung nie) steht oben unverändert und ist **ungemessen**; sie trägt
+keine Zahl und darf keine bekommen, bis sie gefahren ist.
