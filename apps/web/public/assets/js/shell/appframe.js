@@ -526,12 +526,23 @@ function closeQuietly(stream, code = CLOSE_OK) {
 const openFrames = new Set();
 onThemeChange((t) => {
   const a = accent();
+  // The whole set, through the same check as the first paint: light and dark
+  // are two different sets of all eight marks, not an accent that changed.
+  // frame-boot.js writes them into the standing document; the app is told
+  // nothing it has to act on.
+  //
+  // IT GOES AS NAMES AND VALUES AND NEVER AS CSS TEXT. The frame builds the
+  // stylesheet on its own side, so there is no sentence of ours that a reader
+  // of this line has to check for what else it could say.
+  const colors = Object.fromEntries(palette());
   for (const f of openFrames) {
     // "*" as the target, because the frame has an origin of its own and
     // "null" is no origin a postMessage may name. The message is addressed
     // to one window - this frame's - and that window only ever holds the
     // document the shell put there.
-    if (f.contentWindow) f.contentWindow.postMessage({ ngc: 1, op: "theme", theme: t, accent: a }, "*");
+    if (f.contentWindow) {
+      f.contentWindow.postMessage({ ngc: 1, op: "theme", theme: t, accent: a, colors }, "*");
+    }
   }
 });
 
@@ -849,12 +860,33 @@ function buildDocument(app, files, token, library) {
   lib.dataset.token = token;
   csp.after(lib);
 
+  // The painter, right behind the library and before anything of the app's:
+  // it has to hear a change of design whenever one comes, and an app's own
+  // script may take as long as it likes to run.
+  const painter = doc.createElement("script");
+  painter.setAttribute("src", dataURL("text/javascript", new TextEncoder().encode(PAINT_JS)));
+  lib.after(painter);
+
   // What the shell looks like, before the first paint rather than after it.
   // The design that is ON THE SCREEN, not the choice: with "system" chosen
   // there is no design on the shell's document to copy, and this document has
   // no stylesheet of ours to answer for it. effectiveTheme resolves it.
   doc.documentElement.dataset.theme = effectiveTheme();
   doc.documentElement.dataset.accent = accent();
+
+  // And the colours themselves, as the LAST stylesheet of the head: an app
+  // that declares the same marks at :root declares them in a stylesheet above
+  // this one. The text was built by paletteCSS out of a closed list of names
+  // and checked values, and it goes in as textContent - never as markup, the
+  // same rule as everywhere else in the shell.
+  //
+  // IT IS BUILT IN RATHER THAN SENT, so it stands before the first paint: a
+  // document that arrived in the shell's colours never flashes the app's own.
+  // frame-boot.js keeps this same element current when the look changes.
+  const paint = doc.createElement("style");
+  paint.dataset.ngc = PAINT_MARK;
+  paint.textContent = paletteCSS(palette());
+  head.append(paint);
 
   return "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
 }
@@ -938,11 +970,137 @@ function base64(bytes) {
 
 // ------------------------------------------------------------------ the rest
 
-// accent is what the document is painted with. It is read off the document
-// and not out of a variable of this file, so it cannot drift from what is on
-// screen.
+// ------------------------------------------------------- the shell's colours
+
+// The colours the shell hands an app, as a CLOSED list. A name that is not in
+// here never crosses into a frame, and there is no way to add one from
+// outside. That is the whole shape of the decision: a template that could name
+// its own marks could reach past the colours into the layout, and moving or
+// covering an app's buttons is one of the things this frame exists to prevent
+// (docs/app-farben.md, way A).
+//
+// It is exactly the list the two shipped apps already held copies of
+// (assets/apps/calculator/app.css, assets/apps/terminal/app.css), measured on
+// 30.10.2026. The colours themselves stay as they are, so WHICH names these
+// are is no longer a question of design - they are the ones already on screen.
+const APP_COLORS = [
+  "--accent", "--win-bg", "--win-fg", "--win-border",
+  "--title-bg", "--field-bg", "--muted", "--alarm",
+];
+
+// #rrggbb, six places, lower case, and nothing else.
+//
+// NOT the wide pattern the apps used to carry - three to eight places, either
+// case (calculator/app.js, terminal/app.js): seven places are no colour and
+// went through it all the same. Tight on purpose, and a value that does not
+// fit is DROPPED rather than mended, so the app keeps its own fallback: a
+// colour that is wrong by a shade beats a value nobody checked.
+//
+// Measured against what the shell really holds on 30.10.2026: all eight marks
+// of shell.css (lines 5-18, 37, 44-51) and all six choosable accents
+// (shell/theme.js, ACCENTS) are written exactly this way, so nothing that
+// exists today falls away.
+const COLOR = /^#[0-9a-f]{6}$/;
+
+// What is reported as the accent when the shell's own does not fit the
+// pattern. It is the one NGC ships with.
+const FALLBACK_ACCENT = "#2f7de1";
+
+// The mark on the one stylesheet the shell owns inside an app's document.
+const PAINT_MARK = "palette";
+
+// The painter: the shell's own few lines INSIDE the app's document, so the
+// colours can still be changed after the document stands.
+//
+// WHY IT IS HERE AND NOT IN frame-boot.js, measured on 30.10.2026 in Chromium:
+// the bootstrap hangs its listener on the frame's window BEFORE it writes the
+// document, and document.open() takes that listener off. The probe showed the
+// message arriving all the same - ngc.js, which is part of the written
+// document, saw the new design and reported it to the app - while the
+// stylesheet still held the old colours. So the listener has to be part of the
+// written document too, like ngc.js and for the same reason.
+//
+// IT IS THE SHELL'S OWN TEXT, fixed in this file: nothing from outside is in
+// it, and nothing is built into it but PAINT_MARK. It goes in as an address
+// like every other script of that document (script-src data:).
+//
+// IT CHECKS THE SHAPE OF WHAT IT GETS, although the sender is the shell: a
+// name has to look like a custom property, a value like #rrggbb, and there is
+// a bound on how many may come, so no one message writes a document full.
+// WHICH names are allowed stays in APP_COLORS above - the one place that holds
+// that list - so there is nothing here to drift from it. textContent and never
+// markup.
+const PAINT_JS = `(function () {
+  "use strict";
+  var MARK = ${JSON.stringify(PAINT_MARK)};
+  var NAME = /^--[a-z-]+$/, HEX = /^#[0-9a-f]{6}$/, MAX = 16;
+  window.addEventListener("message", function (e) {
+    if (e.source !== parent) return;
+    var m = e.data;
+    if (!m || m.ngc !== 1 || m.op !== "theme") return;
+    var colors = m.colors;
+    if (!colors || typeof colors !== "object") return;
+    var names = Object.keys(colors);
+    if (names.length > MAX) return;
+    var text = "";
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i], value = colors[name];
+      if (!NAME.test(name) || typeof value !== "string" || !HEX.test(value)) continue;
+      text += name + ":" + value + " !important;";
+    }
+    var style = document.querySelector('style[data-ngc="' + MARK + '"]');
+    if (style === null) {
+      if (!document.head) return;
+      style = document.createElement("style");
+      style.setAttribute("data-ngc", MARK);
+      document.head.appendChild(style);
+    }
+    style.textContent = text === "" ? "" : ":root{" + text + "}";
+  });
+})();`;
+
+// palette reads the shell's colours off the document - not out of a variable
+// of this file, so they cannot drift from what is on the screen - and answers
+// with the ones that are colours.
+//
+// THE CHECK IS HERE AND NOT IN THE APP, and that is why this function exists.
+// Until 30.10.2026 the shell read --accent unchecked and handed it over, and
+// every app carried a pattern of its own: the check in the hand of the side
+// nobody has to believe. An app out of a store does not have to check and will
+// not. That nothing came of it was luck and not a wall - setProperty runs the
+// value through the CSS reader a second time, and connect-src 'none' lets an
+// address inside it run into nothing.
+function palette() {
+  const style = getComputedStyle(document.documentElement);
+  const out = new Map();
+  for (const name of APP_COLORS) {
+    const value = style.getPropertyValue(name).trim();
+    if (COLOR.test(value)) out.set(name, value);
+  }
+  return out;
+}
+
+// paletteCSS builds the one stylesheet the shell puts into an app's document.
+// Its whole text is made HERE, out of a name from APP_COLORS and a value that
+// passed COLOR: not one character of anybody else's text is in it. That is
+// what separates this from handing a stylesheet or a template in.
+//
+// !important, and the reason is measured rather than assumed: both shipped
+// apps declare these same marks at their own :root. Without it the app's copy -
+// or a <style> further down its page - wins by the cascade and the shell's
+// colour never shows. The price is named rather than hidden: an app cannot
+// overrule these eight marks. It can use marks of its own, and it keeps its
+// own values wherever the shell has none to give.
+function paletteCSS(colors) {
+  let out = "";
+  for (const [name, value] of colors) out += name + ":" + value + " !important;";
+  return out === "" ? "" : ":root{" + out + "}";
+}
+
+// accent is the one colour the library reports to an app by itself
+// (assets/ngc.js). It goes through the same check as the rest.
 function accent() {
-  return getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#2f7de1";
+  return palette().get("--accent") ?? FALLBACK_ACCENT;
 }
 
 // refuse puts the reason in the window: what is the matter, and what to do.

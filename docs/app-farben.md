@@ -220,7 +220,53 @@ Thomas' Sache. Dieser Entwurf sagt nur, wie sie hineinkommen.
 
 ---
 
-## 4. Wenn zugestimmt wird: die Schritte, je ein PR
+## 4. Was gebaut ist
+
+Die Leitsitzung hat Weg B am 30.10.2026 freigegeben, in der Form „die
+Oberfläche prüft **und** setzt". Namen und Muster hat sie festgelegt: die acht
+Marken unten, geschlossene Liste, und nur `#rrggbb` — sechs Stellen,
+Kleinschreibung.
+
+**Schritt 1 und 2 sind zusammen gelandet, nicht einzeln.** Der Grund ist eine
+Messung und keine Bequemlichkeit: die Oberfläche setzt die Marken mit
+`!important`, weil beide Apps dieselben Marken an ihrem eigenen `:root` führen
+und sonst die Kopie der App gewinnt. Mit Schritt 1 allein könnte eine App ihre
+Farben beim Umschalten nicht mehr nachziehen — der Baum wäre zwischen den
+beiden PRs schlechter als vorher. Also ein PR.
+
+**Was dabei gemessen wurde und nicht erwartet war:** Der Horcher in
+`shell/frame-boot.js` überlebt `document.open()` **nicht**. Die Sonde am
+30.10.2026 in Chromium zeigte: die Nachricht kommt im Rahmen an — `ngc.js`,
+das zum geschriebenen Dokument gehört, meldete der App das neue Design —, das
+Stylesheet behielt aber die alten Farben. Der Maler muss also Teil des
+geschriebenen Dokuments sein, genau wie `ngc.js`. Er steht jetzt als eigenes
+kleines Skript in `appframe.js` (`PAINT_JS`) und wird wie jedes andere Skript
+dieses Dokuments als Adresse eingehängt. `frame-boot.js` ist unverändert.
+
+**Zweiter Befund, nicht von mir zu beheben:** `applyAccent` in
+`shell/theme.js:181–187` ruft die Horcher **nicht**. Eine zur Laufzeit
+gewählte Farbe erreicht ein offenes App-Fenster deshalb heute gar nicht — auch
+vor dieser Änderung nicht. Das Umschalten zwischen hell und dunkel ruft sie und
+wirkt. `theme.js` gehört dem Strang „Design von NGC"; die Leitsitzung
+entscheidet, wer das anfasst.
+
+**Beleg**, gemessen im Browser, Fenster offen, nicht neu geladen
+(`docs/belege/app-farben/`):
+
+| | `--win-bg` | `--win-fg` | `--field-bg` | `--accent` |
+|---|---|---|---|---|
+| hell | `#f6f8fb` | `#16202e` | `#ffffff` | `#2f7de1` |
+| dunkel | `#1e2430` | `#e8ecf3` | `#151a23` | `#2f7de1` |
+
+Dieselben Werte stehen auf beiden Seiten des Rahmens. Drei Prüffälle in
+`apps/web/tests/shell/appframe.spec.js`: die Farben kommen an, ein Wert der
+keine Farbe ist kommt **nicht** an, und sie folgen dem Umschalten.
+
+**Offen:** Schritt 3 — die Kopien in `assets/apps/*/app.css` werden
+Rückfallwerte, und die beiden Prüfungen in den `app.js` fallen weg, weil sie
+jetzt in der Oberfläche stehen. Eigener PR.
+
+## 4a. Der Plan, wie er vorgelegt wurde
 
 1. **Prüfen und setzen in `appframe.js`.** Feste Namensliste, Muster je Wert,
    erzeugtes `:root{…}`-Stylesheet als erstes im Kopf; die ungeprüfte Lesung in
