@@ -77,7 +77,7 @@ Controllers, und `control-group` bringt beim Stopp alles darin um.
 
 **Berichtigung, noch am Tag des Schreibens.** Der Strang „Die Härtung wirklich
 durchsetzen" hat an der Anlage gemessen, dass svc-1 und svc-2 seit heute
-**14:08 UTC** auf `ngc-controller` **0.3.0** laufen (Buchpunkt 96), und dass
+**14:08 UTC** auf `ngc-controller` **0.3.0** laufen, und dass
 die App-Container dort **nicht mehr** in der cgroup der Einheit sitzen, sondern
 in `/sys/fs/cgroup/ngc.apps/<app>`. Die alte Fassung liegt je Knoten als
 `/usr/lib/ngc/ngc-controller.vor-haertung`.
@@ -188,7 +188,8 @@ Ausgang ein, **höre ich auf zu messen und melde es** — der Entwurf muss dann
 neu, und die Waisen räume ich nicht selbst weg.
 
 **Ausgang 2 — die Container gehen weg und kommen nicht zurück.** Dann habe ich
-**nicht meinen Fall gemessen, sondern Buchpunkt 97**:
+**nicht meinen Fall gemessen, sondern einen Befund des Härtungsstrangs**, der
+zu diesem Zeitpunkt noch in keinem Buchpunkt stand:
 `ngc-controller.service` trägt `RuntimeDirectory=ngc` mit
 `RuntimeDirectoryPreserve=no`, systemd löscht `/run/ngc` beim Ende der Einheit,
 und darin liegt das `XDG_RUNTIME_DIR` des rootlosen podman mit
@@ -213,7 +214,8 @@ eine scheiternde Anmeldung zeigt.
 **Betriebsregeln für diesen Fall, vorher festgeschrieben.** Bleibt eine App
 unten, wird sie im Controller **deaktiviert und wieder aktiviert** — das macht
 ein `create` und legt den Ordner neu an. Kein `podman start`, kein
-`podman restart` von Hand: das nimmt dem Container seine Decke (Buchpunkt 96).
+`podman restart` von Hand: das nimmt dem Container seine Decke — Betriebsregel
+des Härtungsstrangs zur Fassung 0.3.0.
 Kein Maschinen-Neustart ohne Ansage. Die App-Daten bleiben unberührt —
 `/var/lib/ngc/apps/ngc-uhr-ad8c00e2/` und der Benutzer `ngc-uhr-ad8c00e2`
 (uid 995) werden nicht angefasst, kein `podman system reset`, kein Aufräumen
@@ -436,7 +438,7 @@ pids.current = 14
 Fassung 0.3.0 — das sind die Container von damals, und sie haben den Schlag
 überlebt.
 
-### Punkt 97 ist nicht eingetreten, und das berichtigt eine fremde Erwartung
+### Der `RuntimeDirectory`-Fall ist nicht eingetreten, und das berichtigt eine fremde Erwartung
 
 `/run/ngc` wurde gelöscht **und um 17:00:47 neu angelegt** — beide
 App-Unterordner tragen diesen Zeitstempel. Das Journal zeigt zweimal

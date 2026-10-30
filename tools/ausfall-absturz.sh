@@ -33,26 +33,66 @@
 # und steht darum nicht in diesem Skript.
 set -uo pipefail
 
-K=$HOME/Documents/ssh/keys/id_ed25519_ngc
-SSH="ssh -i $K -o StrictHostKeyChecking=no -o ConnectTimeout=8 -o BatchMode=yes"
+# KEIN Schluesselpfad und KEIN abgeschaltetes StrictHostKeyChecking in diesem
+# Skript, und beides mit Grund:
+#
+#   - Ein Pfad in jemandes Dokumentenordner gehoert nicht in ein Repo, und er
+#     faellt erst beim Fahren auf, wenn er nicht stimmt. Die Maschinen stehen
+#     in der ssh-Konfiguration des Benutzers (`ssh -G ngc-api-1` nennt Adresse,
+#     Benutzer und Schluessel), also sucht ssh den Schluessel selbst.
+#   - `StrictHostKeyChecking=no` schaltet die Pruefung der Gegenstelle ab. In
+#     einem Repo, dessen eigene Regel "TLS zwischen NGC-Teilen nie ungeprueft"
+#     lautet, darf kein eingechecktes Werkzeug das Gegenteil vormachen - das
+#     naechste Werkzeug wird von diesem abgeschrieben. Wer das Skript zum
+#     ersten Mal fahrt, bestaetigt den Fingerabdruck einmal; die Konfiguration
+#     dieser Anlage steht ohnehin auf `accept-new`.
+#
+# Die ssh-NAMEN kommen aus der Konfiguration, die ADRESSEN stehen daneben: sie
+# sind fuer curl (--resolve) und ping noetig, die keine ssh-Konfiguration lesen.
+SSH="ssh -o ConnectTimeout=8 -o BatchMode=yes"
 A1=10.2.3.210
 A2=10.2.3.211
 SVC1=10.2.3.213
 SVC2=10.2.3.214
+H_SVC1=ngc-svc-1
+H_SVC2=ngc-svc-2
+H_A1=ngc-api-1
 
 case "${1:-}" in
-  M1) ADDR=$A2;   DIENST=ngc-api;        KNOTEN=api-2; ART=einmal;    ;;
-  M2) ADDR=$A2;   DIENST=ngc-api;        KNOTEN=api-2; ART=schleife;  ;;
-  M3) ADDR=$SVC1; DIENST=ngc-controller; KNOTEN=svc-1; ART=einmal;    ;;
+  M1) ADDR=$A2;   HOST=ngc-api-2; DIENST=ngc-api;        KNOTEN=api-2; ART=einmal;    ;;
+  M2) ADDR=$A2;   HOST=ngc-api-2; DIENST=ngc-api;        KNOTEN=api-2; ART=schleife;  ;;
+  M3) ADDR=$SVC1; HOST=$H_SVC1;   DIENST=ngc-controller; KNOTEN=svc-1; ART=einmal;    ;;
   *) echo "Aufruf: $0 M1|M2|M3   (M4 ist nicht freigegeben)"; exit 2;;
 esac
+# Die Gegenprobe, dass die Konfiguration den Namen wirklich kennt - und sie
+# prueft die WIRKUNG, nicht die Form.
+#
+# Der erste Versuch hier war `ssh -G "$HOST" | grep -q '^hostname '`, und der
+# war wertlos: `ssh -G` druckt auch fuer einen erfundenen Namen eine Zeile
+# `hostname <derselbe Name>`. Gemessen am 30.10.2026:
+#
+#   ssh -G ngc-api-2        ->  hostname=10.2.3.211
+#   ssh -G gibtsnicht-xyz   ->  hostname=gibtsnicht-xyz
+#
+# Eine Pruefung, die alles durchlaesst, prueft nichts. Geprueft wird darum
+# gegen die Adresse, die dieses Skript ohnehin fuer curl und ping braucht -
+# eine Zahl aus einer ZWEITEN Quelle. Das faengt beide Faelle: Name unbekannt,
+# und Name zeigt woandershin als die Messung.
+AUFGELOEST=$(ssh -G "$HOST" 2>/dev/null | awk '/^hostname /{print $2}')
+[ "$AUFGELOEST" = "$ADDR" ] || {
+  echo "ABBRUCH: ssh loest '$HOST' auf '${AUFGELOEST:-nichts}' auf, die Messung erwartet '$ADDR'."
+  echo "         Entweder fehlt der Host-Eintrag in der ssh-Konfiguration, oder er"
+  echo "         zeigt auf eine andere Maschine. Nichts gemessen."
+  exit 3
+}
+echo "    geprueft: ssh '$HOST' -> $AUFGELOEST, und das ist die Adresse der Messung"
 SCHLEIFE=${2:-60}
 
-aktiv()  { $SSH -o ConnectTimeout=6 "root@$1" "systemctl is-active $2" 2>&1 | tr -d '\r'; }
-hauptpid() { $SSH -o ConnectTimeout=6 "root@$1" "systemctl show $2 -p MainPID --value" 2>&1 | tr -d '\r '; }
+aktiv()  { $SSH -o ConnectTimeout=6 "$1" "systemctl is-active $2" 2>&1 | tr -d '\r'; }
+hauptpid() { $SSH -o ConnectTimeout=6 "$1" "systemctl show $2 -p MainPID --value" 2>&1 | tr -d '\r '; }
 # Der Grund, den systemd dem Ende gibt. Beim Absturz MUSS hier "signal"
 # stehen und nicht "exit-code": das trennt den Schlag vom Austritt.
-ergebnis() { $SSH -o ConnectTimeout=6 "root@$1" "systemctl show $2 -p Result -p NRestarts -p ExecMainStatus -p ExecMainCode --value" 2>&1 | tr -d '\r' | tr '\n' ' '; }
+ergebnis() { $SSH -o ConnectTimeout=6 "$1" "systemctl show $2 -p Result -p NRestarts -p ExecMainStatus -p ExecMainCode --value" 2>&1 | tr -d '\r' | tr '\n' ' '; }
 
 seite() {
   curl.exe -sk -o NUL -w "%{http_code} %{time_total}s" --max-time 20 \
@@ -100,13 +140,13 @@ direkt() {
 }
 container() {
   local n
-  n=$($SSH "root@$1" 'pgrep -af "^/usr/bin/conmon" 2>/dev/null | grep -oE " -n [a-z0-9-]+" | sed "s/ -n //" | sort | tr "\n" " "' 2>&1)
+  n=$($SSH "$1" 'pgrep -af "^/usr/bin/conmon" 2>/dev/null | grep -oE " -n [a-z0-9-]+" | sed "s/ -n //" | sort | tr "\n" " "' 2>&1)
   echo "${n:-KEINE}"
 }
 # Die Waisenfrage braucht mehr als die Namen: ein Container, der weiterlaeuft,
 # nachdem sein Verwalter starb, hat einen conmon, dessen Elternteil 1 ist.
 waisen() {
-  $SSH "root@$1" 'for p in $(pgrep -f "^/usr/bin/conmon" 2>/dev/null); do
+  $SSH "$1" 'for p in $(pgrep -f "^/usr/bin/conmon" 2>/dev/null); do
       ppid=$(awk "{print \$4}" /proc/$p/stat 2>/dev/null)
       name=$(tr "\0" "\n" < /proc/$p/cmdline 2>/dev/null | grep -A1 "^-n$" | tail -1)
       echo "    conmon pid=$p ppid=$ppid name=${name:-?}"
@@ -115,17 +155,17 @@ waisen() {
 
 runde() {
   echo "--- $1 ($(date -u '+%H:%M:%S') UTC) ---"
-  echo "    $DIENST auf $KNOTEN : $(aktiv "$ADDR" "$DIENST")  MainPID=$(hauptpid "$ADDR" "$DIENST")"
-  echo "    systemd sagt        : $(ergebnis "$ADDR" "$DIENST")"
+  echo "    $DIENST auf $KNOTEN : $(aktiv "$HOST" "$DIENST")  MainPID=$(hauptpid "$HOST" "$DIENST")"
+  echo "    systemd sagt        : $(ergebnis "$HOST" "$DIENST")"
   echo "(a) Oberflaeche         : $(seite)"
   echo "(b) Anmeldung, einzeln  : $(anm_voll)"
   echo "    api-1:7443 direkt   : $(direkt $A1)"
   echo "    api-2:7443 direkt   : $(direkt $A2)"
   if [ "$KNOTEN" = svc-1 ]; then
-    echo "    Container svc-1     : $(container $SVC1)"
-    echo "    Container svc-2     : $(container $SVC2)"
+    echo "    Container svc-1     : $(container $H_SVC1)"
+    echo "    Container svc-2     : $(container $H_SVC2)"
     echo "    Elternteil je conmon auf svc-1:"
-    waisen $SVC1
+    waisen $H_SVC1
   fi
 }
 
@@ -136,9 +176,9 @@ echo "Zum Vergleich: der Dienst-Stopp derselben Rolle in docs/ausfall-nachtrag.m
 echo
 
 # --- Vorrichtungspruefung, vor jeder Zahl ---------------------------------
-VORHER=$(aktiv "$ADDR" "$DIENST")
+VORHER=$(aktiv "$HOST" "$DIENST")
 [ "$VORHER" = active ] || { echo "ABBRUCH: $DIENST auf $KNOTEN ist schon '$VORHER'. Nichts gemessen."; exit 3; }
-PID0=$(hauptpid "$ADDR" "$DIENST")
+PID0=$(hauptpid "$HOST" "$DIENST")
 case "$PID0" in ''|0|1|*[!0-9]*) echo "ABBRUCH: MainPID ist '$PID0', keine brauchbare Zahl. Nichts gemessen."; exit 3;; esac
 echo "    geprueft: $DIENST laeuft, MainPID=$PID0"
 echo
@@ -151,11 +191,11 @@ if [ "$ART" = einmal ]; then
   # Browser nachsehen, und dann muessen zwei Beobachtungen auseinanderzuhalten
   # sein.
   echo ">>> $(date -u '+%H:%M:%S') UTC  kill -9 $PID0 auf $KNOTEN"
-  $SSH "root@$ADDR" "kill -9 $PID0" 2>&1 | tr -d '\r'
+  $SSH "$HOST" "kill -9 $PID0" 2>&1 | tr -d '\r'
   # Die Pruefung, ohne die jede Zahl danach den gesunden Betrieb misst.
   WEG=nein
   for i in $(seq 1 10); do
-    if ! $SSH "root@$ADDR" "kill -0 $PID0 2>/dev/null" 2>/dev/null; then WEG=ja; break; fi
+    if ! $SSH "$HOST" "kill -0 $PID0 2>/dev/null" 2>/dev/null; then WEG=ja; break; fi
     sleep 1
   done
   [ "$WEG" = ja ] || { echo "ABBRUCH: PID $PID0 lebt noch. kill hat nichts getroffen, nichts gemessen."; exit 3; }
@@ -168,7 +208,7 @@ if [ "$ART" = einmal ]; then
   echo "    MainPID im Sekundentakt - das ist der Beleg fuer den Neustart,"
   echo "    nicht NRestarts (das setzt systemd zurueck):"
   for i in $(seq 1 20); do
-    printf "      +%2ds  is-active=%-10s MainPID=%s\n" "$i" "$(aktiv "$ADDR" "$DIENST")" "$(hauptpid "$ADDR" "$DIENST")"
+    printf "      +%2ds  is-active=%-10s MainPID=%s\n" "$i" "$(aktiv "$HOST" "$DIENST")" "$(hauptpid "$HOST" "$DIENST")"
     sleep 1
   done
   echo
@@ -197,12 +237,12 @@ while [ "$(date +%s)" -lt "$ENDE" ]; do
 done
 echo "$(date -u +%H:%M:%S) ENDE" >> /run/ngc-absturz-pids.txt
 SKRIPT
-  scp -i "$K" -o StrictHostKeyChecking=no -q "$TMP" "root@$ADDR:/run/ngc-absturz.sh"
+  scp -q "$TMP" "$HOST:/run/ngc-absturz.sh"
   rm -f "$TMP"
-  $SSH "root@$ADDR" "chmod 0700 /run/ngc-absturz.sh" 2>&1 | tr -d '\r'
+  $SSH "$HOST" "chmod 0700 /run/ngc-absturz.sh" 2>&1 | tr -d '\r'
   # Die Gegenprobe, dass die Datei wirklich angekommen ist: ohne sie messe
   # ich eine Schleife, die nie lief, und bekomme "Riegel greift" geschenkt.
-  Z=$($SSH "root@$ADDR" "wc -l < /run/ngc-absturz.sh" 2>&1 | tr -d '\r ')
+  Z=$($SSH "$HOST" "wc -l < /run/ngc-absturz.sh" 2>&1 | tr -d '\r ')
   case "$Z" in ''|0|*[!0-9]*) echo "ABBRUCH: /run/ngc-absturz.sh ist nicht angekommen ('$Z' Zeilen)."; exit 3;; esac
   echo "    geprueft: Schlagskript liegt auf $KNOTEN, $Z Zeilen"
   echo
@@ -216,13 +256,13 @@ SKRIPT
   # greift nicht, nichts passiert"), war aber eine Messung des GESUNDEN
   # Betriebs. Jetzt bleibt der Klient fuer die ganze Dauer am Leben, weil er
   # im Vordergrund derselben Schale laeuft, die auch die Anmeldungen macht.
-  $SSH "root@$ADDR" "timeout $((SCHLEIFE+30)) sh /run/ngc-absturz.sh $SCHLEIFE" >/dev/null 2>&1 &
+  $SSH "$HOST" "timeout $((SCHLEIFE+30)) sh /run/ngc-absturz.sh $SCHLEIFE" >/dev/null 2>&1 &
   SCHLAEGER=$!
   sleep 3
   # Und die Pruefung, die beim ersten Lauf gefehlt hat: nicht, dass die DATEI
   # angekommen ist, sondern dass die SCHLEIFE LAEUFT. Eine angekommene Datei
   # ist keine laufende Schleife.
-  L=$($SSH "root@$ADDR" "wc -l < /run/ngc-absturz-pids.txt 2>/dev/null" 2>&1 | tr -d '\r ')
+  L=$($SSH "$HOST" "wc -l < /run/ngc-absturz-pids.txt 2>/dev/null" 2>&1 | tr -d '\r ')
   case "$L" in ''|0|*[!0-9]*) kill "$SCHLAEGER" 2>/dev/null; echo "ABBRUCH: die Schleife schreibt nicht ('$L'). Sie laeuft nicht, nichts gemessen."; exit 3;; esac
   echo "    geprueft: die Schleife laeuft und schreibt ($L Zeilen nach 3 s)"
   echo
@@ -259,7 +299,7 @@ SKRIPT
   echo
   wait "$SCHLAEGER" 2>/dev/null
   echo "    Die PID-Reihe des Knotens (so viele Neustarts hat es wirklich gegeben):"
-  REIHE=$($SSH "root@$ADDR" "cat /run/ngc-absturz-pids.txt" 2>&1 | tr -d '\r')
+  REIHE=$($SSH "$HOST" "cat /run/ngc-absturz-pids.txt" 2>&1 | tr -d '\r')
   printf '%s\n' "$REIHE" | sed 's/^/      /'
   # Die Gegenprobe gegen den eigenen Lauf: hat sich die PID ueberhaupt
   # bewegt? Eine Reihe aus einer einzigen PID heisst, dass kein Schlag
@@ -270,33 +310,33 @@ SKRIPT
   [ "${VERSCH:-0}" -ge 2 ] || echo "    ACHTUNG: weniger als zwei verschiedene PIDs - die Schleife hat nicht getroffen, die Zahlen oben gelten NICHT."
   echo
   echo "    Hat der Riegel gegriffen? Das sagt diese Zeile, nicht meine Rechnung:"
-  $SSH "root@$ADDR" "systemctl show ngc-api -p Result -p NRestarts -p ActiveState -p StartLimitBurst -p StartLimitIntervalUSec" 2>&1 | tr -d '\r' | sed 's/^/      /'
+  $SSH "$HOST" "systemctl show ngc-api -p Result -p NRestarts -p ActiveState -p StartLimitBurst -p StartLimitIntervalUSec" 2>&1 | tr -d '\r' | sed 's/^/      /'
   echo "    Und das Journal dazu:"
-  $SSH "root@$ADDR" "journalctl -u ngc-api --since '$VOR' --no-pager 2>/dev/null | grep -iE 'start request repeated|rate limit|failed|killed|signal|Scheduled restart' | tail -12 | sed 's/^/      /'" 2>&1
-  $SSH "root@$ADDR" "rm -f /run/ngc-absturz.sh" 2>&1 | tr -d '\r'
+  $SSH "$HOST" "journalctl -u ngc-api --since '$VOR' --no-pager 2>/dev/null | grep -iE 'start request repeated|rate limit|failed|killed|signal|Scheduled restart' | tail -12 | sed 's/^/      /'" 2>&1
+  $SSH "$HOST" "rm -f /run/ngc-absturz.sh" 2>&1 | tr -d '\r'
 fi
 
 # --- Wieder anwerfen, und nachweisen, dass es gelungen ist ----------------
 echo
 echo ">>> aufraeumen: $DIENST auf $KNOTEN muss wieder laufen"
 for i in $(seq 1 30); do
-  [ "$(aktiv "$ADDR" "$DIENST")" = active ] && break
-  $SSH "root@$ADDR" "systemctl reset-failed $DIENST 2>/dev/null; systemctl start $DIENST" 2>&1 | tr -d '\r'
+  [ "$(aktiv "$HOST" "$DIENST")" = active ] && break
+  $SSH "$HOST" "systemctl reset-failed $DIENST 2>/dev/null; systemctl start $DIENST" 2>&1 | tr -d '\r'
   sleep 3
 done
-ENDSTAND=$(aktiv "$ADDR" "$DIENST")
-echo "    $DIENST sagt jetzt: $ENDSTAND  MainPID=$(hauptpid "$ADDR" "$DIENST")"
+ENDSTAND=$(aktiv "$HOST" "$DIENST")
+echo "    $DIENST sagt jetzt: $ENDSTAND  MainPID=$(hauptpid "$HOST" "$DIENST")"
 [ "$ENDSTAND" = active ] || echo "    ACHTUNG: $DIENST laeuft NICHT. Das ist von Hand nachzuholen."
 
 echo
 echo "    Was die beiden APIs im Journal sagen:"
-for a in $A1 $A2; do
+for a in $H_A1 ngc-api-2; do
   echo "      --- $a:"
-  $SSH "root@$a" "journalctl -u ngc-api --since '$VOR' --no-pager 2>/dev/null | tail -8 | sed 's/^/        /'" 2>&1
+  $SSH "$a" "journalctl -u ngc-api --since '$VOR' --no-pager 2>/dev/null | tail -8 | sed 's/^/        /'" 2>&1
 done
 if [ "$KNOTEN" = svc-1 ]; then
   echo "      --- Controller svc-1:"
-  $SSH "root@$SVC1" "journalctl -u ngc-controller --since '$VOR' --no-pager 2>/dev/null | tail -12 | sed 's/^/        /'" 2>&1
+  $SSH "$H_SVC1" "journalctl -u ngc-controller --since '$VOR' --no-pager 2>/dev/null | tail -12 | sed 's/^/        /'" 2>&1
 fi
 echo
 sleep 15
