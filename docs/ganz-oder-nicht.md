@@ -467,3 +467,46 @@ podman führt seine Container auch in einer Zustandsdatenbank, die **nicht** in
 Einträge je App stehen, könnte es bei vier bleiben — dann wäre die Verdoppelung
 ein einmaliger Übergang und keine wachsende Lücke. Das ist der freundlichere
 Ausgang, und er ist ebenso gut möglich wie meiner.
+
+## M3b — gemessen: sechs. Es wächst mit jedem Absturz
+
+Zweiter `kill -9` auf `ngc-controller` (svc-1), auf `MainPID=4267`, um
+**17:05:52 UTC**. systemd: `code=killed, status=9/KILL`,
+`restart counter is at 2`, zurück **17:05:58** als PID 5552 — wieder fünf
+Sekunden, wieder zweimal `podman … system refresh` im Journal.
+
+| | vorher (nach M3) | nachher (nach M3b) |
+|---|---|---|
+| `ngc-uhr-ad8c00e2` `cgroup.procs` | `787 789 4350 4352` | **`787 789 4350 4352 5635 5637`** |
+| `ngc-terminal-439982dd` `cgroup.procs` | `745 747 4308 4310` | **`745 747 4308 4310 5593 5595`** |
+| `pids.current` je App | 14 | **21** |
+| `conmon` insgesamt | 4 | **6** |
+| `NRestarts` | 1 | 2 |
+
+Die Startzeiten trennen die drei Generationen sauber, und keine ist
+verschwunden:
+
+```
+pid=745  ppid=1 seit 14:08:24   pid=787  ppid=1 seit 14:08:24
+pid=4308 ppid=1 seit 17:00:47   pid=4350 ppid=1 seit 17:00:47
+pid=5593 ppid=1 seit 17:05:58   pid=5635 ppid=1 seit 17:05:58
+```
+
+**Erwartung getroffen: +2 je Absturz, und der freundliche Ausgang ist
+ausgeschlossen.** Ich hatte als Gegenmöglichkeit genannt, dass podmans
+Zustandsdatenbank außerhalb von `/run` die vorhandenen Einträge wiedererkennt
+und es bei vier bleibt. Das tut sie nicht: `system refresh` lief beim zweiten
+Mal genauso und legte trotzdem einen dritten Satz an.
+
+**Damit ist der Befund kein einmaliger Übergang, sondern eine Lücke, die mit
+der Zeit wächst.** Jeder Absturz des Controllers legt einen Satz Container
+dazu, und keiner geht je weg. `pids.current` wuchs von 14 auf 21, also um 7 je
+Instanz, in einer cgroup, deren Schranken nach dem bekannten Punkt nicht
+greifen. Drei Abstürze an einem Nachmittag haben aus zwei Instanzen sechs
+gemacht — ohne eine einzige Zeile nach außen: die Anlage antwortete durchgehend
+mit `200`.
+
+Hier wurde wieder angehalten, wie abgesprochen. **Nicht gemessen** ist, was bei
+hoher Zahl passiert (Speicher, `pids.max`), und ob ein Neustart der Maschine
+alle Generationen abräumt. Die Waisen bleiben stehen: sie sind der Beweis, und
+die Behebung gehört der Fassung 0.3.0 und damit einem anderen Strang.
