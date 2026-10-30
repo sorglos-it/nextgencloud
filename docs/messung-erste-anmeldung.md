@@ -129,3 +129,74 @@ liegt bei der Leitsitzung.
 Die Asymmetrie selbst bleibt damit ungemessen. Sie misst Thomas am Browser,
 nach der Liste, die über die Leitsitzung bei ihm liegt; die eine Frage daran
 ist, ob in Durchlauf 1 hinter `login/finish` eine 200 steht.
+
+## Berichtigung, und der Mechanismus (30.10.2026)
+
+**Zwei Dinge oben sind falsch und werden hier richtiggestellt.**
+
+1. **Fassung 8 gehört NICHT zu 10.2.3.216.** Sie ist auf `ngc-db-1` gemessen,
+   also an der **Sechs-VM-Anlage**. `ngc-ein` (10.2.3.216) ist eine **eigene,
+   getrennte Anlage**: Knotenname `ein`, eine einzige API, keine MariaDB, eine
+   örtliche Datei als Datenbank. Deren Fassung ist **unbekannt** -- die Datei
+   ist verschlüsselt (`sqlite3`: „file is not a database", Absicht, kein
+   Schaden). Für ngc-ein ist E4 unvermessen. E1 dagegen steht: die
+   ausgelieferte `main.js` dort übergibt kein `openTrust`.
+2. **Mein Satz „ein in 2 bis 8 entfernter Knoten wird weiter angenommen"
+   trifft nicht zu.** An der Sechs-VM-Anlage wurde nie ein Knoten entfernt,
+   nur hinzugefügt. Der Mangel ist der **umgekehrte**: später hinzugekommene
+   Knoten werden **nicht** angenommen.
+
+### Der Mechanismus, am Code gemessen
+
+Kurzmerkmale der Signierschlüssel, Sechs-VM-Anlage, alle acht Fassungen (die
+ersten 8 Zeichen eines SHA-256 über den Schlüsseleintrag, keine Schlüsselbytes):
+
+    Fassung 1: api-1 4cdd09a8
+    Fassung 2: api-1 4cdd09a8 ; api-2 2d33f2b1
+    Fassung 3-8: dieselben beiden, dazu Controller (ohne sign)
+
+- `finish.go:353-357` (`newSession`): das API-Zertifikat wird mit
+  `h.S.Cfg.SignKey` signiert, also dem **eigenen** Schlüssel des Knotens, der
+  geantwortet hat, und trägt `Node: h.S.Cfg.Node`.
+- `contracts/session.js:261` (`apiNodes`) und `:320-328`: `verifyAPI` sucht den
+  signierenden Knoten in der **übergebenen** Liste. Fassung 1 hält nur api-1.
+- Also: antwortet **api-2**, ist `node === null` und es fliegt
+  `Error("session: malformed certificate")` -- derselbe eine Satz, und das
+  **nachdem** `login/finish` mit 200 durchgelaufen ist. Antwortet api-1, geht
+  es durch.
+
+api-1 hat seinen Signierschlüssel nie gewechselt. Gegen Fassung 1 geht
+`verifyAPI` für api-1 also durch -- womit der ursprüngliche E4-Zweifel bestätigt
+ist: die alte Fassung allein erklärt nichts. **Was erklärt, ist die
+Verteilung auf zwei APIs.**
+
+### Vorhersage, aufgeschrieben VOR Thomas' Messung
+
+Trifft dieser Mechanismus zu, dann:
+
+- **V1: Der Fehlschlag WECHSELT ab**, etwa jeder zweite Versuch, und ist nicht
+  streng der erste. „Erster Versuch tot, zweiter geht" ist genau, wie
+  Reihum-Verteilung über zwei Knoten aussieht, wenn man sofort nochmal tippt.
+- **V2: Im gescheiterten Durchlauf antwortet `login/finish` mit 200**, und
+  `trust?from=1` auch. Kein HTTP-Status zeigt den Fehler; er steht nur in der
+  Konsole.
+- **V3: Die Konsolenzeile lautet `session: malformed certificate`.** Diese eine
+  Zeichenfolge trennt die Erklärungen voneinander:
+  - `session: malformed certificate` -> der antwortende Knoten steht nicht in
+    Fassung 1 (dieser Mechanismus), oder der Knotenname passt nicht;
+  - `session: bad signature` -> Schlüsselkennung gefunden, Signatur falsch;
+  - `login: no trust list` -> leere Kette oder 204;
+  - `proof: Argon2id did not answer` -> die Frist, die E3 ausschließt.
+
+Falsifiziert ist der Mechanismus, wenn der Fehlschlag streng nur beim ersten
+Versuch auftritt und danach nie wieder (V1), wenn `login/finish` im
+gescheiterten Durchlauf KEINE 200 hat (V2), oder wenn die Konsole etwas anderes
+sagt als `session: malformed certificate` (V3).
+
+### Offene Frage, die alles entscheidet
+
+Welche Anlage benutzt Thomas, wenn er sich anmeldet? Auf der Sechs-VM-Anlage
+mit zwei APIs hat dieser Mechanismus eine echte Chance; auf ngc-ein mit einer
+einzigen API kann dort nichts wechseln -- dort hat die Leitsitzung drei Läufe
+gegen `https://ngc.test:7443/api/v1/setup` gemessen, alle 200, 6 ms, kein
+langsamer erster Lauf. Die Frage liegt bei Thomas.
