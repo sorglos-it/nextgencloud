@@ -672,3 +672,62 @@ schreiben, als es ist.
 
 Die Behebung baut der Strang „Die Härtung wirklich durchsetzen"; die Fassung
 0.3.0 gehört ihm. Hier wird gemessen, nicht gebaut.
+
+## Dieselbe Falle, zwei Stunden später, beim Beheben
+
+Gehört hierher und nicht in eine Besprechung, weil es die Regel aus M2 an
+einem zweiten Fall zeigt — und diesmal war ich der, der sie schon kannte.
+
+Beim Durchsehen fiel auf, dass dieses Werkzeug einen Schlüsselpfad und
+`StrictHostKeyChecking=no` trug. Behoben, indem es die Namen aus der
+ssh-Konfiguration benutzt. Und weil ein fehlender Host-Eintrag dann mitten in
+der Messung auffallen würde, bekam es einen Riegel davor:
+
+```sh
+ssh -G "$HOST" 2>/dev/null | grep -q '^hostname ' || { ... exit 3; }
+```
+
+**Der Riegel war wertlos.** Gemessen, statt geglaubt:
+
+```
+ssh -G ngc-api-2        ->  hostname=10.2.3.211
+ssh -G gibtsnicht-xyz   ->  hostname=gibtsnicht-xyz
+```
+
+`ssh -G` druckt für **jeden** Namen eine `hostname`-Zeile, auch für einen
+erfundenen. Die Prüfung ließ also alles durch und hätte beim nächsten Fahren
+genau den Fehler durchgelassen, gegen den sie da war.
+
+Das ist **dieselbe Sorte Fehler wie der erste M2-Lauf**: dort prüfte die
+Vorrichtung, dass die Datei *angekommen* war, statt dass die Schleife *läuft*;
+hier prüfte sie, dass eine Zeile *da* ist, statt dass sie etwas *aussagt*. Beide
+Male die Form statt der Wirkung, beide Male am selben Tag, das zweite Mal von
+jemandem, der die Lehre zwei Stunden vorher selbst gemeldet hatte.
+
+**Der Riegel, der nur die richtige Lage erfüllt**, prüft gegen eine Zahl aus
+einer **zweiten Quelle** — die Adresse, die dieses Skript ohnehin für `curl`
+und `ping` braucht:
+
+```sh
+AUFGELOEST=$(ssh -G "$HOST" | awk '/^hostname /{print $2}')
+[ "$AUFGELOEST" = "$ADDR" ] || { ... exit 3; }
+```
+
+Und die Gegenprobe in **beide** Richtungen, weil eine Prüfung, die nur den
+guten Fall sieht, wieder nichts sagt:
+
+| Name | löst auf | erwartet | Ergebnis |
+|---|---|---|---|
+| `ngc-api-2` | 10.2.3.211 | 10.2.3.211 | läuft |
+| `gibtsnicht-xyz` | `gibtsnicht-xyz` | 10.2.3.211 | **bricht ab** |
+| `ngc-svc-1` | 10.2.3.213 | 10.2.3.211 | **bricht ab** |
+
+Die dritte Zeile ist die, die über die Hausnummer hinausgeht: ein *bekannter*
+Name mit der *falschen* Erwartung bricht auch ab. Damit fängt der Riegel nicht
+nur den Tippfehler, sondern auch das Skript, das gegen die eine Maschine misst
+und die andere tötet.
+
+**Die Lehre über die Lehre:** eine Regel zu kennen schützt nicht davor, sie zu
+brechen — sie hilft nur, es zu bemerken. Gefunden habe ich es, weil ich die
+Gegenprobe mit einem erfundenen Namen gefahren habe, und das tat ich nur, weil
+derselbe Fehler denselben Tag schon einmal eine Messung gekostet hatte.
