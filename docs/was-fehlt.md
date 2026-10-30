@@ -15,11 +15,11 @@ Punkte im Entscheidungsbuch, drei veröffentlichte Fassungen. Trotzdem fehlt ein
 | `docs/bis-zur-veroeffentlichung.md` — H1–H10 + H4a, R1–R17, B1–B8 | **36** |
 | `docs/messungen-m1-m3.md` — offene Lücken | **3** |
 | `docs/vertraege-v1.2.md`, Punkte 63–95 — „zu bauen" / „offen" / „nicht gemessen" | **24** |
-| Meldung eines anderen Strangs, am 30.10.2026 gemessen (A8a, A8b) | **2** |
-| **gefunden, mit Doppelungen** | **100** |
+| Meldungen anderer Stränge, alle am 30.10.2026 gemessen (A8a–A8c, A19a, A28a, S14, S15, U16, U17) | **9** |
+| **gefunden, mit Doppelungen** | **107** |
 
-Nach Abzug der Doppelungen (dieselbe Sache steht oft an drei Stellen) bleiben **56 eigene
-Einträge**: **12 sperren**, **29 halten auf**, **15 stören nur uns**.
+Nach Abzug der Doppelungen (dieselbe Sache steht oft an drei Stellen) bleiben **63 eigene
+Einträge**: **14 sperren**, **32 halten auf**, **17 stören nur uns**.
 
 **Was sich seit dem 18.10.2026 geschlossen hat** — am 30.10.2026 selbst nachgesehen, nicht
 übernommen:
@@ -55,8 +55,10 @@ Das ist der halbe Weg. Was bleibt, steht unten.
 | **S11** | **Die Oberfläche liegt auf einer Maschine.** Die Rolle `web` hat nur VM 301 (`ngc-web-api-1`). Fällt sie, ist NGC weg — auch wenn die anderen fünf laufen. | `docs/proxmox-sechs.md:33` | **Entscheidung** + bauen |
 | **S12** | **Die Oberfläche ist deutsch.** Die fünf Sprachdateien tragen je rund 21 Schlüssel, alle aus Anmeldung und Einrichtung; rund 233 Zeichenketten stehen als deutscher Text im Code. `lang.js` nennt fünf Sprachen und `FALLBACK = "en"` — ein englischer Nutzer bekommt trotzdem Deutsch. Die README ist englisch. | B1, Zählung am 30.10. bestätigt | bauen |
 | **S13** | **Eine Lizenz mit Ausstellungszeit in der Zukunft sperrt jede spätere aus** — dauerhaft, und der Verwalter liest „gültig". Die Zeile liegt in eingefrorenem `shared/store/catalog.go:321`. | R1 (S1) · Punkt 63 | **Entscheidung** P10 zuerst |
+| **S14** | **Die erste Anmeldung sagt „Anmeldung fehlgeschlagen" — bei jedem.** Die Oberfläche baut ihre Vertrauensmaske aus der **ältesten** Fassung der Liste; dort steht nur api-1. Antwortet api-2, findet `verifyAPI` keinen Aussteller, wirft `session: malformed certificate` ohne Code, und die Oberfläche zeichnet „Passwort falsch". Beleg: acht Fassungen aus `ngc_blob`, Lastverteiler-Parität 3 + 5 = 8. | am 30.10.2026 von einem anderen Strang gemessen | bauen (ein Strang entwirft die Behebung) |
+| **S15** | **`ngc-ein` hat keine Vertrauensliste** und ist damit unbenutzbar: 302 Klagen „state: no trust list yet" in sieben Tagen, `login/finish` antwortet dort jedem `E_UNREACHABLE`. Auf dieser Maschine kann sich niemand anmelden, nie. | am 30.10.2026 von einem anderen Strang gemessen | bauen (niemand sitzt daran) |
 
-**Das sind 12 Sachen** (S3a gehört zu S3).
+**Das sind 14 Sachen** (S3a gehört zu S3).
 
 ---
 
@@ -76,6 +78,7 @@ Das ist der halbe Weg. Was bleibt, steht unten.
 | **A8** | Die fünfte Schutzeinstellung der Oberfläche ist nicht gemessen — die Oberfläche sagt über sich selbst, dass sie eine nicht kennt. | B8 · Punkt 56 | messen |
 | **A8a** | **Ein Teil kann wegbrechen, ohne dass es jemand sieht.** Controller auf svc-1 aus: alle App-Container weg — die Anlage meldete trotzdem 40 von 40 guten Anmeldungen. NGC hat keine Stelle, die sagt „mir fehlt ein Teil". | am 30.10.2026 von einem anderen Strang gemessen | bauen |
 | **A8b** | **NGC startet ohne eine Klage, wenn ein Spaltentyp vom Erwarteten abweicht** — und liest danach eine falsche Reihenfolge. Gemessen an `ngc_blob`, auf SQLite und auf MariaDB. | am 30.10.2026 von einem anderen Strang gemessen | bauen |
+| **A8c** | **Kein Protokoll je Anfrage.** Weder api-1 noch api-2 schreibt eine Zeile für eine einzelne Anfrage (33 bzw. 75 Journalzeilen, alles Start, Tunnel, Runden), und das Protokollformat des Stellvertreters trägt den Namen des Lastverteiler-Arbeiters nicht. Bei einem Fehler über zwei Knoten ist **nicht feststellbar, welcher geantwortet hat**. Hat heute eine Ursachensuche fast zum Stillstand gebracht. | am 30.10.2026 von einem anderen Strang gemessen | bauen (niemand sitzt daran) |
 
 ### Riegel, die gebaut sind und nicht greifen
 
@@ -92,6 +95,7 @@ Das ist der halbe Weg. Was bleibt, steht unten.
 | **A17** | Terminal: Zeilenfeld statt Rohtasten — ein Admin tippt irgendwann sein `sudo`-Passwort in ein Feld, das es anzeigt. | Punkt 41 · Frage 27 | bauen |
 | **A18** | Auf db-3 steht die Protokollverschlüsselung weiter auf `OFF`. | Punkt 93 | bauen |
 | **A19** | Bei verlorener Mehrheit ist auch das **Lesen** zu (`ERROR 1047` beim `SELECT`). Ob `wsrep_dirty_reads` an soll: offen — veraltete Daten gegen gar keine. | Punkt 92 | **Entscheidung** |
+| **A19a** | **Ein abgelaufener Einmalwert wird auf SQLite angenommen** und gibt sein Geheimnis heraus, wenn der Spaltentyp abweicht — der Riegel steht in SQL und kippt dort um. Gehört zu A8b und zu A13. | am 30.10.2026 von einem anderen Strang gemessen | bauen (ein Strang baut zwei Riegel in Go) |
 
 ### Die Anlage von Hand nachbessern
 
@@ -106,8 +110,9 @@ Das ist der halbe Weg. Was bleibt, steht unten.
 | **A26** | Der Kopplungscode gilt unbefristet, und es gibt keinen sichtbaren Weg, einen neuen auszugeben. | Frage 18 (P6) | bauen |
 | **A27** | Zwei NGC-Anlagen können auf einem WSL-Rechner nicht nebeneinander laufen (alle Instanzen teilen ein Netz). Fehlt nur in der Anleitung — und genau dort probiert ein Fremder NGC zuerst. | R8 · Punkt 62 | ein Absatz |
 | **A28** | `docs/installation-kleines-system.md` nennt als Erstes „zwei Entscheidungen von Thomas" samt Selberbauen und Selberunterschreiben. Mit drei veröffentlichten Fassungen ist die Anleitung an dieser Stelle überholt. | eigener Vergleich 30.10. | schreiben |
+| **A28a** | **Kein Zwischenspeicher für die Rechendateien.** Thomas' Browser holte in einer Woche `argon2.js` 55-mal und `_md.js`/`_u64.js`/`utils.js` je 83-mal: die Anmeldung lädt ihr Rechenwerk bei jedem Versuch neu. Kostet Zeit und Datenmenge — und deshalb misst die Frist auf die Herleitung heute Laden **plus** Rechnen. | am 30.10.2026 von einem anderen Strang gemessen | bauen (niemand sitzt daran) |
 
-**Das sind 27 Sachen.**
+**Das sind 32 Sachen.**
 
 ---
 
@@ -130,8 +135,10 @@ Das ist der halbe Weg. Was bleibt, steht unten.
 | **U13** | Nicht geklärt: die 477 Byte stderr, die das Protokoll einer App zuschreibt, die sie nicht geschrieben hat. | Punkt 78 |
 | **U14** | Nicht geklärt: warum ein Prüffall auf einem GitHub-Runner häufiger flattert als auf dem eigenen Rechner. | Punkt 85 |
 | **U15** | `docs/STAND.md` ist vom **10.10.2026** und beschreibt eine Lage, die es nicht mehr gibt („nichts davon ist je gelaufen"). Wer es zuerst liest, liest 20 Tage Rückstand. | eigener Vergleich 30.10. |
+| **U16** | `web-api-1` steht in der Vertrauensliste als `controller` statt als `web`. | am 30.10.2026 von einem anderen Strang gemessen |
+| **U17** | Die Einheit des Controllers verlangt `RuntimeDirectoryMode=0700`, danach steht der Ordner auf 711 — erklärt (der Controller setzt ihn selbst), heißt aber: **aus einem Dateimodus lässt sich nicht auf die aufgespielte Fassung schließen**. | am 30.10.2026 von einem anderen Strang gemessen |
 
-**Das sind 15 Sachen.**
+**Das sind 17 Sachen.**
 
 ---
 
@@ -198,9 +205,12 @@ Hier steht nichts Neues — nur, welche der Zeilen oben keinem Agenten gehören.
   Fremder NGC damit sinnvoll benutzt. Wer anders urteilt, verschiebt eine Zeile.
 - **Keine Zahl in Stunden oder Tagen.** Die Spalte „Was es braucht" sagt nur: bauen, messen
   oder entscheiden. Schätzungen wären erfunden.
-- **A8a und A8b habe ich nicht selbst gemessen.** Sie kommen als Meldung eines anderen
-  Strangs vom 30.10.2026. Ich habe sie übernommen, nicht nachgeprüft.
-- **Die 100 enthalten Doppelungen**, und die Zahl der eigenen Einträge (56) ist von Hand
+- **Neun Einträge habe ich nicht selbst gemessen** (A8a, A8b, A8c, A19a, A28a, S14, S15,
+  U16, U17). Sie kommen als Meldungen anderer Stränge vom 30.10.2026, übernommen und
+  nicht nachgeprüft.
+- **Eine „Container-Verdoppelung" wurde gemeldet, ohne Einzelheiten.** Sie steht hier
+  darum nicht als eigener Eintrag.
+- **Die 107 enthalten Doppelungen**, und die Zahl der eigenen Einträge (63) ist von Hand
   zusammengeführt. Wer anders schneidet, kommt auf eine andere Zahl.
 - **Die Übernahmen aus `bis-zur-veroeffentlichung.md` sind vom 18.10.2026.** Was ich am
   30.10. selbst nachgesehen habe, steht in der Quellenspalte mit Datum; der Rest ist
