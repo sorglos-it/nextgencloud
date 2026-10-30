@@ -35,6 +35,13 @@ type restoreEngine struct {
 	runErr  map[string]error // what Running answers with instead
 	failOn  map[string]error // what Start answers with
 	execErr error
+	// stopErr is what Stop answers with: a container that cannot be stopped is
+	// a container that keeps running, and nothing may be started beside it.
+	stopErr error
+	// limits is what every Start was told, in order. The ceiling of an app
+	// has to come out of its own manifest at every start, so a case has to be
+	// able to read what was passed and not only that Start happened.
+	limits []runtime.Limits
 }
 
 func newRestoreEngine() *restoreEngine {
@@ -64,7 +71,8 @@ func (e *restoreEngine) Running(_ context.Context, name string) (bool, error) {
 	return e.up[name], nil
 }
 
-func (e *restoreEngine) Start(_ context.Context, name string) error {
+func (e *restoreEngine) Start(_ context.Context, name string, l runtime.Limits) error {
+	e.limits = append(e.limits, l)
 	e.note("start " + name)
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -88,7 +96,12 @@ func (e *restoreEngine) Create(context.Context, runtime.Container) error {
 	e.note("create")
 	return nil
 }
-func (e *restoreEngine) Stop(context.Context, string) error   { e.note("stop"); return nil }
+func (e *restoreEngine) Stop(_ context.Context, name string) error {
+	e.note("stop " + name)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopErr
+}
 func (e *restoreEngine) Remove(context.Context, string) error { e.note("remove"); return nil }
 
 // restoreStand is one machine coming back up: a local state, an engine, and
@@ -105,13 +118,16 @@ type restoreStand struct {
 	paid      map[string]bool  // apps whose licence has run out
 	licErr    map[string]error // apps whose licence could not be read
 	runDirErr map[string]error // apps whose runtime directory could not be made
+	// noCgroup names the containers that run in no cgroup of this program:
+	// the state a controller from before the limits were real leaves behind.
+	noCgroup map[string]bool
 }
 
 func newRestoreStand(t *testing.T) *restoreStand {
 	t.Helper()
 	s := &restoreStand{t: t, st: newState(t), eng: newRestoreEngine(),
 		unlock: map[string]error{}, paid: map[string]bool{}, licErr: map[string]error{},
-		runDirErr: map[string]error{}}
+		runDirErr: map[string]error{}, noCgroup: map[string]bool{}}
 	s.cfg = RestoreConfig{
 		State:  s.st,
 		Engine: s.eng,
@@ -125,6 +141,13 @@ func newRestoreStand(t *testing.T) *restoreStand {
 			s.madeRun = append(s.madeRun, app)
 			return s.runDirErr[app]
 		},
+		// Wired for the same reason: the default reads /sys/fs/cgroup, and
+		// these cases run where there is none. Whether a cgroup really holds
+		// the limits of an app is measured in runtime, with a kernel played
+		// (runtime/cgroup_test.go) and on a real one (docs). Here it is only
+		// the state "this container runs braked by nothing", and the stand
+		// says which containers are in it.
+		HasCgroup: func(name string) bool { return !s.noCgroup[name] },
 		Unlock: func(_ context.Context, app string) error {
 			s.unlocked = append(s.unlocked, app)
 			return s.unlock[app]
@@ -144,11 +167,22 @@ func newRestoreStand(t *testing.T) *restoreStand {
 	return s
 }
 
+// standCPU and standMemory are the ceiling of the fixture app: thousandths of
+// a core and MiB, as store.Manifest has them, and on purpose not the defaults
+// of the contract (store.DefaultCPU 1000, store.DefaultMemory 256).
+const (
+	standCPU    = 500
+	standMemory = 128
+)
+
 // put writes the row of an app with a manifest that names one service and one
 // action, and start says whether that action is the start action.
 func (s *restoreStand) put(app string, active bool, start bool) {
 	s.t.Helper()
 	mf := store.Manifest{ID: app, Name: "Notizen", Version: "1.0.0", Publisher: "Sorglos IT",
+		// Two numbers that are neither nought nor the default of the contract,
+		// so a case can tell the manifest's ceiling from a forgotten one.
+		CPU: standCPU, Memory: standMemory,
 		Services: []store.Service{{Name: "main", Command: []string{"/bin/app", "serve"}}},
 		Actions:  []store.Action{{Name: "boot", Title: "Starten", Service: "main"}}}
 	if start {
@@ -362,9 +396,9 @@ func (o *orderEngine) Running(ctx context.Context, name string) (bool, error) {
 	*o.order = append(*o.order, "running "+name)
 	return o.e.Running(ctx, name)
 }
-func (o *orderEngine) Start(ctx context.Context, name string) error {
+func (o *orderEngine) Start(ctx context.Context, name string, l runtime.Limits) error {
 	*o.order = append(*o.order, "start "+name)
-	return o.e.Start(ctx, name)
+	return o.e.Start(ctx, name, l)
 }
 func (o *orderEngine) Exec(ctx context.Context, x runtime.Exec) (int, error) {
 	return o.e.Exec(ctx, x)
@@ -482,6 +516,63 @@ func TestRestoreDoesNotStartWhatRuns(t *testing.T) {
 	}
 	if len(s.ran) != 1 {
 		t.Fatalf("%d start actions ran, want 1", len(s.ran))
+	}
+}
+
+// A container that is up and in no cgroup of this program is stopped and
+// started again, into one.
+//
+// This is the one state no start would ever reach, and it is the state the
+// whole plant was in until 30.10.2026: podman accepted --pids-limit, --memory
+// and --cpus, wrote them into its own answer and dropped them, so an app ran
+// with the ceiling of the controller and none of its own
+// (runtime/cgroup.go). A running container is not started again by anything,
+// so without this step such an app would keep running unbraked until somebody
+// activated it anew - which is exactly how the fault survived three measured
+// nodes for a week.
+func TestRestoreStartsAgainWhatRunsOutsideItsOwnLimits(t *testing.T) {
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	name := runtime.UserName(firstApp)
+	s.eng.up[name] = true
+	s.noCgroup[name] = true
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"running " + name, "stop " + name, "start " + name}
+	if got := s.eng.log(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the engine saw %v, want %v", got, want)
+	}
+	// And it is started with the ceiling of its own manifest, not with
+	// whatever a start without limits would mean.
+	if len(s.eng.limits) != 1 {
+		t.Fatalf("%d starts, want 1", len(s.eng.limits))
+	}
+	if s.eng.limits[0] != (runtime.Limits{CPU: standCPU, Memory: standMemory}) {
+		t.Fatalf("started with %+v, want the manifest's %d/%d",
+			s.eng.limits[0], standCPU, standMemory)
+	}
+}
+
+// A container that cannot be stopped keeps running, and the app is NOT started
+// a second time beside it. Two containers of one app would be two writers of
+// its data directory.
+func TestRestoreLeavesAnUnstoppableContainerAloneRatherThanDoublingIt(t *testing.T) {
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	name := runtime.UserName(firstApp)
+	s.eng.up[name] = true
+	s.noCgroup[name] = true
+	s.eng.stopErr = errors.New("no")
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"running " + name, "stop " + name}
+	if got := s.eng.log(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the engine saw %v, want %v", got, want)
+	}
+	if len(s.ran) != 0 {
+		t.Fatalf("%d start actions ran, want none", len(s.ran))
 	}
 }
 

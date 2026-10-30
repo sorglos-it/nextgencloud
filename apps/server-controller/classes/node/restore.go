@@ -86,6 +86,15 @@ type RestoreConfig struct {
 	// root. Its error means "the directory could not be made", which leaves
 	// the app off and logged, like the other three.
 	EnsureRun func(ctx context.Context, app string) error
+	// HasCgroup says whether the container of this app runs inside a cgroup
+	// of this program, which is the only way to see that an app is up and
+	// braked by nothing. nil: runtime.HasCgroup.
+	//
+	// It is a function for the reason the two above are: it reads
+	// /sys/fs/cgroup, and the cases of this package run where there is none -
+	// so without a stand-in every case about a container that is already
+	// running would measure the cgroup tree of the machine the case runs on.
+	HasCgroup func(name string) bool
 	Log       *slog.Logger // nil: slog.Default()
 }
 
@@ -201,13 +210,58 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 		log.Warn("the engine does not say whether an app runs, it stays off", "app", a.ID, "err", err)
 		return
 	}
+	// A container that is up but in no cgroup of this program was started by a
+	// controller from before the limits were real: podman accepted
+	// --pids-limit, --memory and --cpus, wrote them into its own answer and
+	// dropped them, so the app runs with the ceiling of the controller and
+	// none of its own (runtime/cgroup.go). Nothing of podman says so, and that
+	// is why this stands here: a running container is the one state no start
+	// would ever reach, so without this line such an app would keep running
+	// unbraked until somebody activated it anew. It is stopped and started
+	// again, once, and the line says so.
+	if up && !c.hasCgroup(name) {
+		log.Warn("an app runs outside its own limits and is started again into them",
+			"app", a.ID)
+		if err := c.Engine.Stop(ctx, name); err != nil {
+			log.Warn("the container of an app could not be stopped, it keeps running unlimited",
+				"app", a.ID, "err", err)
+			return
+		}
+		up = false
+	}
 	if !up {
-		if err := c.Engine.Start(ctx, name); err != nil {
+		if err := c.Engine.Start(ctx, name, limitsOf(a)); err != nil {
 			log.Warn("the container of an app did not start", "app", a.ID, "err", err)
 			return
 		}
 	}
 	c.start(ctx, log, a, name)
+}
+
+// hasCgroup answers through the field if one was wired and through
+// runtime.HasCgroup otherwise, for the reason ensureRun has its default here.
+func (c RestoreConfig) hasCgroup(name string) bool {
+	if c.HasCgroup != nil {
+		return c.HasCgroup(name)
+	}
+	return runtime.HasCgroup(name)
+}
+
+// limitsOf is the ceiling of this app, out of its own manifest - the same two
+// numbers the activation hands Create (install/activate.go).
+//
+// A manifest that cannot be read gives the two zeros, and a zero is the
+// default of the contract and never "no limit" (runtime.Limits): a row whose
+// manifest is broken gets store.DefaultCPU and store.DefaultMemory and runs
+// braked, instead of getting no ceiling because its text was unreadable. That
+// a broken manifest is reported is start's, which parses it again for the
+// start action and says so there.
+func limitsOf(a dbapi.App) runtime.Limits {
+	mf, err := store.ParseManifest(a.Manifest)
+	if err != nil {
+		return runtime.Limits{}
+	}
+	return runtime.Limits{CPU: mf.CPU, Memory: mf.Memory}
 }
 
 // ensureRun makes the runtime directory of an app, through the field if one was

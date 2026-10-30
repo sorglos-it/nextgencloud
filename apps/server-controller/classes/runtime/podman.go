@@ -172,7 +172,7 @@ func (p *Podman) LoadImage(ctx context.Context, name, tarPath string) (string, e
 	if err != nil {
 		return "", err
 	}
-	if _, err := p.run(ctx, u, []string{"load", "--input", tarPath}, nil, nil, nil); err != nil {
+	if _, err := p.run(ctx, u, nil, []string{"load", "--input", tarPath}, nil, nil, nil); err != nil {
 		return "", err
 	}
 	return ref, nil
@@ -191,7 +191,7 @@ func (p *Podman) RemoveImage(ctx context.Context, name, ref string) error {
 	if !validRef.MatchString(ref) {
 		return ErrImage
 	}
-	_, err = p.run(ctx, u, []string{"rmi", ref}, nil, nil, nil)
+	_, err = p.run(ctx, u, nil, []string{"rmi", ref}, nil, nil, nil)
 	return err
 }
 
@@ -268,7 +268,22 @@ func createArgs(c Container) ([]string, error) {
 		// neighbour: see PIDsLimit.
 		"--pids-limit", strconv.Itoa(PIDsLimit),
 		// The image itself stays unwritable; what the app keeps belongs under
-		// /data, which is the only place it may write.
+		// /data, which is the only place it may write THAT SURVIVES A RESTART.
+		//
+		// Not the only place it may write, and the sentence that stood here
+		// said so until 30.10.2026. Measured in a running container on
+		// 25.10.2026 (point 95): podman mounts /tmp, /run and /var/tmp as a
+		// tmpfs of 3.9 GiB each and /dev/shm with 63 MiB, and all four are
+		// writable. --read-only means the root of the container at podman,
+		// not the container.
+		//
+		// What makes that harmless is not this switch but the cgroup: the
+		// pages of a tmpfs are charged to whoever writes them, so an app that
+		// fills /tmp hits its own memory.max and is killed there. Measured on
+		// svc-1 on 30.10.2026, in a cgroup of 64 MiB. Before that cgroup
+		// existed, those three tmpfs were the most comfortable way to take the
+		// memory of the host without breaking a single limit that stood
+		// anywhere.
 		"--read-only")
 	// The capabilities go, unless the app was granted store.NeedRoot: then they
 	// come back, and that is what root in the container means and all it means.
@@ -332,18 +347,77 @@ func (p *Podman) Create(ctx context.Context, c Container) error {
 		return ErrHome
 	}
 	u := appUser{uid: c.UID, gid: c.GID, home: c.DataDir, run: runDir(c.Name)}
-	_, err = p.run(ctx, u, args, nil, nil, nil)
+	_, err = p.run(ctx, u, nil, args, nil, nil, nil)
 	return err
 }
 
-// Start starts a container that was created.
-func (p *Podman) Start(ctx context.Context, name string) error {
+// Start starts a container that was created, inside a cgroup that holds the
+// three quantity limits of its app.
+//
+// The limits are an argument of Start and not of Create, and that is not
+// tidiness: a cgroup lives in a tmpfs and is gone after every restart of the
+// machine, while the container is not, so the numbers have to be here every
+// time the container comes up. A Start that was not told them could only guess
+// them. Everything about why this is the controller's work and not podman's is
+// at the head of cgroup.go.
+//
+// Three things have to hold before the container runs, in this order: the
+// cgroup exists, the kernel reads back the numbers that were written into it
+// (ensureCgroup), and after the start the container's processes are really in
+// it. The last one is the measurement that would have caught the fault this
+// was built for: until now podman accepted --pids-limit, wrote it into its own
+// answer and dropped it, and nothing ever looked at the kernel.
+func (p *Podman) Start(ctx context.Context, name string, l Limits) error {
 	u, err := ofName(name)
 	if err != nil {
 		return err
 	}
-	_, err = p.run(ctx, u, []string{"start", name}, nil, nil, nil)
-	return err
+	if _, err := ensureCgroup(name, l); err != nil {
+		return err
+	}
+	cg, err := openCgroup(name)
+	if err != nil {
+		return err
+	}
+	defer cg.Close()
+	// Podman's own stderr, which was thrown away here until 30.10.2026. It
+	// carries the 477 bytes that named the whole fault for weeks ("Falling
+	// back to --cgroup-manager=cgroupfs"), and it is the only thing that says
+	// what podman did with a switch it accepted. It goes into the error, not
+	// into a log: this package writes none, and what a call was given can be
+	// secret.
+	var said bytes.Buffer
+	if _, err := p.run(ctx, u, cg, []string{"start", name}, nil, nil, &said); err != nil {
+		return errors.Join(err, errors.New(trimSaid(said.String())))
+	}
+	// The container is up. Is it up inside the ceiling? A cgroup of this app
+	// that holds no task means the start went past it, and then the app runs
+	// with the limits of the controller and nothing of its own - exactly the
+	// state this was built to end. It is stopped again rather than left
+	// running: an app that cannot be braked does not run on this server.
+	if !HasCgroup(name) {
+		_ = p.Stop(ctx, name)
+		return errors.Join(ErrCgroupDropped,
+			errors.New("the container of "+name+" started outside its cgroup"),
+			errors.New(trimSaid(said.String())))
+	}
+	return nil
+}
+
+// trimSaid cuts what podman wrote to stderr down to what fits in an error.
+// Podman repeats its four warning lines at every call (477 bytes measured on
+// svc-1 on 30.10.2026), and an error that carries all of it every time is read
+// by nobody.
+func trimSaid(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "podman said nothing on stderr"
+	}
+	const most = 512
+	if len(s) > most {
+		return "podman said: " + s[:most] + " ..."
+	}
+	return "podman said: " + s
 }
 
 // Stop ends the container.
@@ -352,13 +426,13 @@ func (p *Podman) Stop(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := p.run(ctx, u, []string{"stop", "--time", "10", name}, nil, nil, nil); err == nil {
+	if _, err := p.run(ctx, u, nil, []string{"stop", "--time", "10", name}, nil, nil, nil); err == nil {
 		return nil
 	}
 	// The ten seconds were given and this still failed, so the container is
 	// killed now. Only now: a kill behind a stop that worked would take those
 	// ten seconds away from every service that has something to write out.
-	_, err = p.run(ctx, u, []string{"kill", name}, nil, nil, nil)
+	_, err = p.run(ctx, u, nil, []string{"kill", name}, nil, nil, nil)
 	return err
 }
 
@@ -369,7 +443,7 @@ func (p *Podman) Remove(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = p.run(ctx, u, []string{"rm", name}, nil, nil, nil)
+	_, err = p.run(ctx, u, nil, []string{"rm", name}, nil, nil, nil)
 	return err
 }
 
@@ -386,7 +460,7 @@ func (p *Podman) Running(ctx context.Context, name string) (bool, error) {
 	var out bytes.Buffer
 	args := []string{"ps", "--quiet", "--no-trunc",
 		"--filter", "name=^" + name + "$", "--filter", "status=running"}
-	if _, err := p.run(ctx, u, args, nil, &out, nil); err != nil {
+	if _, err := p.run(ctx, u, nil, args, nil, &out, nil); err != nil {
 		return false, err
 	}
 	return len(bytes.TrimSpace(out.Bytes())) > 0, nil
@@ -439,7 +513,20 @@ func execArgs(e Exec) ([]string, error) {
 }
 
 // Exec runs a command in a running container and answers with the number the
-// command ended with.
+// command ended with. The command runs inside the cgroup of its app, so the
+// service of an action counts against the same ceiling as the container.
+//
+// It has to be said here, because podman does not do it: measured on 25.10.2026
+// (point 95 of the book), the tasks of a podman exec land in the cgroup of
+// whoever CALLED podman, not in the one of the container. Without this line
+// every action of every app would run outside the ceiling its app was given,
+// and the fork bomb would simply be an action instead of a service.
+//
+// A container that an older controller started has no cgroup of this program.
+// Exec then runs without one rather than refusing, and the reason is not
+// convenience: such a container is braked by nothing either way, so refusing
+// would take the app away and brake nothing. node.Restore is what ends that
+// state - it starts such a container again, into a cgroup.
 func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 	u, err := ofName(e.Name)
 	if err != nil {
@@ -471,7 +558,15 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 		}
 	}
 
-	code, err := p.run(ctx, u, args, e.Stdin, e.Stdout, e.Stderr)
+	var cg *os.File
+	if HasCgroup(e.Name) {
+		if cg, err = openCgroup(e.Name); err != nil {
+			return 0, err
+		}
+		defer cg.Close()
+	}
+
+	code, err := p.run(ctx, u, cg, args, e.Stdin, e.Stdout, e.Stderr)
 	var ended *exec.ExitError
 	// Only a status the command really ended with becomes the answer. A process
 	// that a signal ended has no status at all - Go reports -1 for it, and -1 is
@@ -492,9 +587,18 @@ func (p *Podman) Exec(ctx context.Context, e Exec) (int, error) {
 // string built out of anything. It answers with the number podman ended with,
 // and an error whenever that number is not 0 - whether the number means the
 // command failed or podman did is a question only Exec asks.
-func (p *Podman) run(ctx context.Context, u appUser, args []string,
+func (p *Podman) run(ctx context.Context, u appUser, cg *os.File, args []string,
 	in io.Reader, out, errOut io.Writer) (int, error) {
 	attr, err := credential(u.uid, u.gid)
+	if err != nil {
+		return 0, err
+	}
+	// Which calls get a cgroup handle and which get nil is decided by the
+	// callers, and cgroup.go says why: a call that MAKES the processes of the
+	// app (start, exec) runs inside the ceiling, a call that only manages the
+	// container (create, stop, rm, ps, inspect) outside it. Inside it, an app
+	// that has reached its own ceiling could no longer be stopped.
+	attr, err = paths.cgroupJoin(attr, cg)
 	if err != nil {
 		return 0, err
 	}

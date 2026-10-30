@@ -1,0 +1,472 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+
+	"github.com/sorglos-it/nextgencloud/shared/store"
+)
+
+// A stand-in for the one thing these cases are about: a kernel that takes a
+// number and does not hold it.
+//
+// Why a stand-in at all, and why it is not more generous than the contract.
+// The fault this file measures is exactly that a write was ACCEPTED and
+// dropped, and a regular file cannot act that way - it reads back whatever was
+// written to it, so against os.WriteFile alone the readback in writeLimit
+// would be a check of itself and every mutation of it would live. So the kernel
+// is played here, with the two freedoms a real one has: which controllers it
+// hands down to a child, and which numbers it keeps.
+//
+// What it does NOT do: it never holds a number that was not written, and it
+// never hands down a controller that was not asked of it. Everything the cases
+// below assert is therefore something the real kernel did on svc-1 on
+// 30.10.2026 as well, where the numbers were read out of /sys/fs/cgroup.
+type fakeKernel struct {
+	t *testing.T
+	// root is the tree, in place of /sys/fs/cgroup.
+	root string
+	// offer is what the root of the tree hands down (cgroup.controllers).
+	offer []string
+	// drop names cgroup files whose write is accepted and thrown away - the
+	// whole fault, in one map.
+	drop map[string]bool
+	// joined are the cgroup directories a call of podman was put into, in
+	// order. A management call adds nothing.
+	joined []string
+	// placed is whether the stand-in writes a task into cgroup.procs when a
+	// call is put into a cgroup, as the kernel does. A case about a start that
+	// went past its cgroup turns it off.
+	placed bool
+}
+
+func aKernel(t *testing.T, offer ...string) *fakeKernel {
+	t.Helper()
+	if len(offer) == 0 {
+		offer = []string{"cpuset", "cpu", "io", "memory", "hugetlb", "pids", "rdma", "misc"}
+	}
+	k := &fakeKernel{t: t, root: t.TempDir(), offer: offer,
+		drop: map[string]bool{}, placed: true}
+	k.write(filepath.Join(k.root, "cgroup.controllers"), strings.Join(offer, " "))
+	k.write(filepath.Join(k.root, "cgroup.subtree_control"), "")
+
+	was := paths
+	t.Cleanup(func() { paths = was })
+	paths.cgroupRoot = k.root
+	// A new directory in this tree comes with the files a cgroup has, which is
+	// what the kernel does and what os.Mkdir does not.
+	paths.mkdir = func(path string, perm os.FileMode) error {
+		if err := os.Mkdir(path, perm); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(path, k.root) {
+			return nil
+		}
+		// A child gets what its parent enabled in its subtree_control, which
+		// is the rule of cgroup v2 and the reason a missing controller above
+		// is a missing file below.
+		for _, c := range strings.Fields(k.read(filepath.Dir(path) + "/cgroup.subtree_control")) {
+			switch c {
+			case "pids":
+				k.write(path+"/pids.max", "max")
+				k.write(path+"/pids.events", "max 0")
+			case "memory":
+				k.write(path+"/memory.max", "max")
+				k.write(path+"/memory.swap.max", "max")
+			case "cpu":
+				k.write(path+"/cpu.max", "max 100000")
+			}
+			k.append(path+"/cgroup.controllers", c)
+		}
+		k.write(path+"/cgroup.subtree_control", "")
+		k.write(path+"/cgroup.procs", "")
+		return nil
+	}
+	paths.cgroupWrite = func(path, value string) error {
+		if _, err := os.Stat(path); err != nil {
+			return err
+		}
+		if k.drop[filepath.Base(path)] {
+			// Taken and thrown away. This is the fault, played.
+			return nil
+		}
+		if filepath.Base(path) == "cgroup.subtree_control" {
+			// The kernel adds to this file, it does not replace it, and it
+			// takes only what it was handed down itself.
+			for _, c := range strings.Fields(value) {
+				c = strings.TrimPrefix(c, "+")
+				if k.has(c) {
+					k.append(path, c)
+				}
+			}
+			return nil
+		}
+		return os.WriteFile(path, []byte(value), 0o600)
+	}
+	// A rmdir of a cgroup takes the directory with its files, because they are
+	// the kernel's and not the filesystem's. Here they are ordinary files, so
+	// the stand-in has to say so - otherwise this case would measure the
+	// difference between the two and not DropCgroup.
+	paths.cgroupDrop = os.RemoveAll
+	paths.cgroupJoin = func(attr *syscall.SysProcAttr, dir *os.File) (*syscall.SysProcAttr, error) {
+		if dir == nil {
+			return attr, nil
+		}
+		k.joined = append(k.joined, filepath.Base(dir.Name()))
+		if k.placed {
+			k.write(dir.Name()+"/cgroup.procs", "4711")
+		}
+		return attr, nil
+	}
+	return k
+}
+
+func (k *fakeKernel) has(c string) bool {
+	for _, o := range k.offer {
+		if o == c {
+			return true
+		}
+	}
+	return false
+}
+
+func (k *fakeKernel) write(path, value string) {
+	k.t.Helper()
+	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+		k.t.Fatal(err)
+	}
+}
+
+func (k *fakeKernel) append(path, value string) {
+	k.t.Helper()
+	have := strings.Fields(k.read(path))
+	for _, h := range have {
+		if h == value {
+			return
+		}
+	}
+	k.write(path, strings.TrimSpace(strings.Join(append(have, value), " ")))
+}
+
+func (k *fakeKernel) read(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// of reads one cgroup file of one app.
+func (k *fakeKernel) of(app, file string) string {
+	return k.read(filepath.Join(k.root, cgroupParent, app, file))
+}
+
+// 1. The three numbers land in the kernel, and they are the numbers of the
+// manifest - not podman's defaults and not the ceiling of the unit.
+//
+// This is the case that would have failed before 30.10.2026 for the plainest
+// reason: nothing wrote a cgroup file at all.
+func TestEnsureCgroupPutsTheThreeLimitsIntoTheKernel(t *testing.T) {
+	k := aKernel(t)
+	held, err := ensureCgroup("ngc-uhr-1", Limits{CPU: 500, Memory: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !held.PIDs || !held.Memory || !held.CPU {
+		t.Fatalf("held = %s, want all three", held)
+	}
+	want := map[string]string{
+		"pids.max":        strconv.Itoa(PIDsLimit),
+		"memory.max":      strconv.Itoa(128 << 20),
+		"memory.swap.max": "0",
+		"cpu.max":         "50000 100000",
+	}
+	for file, w := range want {
+		if got := k.of("ngc-uhr-1", file); got != w {
+			t.Errorf("%s = %q, want %q", file, got, w)
+		}
+	}
+}
+
+// 2. Nought in the manifest is the default of the contract, never "no limit".
+// The same reading createArgs has, and the one place a mutant could quietly
+// turn into max.
+func TestEnsureCgroupReadsNoughtAsTheDefaultOfTheContract(t *testing.T) {
+	k := aKernel(t)
+	if _, err := ensureCgroup("ngc-uhr-1", Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := k.of("ngc-uhr-1", "memory.max"),
+		strconv.Itoa(store.DefaultMemory<<20); got != want {
+		t.Errorf("memory.max = %q, want %q (store.DefaultMemory)", got, want)
+	}
+	if got, want := k.of("ngc-uhr-1", "cpu.max"),
+		strconv.Itoa(store.DefaultCPU*cpuPeriod/1000)+" "+strconv.Itoa(cpuPeriod); got != want {
+		t.Errorf("cpu.max = %q, want %q (store.DefaultCPU)", got, want)
+	}
+}
+
+// 3. THE CASE THIS WHOLE FILE IS FOR. A kernel that takes the number and does
+// not hold it must not get an app started. Until 30.10.2026 exactly this
+// happened on three nodes, and podman inspect said all three limits were on.
+func TestEnsureCgroupRefusesWhenTheKernelDoesNotHoldTheLimit(t *testing.T) {
+	for _, file := range []string{"pids.max", "memory.max"} {
+		t.Run(file, func(t *testing.T) {
+			k := aKernel(t)
+			k.drop[file] = true
+			held, err := ensureCgroup("ngc-uhr-1", Limits{})
+			if !errors.Is(err, ErrCgroupDropped) {
+				t.Fatalf("err = %v, want ErrCgroupDropped", err)
+			}
+			// The error has to name the file and both numbers: an error that
+			// only says "a limit" sends whoever reads it to all three.
+			if !strings.Contains(err.Error(), file) {
+				t.Errorf("err = %v, does not name %s", err, file)
+			}
+			if file == "pids.max" && held.PIDs {
+				t.Error("held says pids holds, and it does not")
+			}
+			if file == "memory.max" && held.Memory {
+				t.Error("held says memory holds, and it does not")
+			}
+		})
+	}
+}
+
+// 4. A controller that was never handed down is the same refusal, and it is a
+// different way in: there is no file to write at all. Measured shape of the
+// real thing - on svc-1 the unit's cgroup has no cpu.max file, because
+// system.slice hands cpu to nobody.
+func TestEnsureCgroupRefusesWithoutThePidsOrTheMemoryController(t *testing.T) {
+	for _, offer := range [][]string{{"memory", "cpu"}, {"pids", "cpu"}} {
+		t.Run(strings.Join(offer, "+"), func(t *testing.T) {
+			aKernel(t, offer...)
+			if _, err := ensureCgroup("ngc-uhr-1", Limits{}); !errors.Is(err, ErrCgroupDropped) {
+				t.Fatalf("err = %v, want ErrCgroupDropped", err)
+			}
+		})
+	}
+}
+
+// 5. And the other half of that decision, which is a decision and not a
+// measurement: a missing cpu controller does NOT stop the app. A share of a
+// core is being a good neighbour, not a wall, and a node that hands cpu to
+// nobody would otherwise run no app at all. What it must not do is claim it.
+func TestACgroupWithoutTheCPUControllerStillStartsTheApp(t *testing.T) {
+	k := aKernel(t, "pids", "memory")
+	held, err := ensureCgroup("ngc-uhr-1", Limits{})
+	if err != nil {
+		t.Fatalf("err = %v, want the app to start", err)
+	}
+	if held.CPU {
+		t.Error("held claims cpu holds, and there is no cpu controller")
+	}
+	if !held.PIDs || !held.Memory {
+		t.Fatalf("held = %s, want pids and memory", held)
+	}
+	if k.of("ngc-uhr-1", "cpu.max") != "" {
+		t.Error("a cpu.max was written where no cpu controller was handed down")
+	}
+}
+
+// 6. No cgroup v2 tree, no brake, no start. A directory without
+// cgroup.controllers is not a cgroup tree, and everything below would make
+// ordinary directories and read back exactly what it wrote: a brake that
+// measures itself.
+func TestEnsureCgroupRefusesWithoutACgroupV2Tree(t *testing.T) {
+	k := aKernel(t)
+	if err := os.Remove(filepath.Join(k.root, "cgroup.controllers")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureCgroup("ngc-uhr-1", Limits{}); !errors.Is(err, ErrCgroup) {
+		t.Fatalf("err = %v, want ErrCgroup", err)
+	}
+}
+
+// 7. Called again, it writes again. A cgroup lives in a tmpfs and is gone
+// after every restart of the machine, and after a half-finished start the
+// directory may carry the numbers of a run before. So the second call is not
+// allowed to believe the directory it finds.
+func TestEnsureCgroupWritesAgainIntoACgroupAlreadyThere(t *testing.T) {
+	k := aKernel(t)
+	if _, err := ensureCgroup("ngc-uhr-1", Limits{Memory: 128}); err != nil {
+		t.Fatal(err)
+	}
+	// Somebody else widened it - this is what a run before, or a kernel
+	// default, leaves behind.
+	k.write(filepath.Join(k.root, cgroupParent, "ngc-uhr-1", "memory.max"), "max")
+	if _, err := ensureCgroup("ngc-uhr-1", Limits{Memory: 128}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := k.of("ngc-uhr-1", "memory.max"), strconv.Itoa(128<<20); got != want {
+		t.Errorf("memory.max = %q, want %q", got, want)
+	}
+}
+
+// 8. A name that is no container name reaches no directory. The name becomes a
+// path here, so it is held against the same grammar the engine holds it
+// against - not against "it is not empty".
+func TestTheCgroupCallsRefuseANameThatIsNoName(t *testing.T) {
+	aKernel(t)
+	for _, name := range []string{"", "..", "a/b", "-x", strings.Repeat("a", 33)} {
+		if _, err := ensureCgroup(name, Limits{}); !errors.Is(err, ErrName) {
+			t.Errorf("ensureCgroup(%q) = %v, want ErrName", name, err)
+		}
+		if err := DropCgroup(name); !errors.Is(err, ErrName) {
+			t.Errorf("DropCgroup(%q) = %v, want ErrName", name, err)
+		}
+		if HasCgroup(name) {
+			t.Errorf("HasCgroup(%q) says yes", name)
+		}
+	}
+}
+
+// 9. HasCgroup answers the one state nothing else can see: a container that is
+// up and braked by nothing, because a controller from before this file started
+// it. An empty cgroup.procs is exactly that state, and it must not read as
+// "there is a cgroup".
+func TestHasCgroupIsAboutTasksAndNotAboutADirectory(t *testing.T) {
+	k := aKernel(t)
+	if HasCgroup("ngc-uhr-1") {
+		t.Error("says yes without a cgroup at all")
+	}
+	if _, err := ensureCgroup("ngc-uhr-1", Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if HasCgroup("ngc-uhr-1") {
+		t.Error("says yes for a cgroup that holds no task")
+	}
+	k.write(filepath.Join(k.root, cgroupParent, "ngc-uhr-1", "cgroup.procs"), "4711")
+	if !HasCgroup("ngc-uhr-1") {
+		t.Error("says no for a cgroup that holds a task")
+	}
+}
+
+// 10. DropCgroup takes the directory away, and a cgroup that is not there is
+// no error - after a restart of the machine none of them is.
+func TestDropCgroupTakesTheDirectoryAndForgivesAMissingOne(t *testing.T) {
+	k := aKernel(t)
+	if _, err := ensureCgroup("ngc-uhr-1", Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DropCgroup("ngc-uhr-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(k.root, cgroupParent, "ngc-uhr-1")); err == nil {
+		t.Error("the cgroup is still there")
+	}
+	if err := DropCgroup("ngc-uhr-1"); err != nil {
+		t.Errorf("a second call = %v, want nothing", err)
+	}
+}
+
+// 11. Which calls of podman run inside the ceiling and which do not. The two
+// that make the processes of the app go in; the ones that manage the container
+// stay out, because inside it an app at its own ceiling could no longer be
+// stopped.
+func TestOnlyTheCallsThatMakeTheAppsProcessesRunInsideItsCgroup(t *testing.T) {
+	f := fakePodman(t)
+	k := aKernel(t)
+	// fakePodman replaces nothing of the cgroup seam and aKernel replaces
+	// nothing of the engine, so the order of the two above does not matter -
+	// but paths is one variable, and aKernel saves and restores the whole of
+	// it, so it has to come second. If it ever came first, the fake podman
+	// would be gone. That is what this line is: the check that the
+	// preparation of this case held (messen.md).
+	if paths.cgroupRoot != k.root {
+		t.Fatal("the preparation of this case did not hold")
+	}
+	name := anApp(t).name
+	p := NewPodman(f.bin)
+	ctx := context.Background()
+	if err := p.Start(ctx, name, Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Stop(ctx, name); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Remove(ctx, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Running(ctx, name); err != nil {
+		t.Fatal(err)
+	}
+	if len(k.joined) != 1 || k.joined[0] != name {
+		t.Fatalf("calls put into a cgroup: %q, want exactly one, %q", k.joined, name)
+	}
+}
+
+// 12. The measurement that catches the fault of 24.10.2026 at the moment it
+// happens: the container came up, and it came up outside its ceiling. It is
+// stopped again, and the error says so - an app that cannot be braked does not
+// run on this server.
+func TestAContainerThatCameUpOutsideItsCgroupIsStoppedAgain(t *testing.T) {
+	f := fakePodman(t)
+	k := aKernel(t)
+	k.placed = false // the kernel took the handle and put nothing in it
+	name := anApp(t).name
+	err := NewPodman(f.bin).Start(context.Background(), name, Limits{})
+	if !errors.Is(err, ErrCgroupDropped) {
+		t.Fatalf("err = %v, want ErrCgroupDropped", err)
+	}
+	// And what podman said about it is in the error, instead of on the floor.
+	// The fake writes one line to stderr at every call; the real one writes
+	// 477 bytes ending in "Falling back to --cgroup-manager=cgroupfs".
+	if !strings.Contains(err.Error(), "podman said") {
+		t.Errorf("err = %v, carries nothing podman wrote", err)
+	}
+	args := f.args(t)
+	if !strings.Contains(strings.Join(args, " "), "stop") {
+		t.Errorf("podman was called with %q, and nothing stopped the container", args)
+	}
+}
+
+// 13. A service of an action runs inside the ceiling of its app as well.
+// Measured on 25.10.2026 (point 95 of the book): the tasks of a podman exec
+// land in the cgroup of whoever CALLED podman. Without this, every action of
+// every app would run outside the ceiling its app was given, and a fork bomb
+// would simply be an action instead of a service.
+func TestExecRunsInsideTheCgroupOfItsApp(t *testing.T) {
+	f := fakePodman(t)
+	k := aKernel(t)
+	name := anApp(t).name
+	if _, err := ensureCgroup(name, Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	k.write(filepath.Join(k.root, cgroupParent, name, "cgroup.procs"), "4711")
+	p := NewPodman(f.bin)
+	if _, err := p.Exec(context.Background(),
+		Exec{Name: name, Command: []string{"/bin/true"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(k.joined) != 1 || k.joined[0] != name {
+		t.Fatalf("calls put into a cgroup: %q, want exactly one, %q", k.joined, name)
+	}
+}
+
+// 14. And the other side of that, which is a decision: a container an older
+// controller started has no cgroup of this program, and Exec runs anyway
+// instead of refusing. Such a container is braked by nothing either way, so
+// refusing would take the app away and brake nothing. node.Restore is what
+// ends that state.
+func TestExecWithoutACgroupRunsRatherThanRefusing(t *testing.T) {
+	f := fakePodman(t)
+	k := aKernel(t)
+	name := anApp(t).name
+	if _, err := NewPodman(f.bin).Exec(context.Background(),
+		Exec{Name: name, Command: []string{"/bin/true"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(k.joined) != 0 {
+		t.Fatalf("a call was put into a cgroup that does not exist: %q", k.joined)
+	}
+	if !f.ran() {
+		t.Fatal("podman was not started at all")
+	}
+}
