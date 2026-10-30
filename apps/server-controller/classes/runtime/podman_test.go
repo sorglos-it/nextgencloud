@@ -848,6 +848,14 @@ func TestStartAndRemoveBuildTheirArgumentList(t *testing.T) {
 	}
 	for _, c := range cases {
 		f := fakePodman(t)
+		// Start lays a cgroup, so this case needs the stand-in kernel even
+		// though it only looks at the argument list: without it the case
+		// reached the real /sys/fs/cgroup, where it failed as a normal user
+		// (mkdir: permission denied) and ALSO as root (the directory came,
+		// but fake podman puts no task into cgroup.procs, so the start
+		// counted as one that went past its ceiling). aKernel comes second
+		// because it saves and restores the whole of paths.
+		aKernel(t)
 		if err := c.call(NewPodman(f.bin)); err != nil {
 			t.Fatal(err)
 		}
@@ -1025,6 +1033,10 @@ var _ Engine = (*Podman)(nil)
 // A call whose context is already over starts nothing at all.
 func TestACancelledCallStartsNothing(t *testing.T) {
 	f := fakePodman(t)
+	// Same reason as in TestStartAndRemoveBuildTheirArgumentList: Start lays a
+	// cgroup before it looks at the context, so without the stand-in this case
+	// would reach into the real tree of the machine it runs on.
+	aKernel(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := NewPodman(f.bin).Start(ctx, anApp(t).name, Limits{}); err == nil {
