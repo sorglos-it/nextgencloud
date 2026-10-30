@@ -68,13 +68,29 @@ Austritt mit Fehlercode und nicht beim OOM-Killer), `nginx` hat `Restart=no`,
 `mariadb` hat `on-abnormal`. Der Eingang der ganzen Anlage — der einzige Apache
 auf api-1 — ist damit der Dienst mit der schwächsten Neustart­regel.
 
-**Befund 3: `KillMode=control-group` beim Controller erklärt einen fremden
-Befund.** `docs/ausfall-nachtrag.md`, Fall B4, hat gemessen, dass
-`systemctl stop ngc-controller` die App-Container **mitnimmt** — und hat die
-Ursache offen gelassen. Sie steht hier: die Container liegen in der cgroup des
-Controllers, und `control-group` bringt beim Stopp alles darin um. Das passt zu
-dem bekannten Punkt, dass die App-Container keine eigenen, greifenden
-cgroup-Schranken haben.
+**Befund 3: `KillMode=control-group` beim Controller erklärte einen fremden
+Befund — und gilt seit dem 30.10.2026, 14:08 UTC nur noch für die alte
+Fassung.** `docs/ausfall-nachtrag.md`, Fall B4, hat gemessen, dass
+`systemctl stop ngc-controller` die App-Container **mitnimmt**, und hat die
+Ursache offen gelassen. Sie war: die Container lagen in der cgroup des
+Controllers, und `control-group` bringt beim Stopp alles darin um.
+
+**Berichtigung, noch am Tag des Schreibens.** Der Strang „Die Härtung wirklich
+durchsetzen" hat an der Anlage gemessen, dass svc-1 und svc-2 seit heute
+**14:08 UTC** auf `ngc-controller` **0.3.0** laufen (Buchpunkt 96), und dass
+die App-Container dort **nicht mehr** in der cgroup der Einheit sitzen, sondern
+in `/sys/fs/cgroup/ngc.apps/<app>`. Die alte Fassung liegt je Knoten als
+`/usr/lib/ngc/ngc-controller.vor-haertung`.
+
+Damit ist Fall B4 eine Messung an einer Anlage, **die es nicht mehr gibt** —
+genau die Falle „welche Datei messe ich". Mein Satz oben stand eine Fassung zu
+spät da, und er stand hier schon als Erklärung, bevor ich die Fassung geprüft
+hatte.
+
+**Was daran gemessen ist und was nicht:** dass die Container außerhalb der
+cgroup der Einheit liegen, ist gemessen (von jenem Strang). Dass sie deshalb
+einen `kill -9` **überleben**, ist **nur gefolgert** — niemand hat es
+nachgeprüft. Das ist jetzt M3.
 
 **Was NICHT folgt:** ob der Absturz sich wie der Stopp verhält. `KillMode`
 beschreibt, was systemd beim **Beenden** tut; stirbt der Controller von selbst,
@@ -153,17 +169,56 @@ und wenn sie falsch ist, ist das der wertvollere Befund.
 
 Die Frage (c) des Auftrags: **laufen die Container als Waisen weiter?**
 
-Erwartung: **ja.** `KillMode=control-group` wirkt nur, wenn systemd die Unit
-beendet; stirbt der Hauptprozess allein, bleiben die übrigen Prozesse der
-cgroup laufen, bis systemd die Unit für beendet hält und aufräumt — und das tut
-es bei `Type=simple`, sobald der Hauptprozess weg ist. **Ich erwarte darum
-beides und weiß nicht, welches:** entweder Waisen, die weiterlaufen, oder
-dasselbe Bild wie B4 (alles weg). Die beiden Ausgänge verlangen verschiedene
-Behebungen, und genau darum ist dieser Fall zu messen und nicht zu überlegen.
+Die Frage (c) des Auftrags: **laufen die Container als Waisen weiter?**
 
-Der schlimmere der beiden: **Waisen.** Dann läuft die Uhr, der neue Controller
-weiß nichts von ihr, und zwei Verwalter streiten sich um einen Container —
-oder die Oberfläche zeigt „läuft nicht", während sie läuft.
+**Diese Erwartung ist nach der Berichtigung oben neu geschrieben, und zwar
+bevor der Schlag fiel.** Die erste Fassung stand auf `KillMode=control-group`
+und damit auf einer Anlage, die seit 14:08 UTC nicht mehr läuft. Zwei Ausgänge
+sind möglich, und **beide sind ein Ergebnis**:
+
+**Ausgang 1 — die Container überleben als Waisen.** Dann ist der gemessene
+Befund des Härtungsstrangs bestätigt: die Container hängen in
+`/sys/fs/cgroup/ngc.apps/<app>` und nicht an der Einheit, also nimmt der Tod
+des Verwalters sie nicht mit. Das ist der **schwerere** der beiden, und zwar
+nicht als Stabilitäts-, sondern als Sicherheitsfrage: ein Container läuft
+weiter, den kein Verwalter mehr kennt. Kommt der Controller zurück, streiten
+sich im schlimmsten Fall zwei Verwalter um einen Container, oder die Oberfläche
+zeigt „läuft nicht", während die App läuft und erreichbar ist. Tritt dieser
+Ausgang ein, **höre ich auf zu messen und melde es** — der Entwurf muss dann
+neu, und die Waisen räume ich nicht selbst weg.
+
+**Ausgang 2 — die Container gehen weg und kommen nicht zurück.** Dann habe ich
+**nicht meinen Fall gemessen, sondern Buchpunkt 97**:
+`ngc-controller.service` trägt `RuntimeDirectory=ngc` mit
+`RuntimeDirectoryPreserve=no`, systemd löscht `/run/ngc` beim Ende der Einheit,
+und darin liegt das `XDG_RUNTIME_DIR` des rootlosen podman mit
+`overlay-containers/<id>/userdata` — das podman nur beim `create` anlegt. Der
+Controller kommt dann zurück, aber eine App, die er **neu starten** muss, nicht
+— bis die Maschine neu startet. Das ist gemessen (von jenem Strang, in WSL mit
+podman 5.4.2, **nicht** an der Anlage), und `podman system migrate` hilft
+dabei nicht.
+
+**Ich sage ausdrücklich nicht, welchen der beiden ich erwarte.** Der eine folgt
+aus der cgroup, der andere aus `RuntimeDirectory` — zwei gemessene Tatsachen,
+die in verschiedene Richtungen zeigen, und welche gewinnt, entscheidet die
+Reihenfolge, in der systemd aufräumt. Das ist genau der Fall, in dem eine
+Erwartung geraten wäre.
+
+**Drei Zeilen, die ich für andere Stränge mitschreibe**, weil sie nichts
+kosten: lief der Uhr-Container nach dem Schlag weiter; stand er nach der
+Rückkehr des Controllers wieder auf demselben Abbild (1.0.1), also erkennt der
+Controller einen Waisen wieder oder legt er neu an; und welchen der zwei Sätze
+eine scheiternde Anmeldung zeigt.
+
+**Betriebsregeln für diesen Fall, vorher festgeschrieben.** Bleibt eine App
+unten, wird sie im Controller **deaktiviert und wieder aktiviert** — das macht
+ein `create` und legt den Ordner neu an. Kein `podman start`, kein
+`podman restart` von Hand: das nimmt dem Container seine Decke (Buchpunkt 96).
+Kein Maschinen-Neustart ohne Ansage. Die App-Daten bleiben unberührt —
+`/var/lib/ngc/apps/ngc-uhr-ad8c00e2/` und der Benutzer `ngc-uhr-ad8c00e2`
+(uid 995) werden nicht angefasst, kein `podman system reset`, kein Aufräumen
+von App-Benutzern; dort liegen Markierungsdatei und Zähler, die der Beweis
+eines anderen Strangs sind.
 
 ### M4 — `SIGKILL` auf `apache2` (api-1)
 
