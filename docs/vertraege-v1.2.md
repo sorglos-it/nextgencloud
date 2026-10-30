@@ -7470,6 +7470,30 @@ Anzeige der neuen Fassung ist gebaut, das Einspielen aus der Oberfläche heraus 
 gebaut. Der Weg, der funktioniert, ist der von Hand: im Laden die neue Fassung einrichten. Den ist
 die Uhr am 25.10. gegangen.
 
+**Und das ist von außen gemessen, nicht nur am Quelltext gelesen.** Das Zugriffsprotokoll des
+Ladens (`/var/log/nginx/access.log` auf `store`) ist nicht gedreht und deckt die ganze Lebenszeit
+des Ladens ab, **23.10.2026 22:15 bis 30.10.2026 12:36**. Darin stehen zwei Dinge nebeneinander:
+
+- **Der Katalog wird stündlich geholt, von beiden APIs.** `10.2.3.210` je zur Minute 36:25,
+  `10.2.3.211` je zur Minute 36:50, Antwort `200`, Länge **1626** — genau die Größe des heute
+  ausgelieferten Katalogs mit Folge 9. Zuletzt am 30.10. 12:36:25. Die API **kennt** also
+  `uhr 1.0.2`, seit es am 25.10. 20:44 unterschrieben wurde, und hat es seither rund 115 Mal neu
+  gelesen.
+- **Das Paket dazu ist nie geholt worden.** Jeder Paket-Abruf der ganzen Protokollzeit:
+
+```
+      4 GET /terminal.ngc
+      2 GET /uhr-1.0.1.ngc
+      5 GET /uhr.ngc
+```
+
+`uhr-1.0.2.ngc`: **null Mal.** Der letzte Paket-Abruf überhaupt war am 25.10. 20:06:14, die
+Einrichtung von 1.0.1 von Hand.
+
+Damit braucht der Befund den Quelltext nicht mehr als Beweis, sondern nur als Erklärung: wenn der
+stündliche Rundlauf App-Pakete bereitlegte, läge in über hundert Runden mindestens **ein** Abruf
+von `uhr-1.0.2.ngc` im Protokoll. Es liegt keiner. **Der Rundlauf fasst Apps nicht an.**
+
 **Eine eigene Fehlmessung, und sie steht hier, statt sie zu löschen.** Diese Prüfrunde hat die
 Kette zuerst anders gelesen: der stündliche Rundlauf schreibt seit Tagen
 `WARN the update round stopped error="updates: the round stopped at a node"` (im Journal von
@@ -7508,11 +7532,15 @@ verlässliche Folge steht im Katalog selbst. Die Datei wird offenbar nicht mitge
 
 Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
 
-- **Dass die Zeile `1.0.1 → 1.0.2` heute wirklich auf dem Schirm steht.** Gelesen ist der Weg, auf
-  dem sie entsteht (`rows.go`, `available`), und der Zustand des Ladens, aus dem sie rechnet. Auf
-  die Update-Seite einer angemeldeten Sitzung hat diese Prüfrunde nicht geschaut — das kann nur ein
-  Mensch, und es ist die eine offene Gegenprobe dieses Punkts. Steht dort ein Knopf, ist der
-  Abschnitt oben falsch.
+- **Dass die Zeile `1.0.1 → 1.0.2` heute wirklich auf dem Schirm steht.** Gemessen ist, dass die
+  API den Katalog mit Folge 9 stündlich liest, und gelesen ist der Weg, auf dem die Zeile daraus
+  entsteht (`rows.go`, `available`). Auf die Update-Seite einer angemeldeten Sitzung hat niemand
+  geschaut: der Browser dieser Prüfrunde kommt nicht an die Oberfläche, weil die Anlage ihr eigenes
+  Zertifikat führt und dieser Rechner dessen Aussteller nicht kennt
+  (`ERR_CERT_AUTHORITY_INVALID`) — und die Anmeldung kann ohnehin nur ein Mensch. **Dass der Knopf
+  fehlt, ist dagegen nicht mehr offen:** das Zugriffsprotokoll des Ladens zeigt null Abrufe von
+  `uhr-1.0.2.ngc` in über hundert Runden, und ohne geholtes Paket gibt es keinen Zustand
+  `UPDATE_DOWNLOADED` und keinen Knopf. Offen ist nur noch, wie die Zeile **aussieht**.
 - **Dass ein Rollout der Programme am Knopf einer App etwas ändert.** Nein, nach der Lesart oben:
   der Rundlauf kennt keine Apps, auf keinem Stand. Ein Rollout behebt die **NGC-Teile** und die
   stündliche Warnung, nicht das Anbieten einer App.
