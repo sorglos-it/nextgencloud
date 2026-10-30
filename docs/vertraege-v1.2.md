@@ -7528,6 +7528,50 @@ jemand höher unterschreibt. `docs/app-weg.md` nennt `seq` nicht als Quelle; die
 verlässliche Folge steht im Katalog selbst. Die Datei wird offenbar nicht mitgeschrieben, wenn
 `ngc-store catalog` läuft.
 
+**Nachtrag vom 30.10.2026, und er schärft die Falle:** der Laden wurde an diesem Tag zweimal neu
+unterschrieben, auf Folge **10** und auf Folge **11**. `/root/store/seq` sagt danach weiterhin
+**7**. Die Datei wird also nicht nur einmal übersehen, sondern bei jedem Unterschreiben.
+
+### Gemessen: ein abgebrochener Versuch hinterlässt an der App nichts — und der Laden erreicht die Oberfläche nur stündlich
+
+Am 30.10.2026 wurde ein Versuch mit einer Fassung, die **nicht läuft**, angefangen und auf halbem
+Weg abgebrochen. Was dabei herauskam, ist für den Weg selbst brauchbar:
+
+- **Eine Fassung, die nicht läuft, ist baubar und geprüft:** `uhr-1.0.3.ngc`, dasselbe Abbild ohne
+  das Programm der App. Gegenprobe auf dem Baurechner:
+  `crun: executable file /usr/lib/ngc/ngc-uhr not found`. Im Container ist `/usr/lib/ngc/` leer.
+  Das Paket liegt beiseite unter `/root/store/uhr-1.0.3.ngc.zurueckgenommen`.
+- **Der Laden lässt sich heben und zurücknehmen, aber nur vorwärts.** Folge 9 → 10 (mit 1.0.3) →
+  11 (ohne 1.0.3, Paket aus dem Ordner genommen). Ein Zurückschreiben der Sicherung auf Folge 9
+  wäre nur so lange gültig gewesen, wie **keine** Installation die 10 gesehen hat; danach weist
+  `store.ErrRollback` den Laden ab. Die sichere Form einer Rücknahme ist also eine **höhere**
+  Folge ohne das Paket, nicht die alte Datei zurück.
+- **`ngc-store catalog` liest jeden Paketordner-Inhalt** (`apps/cli/classes/catalog.go`: „Catalog
+  reads every package in dir"). Eine Fassung aus dem Katalog nehmen heißt darum: die Datei aus
+  `/var/www/store` nehmen und neu unterschreiben. Umgekehrt landet jedes Paket, das dort liegt,
+  beim nächsten Unterschreiben **automatisch** im Katalog — auch eines, das man nur zum Aufbewahren
+  hingelegt hat.
+- **Der neue Katalog erreicht die Oberfläche nicht sofort.** Unterschrieben um 13:14, geprüft um
+  13:15 mit `curl` von `api-1` (`http=200`). Zehn Minuten später, um 13:24, hatte **keine** NGC-API
+  ihn geholt: im Zugriffsprotokoll des Ladens steht für den neuen Katalog (1882 Byte) genau **ein**
+  Abruf, und der ist die eigene Gegenprobe (`curl/8.14.1`); von `Go-http-client` **null**. Die
+  letzten API-Abrufe waren von 12:36 und haben den alten Katalog bekommen. Wer in dieser Zeit in
+  die Oberfläche schaut, sieht darum die **alte** neueste Fassung — am 30.10. die 1.0.2 — und nicht
+  die eben unterschriebene. `docs/app-weg.md` nennt den stündlichen Abruf; hier ist er gemessen.
+- **Ein Abbruch vor dem Einspielen lässt die App unberührt.** Der Container der Uhr lief
+  unverändert weiter (dasselbe Container-Kennzeichen, Abbild 1.0.1, Laufzeit durchgehend), es
+  wurde an diesem Tag **kein** Paket vom Laden geholt, und der Abbildspeicher der App enthielt
+  weiter genau **zwei** Abbilder. Es gibt also keinen Zwischenzustand zwischen „Katalog
+  unterschrieben" und „App gehoben", in dem die App schon etwas abbekommen hätte.
+- **Der Zähler aus 1.0.1 arbeitet im Betrieb.** Vor dem Versuch stand `zugriffe` auf **42**, nach
+  einem einzigen Klick auf die Zeit in der Oberfläche auf **43**, und im Journal steht die
+  erfolgreiche Aktion um 13:20:21 auf Abbild 1.0.1. Damit ist der Zähler nicht nur über einen Hub
+  hinweg erhalten, sondern am laufenden System auch benutzt worden.
+
+**Nicht gemessen, weil abgebrochen:** was ein Einspielen einer Fassung, die nicht läuft, an der
+Anlage anrichtet. Die Vorhersage aus dem Quelltext steht unten unter „Abgewogen" und ist
+unverändert offen.
+
 ### Abgewogen, nicht gemessen
 
 Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
