@@ -227,7 +227,7 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
-| 96 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – Ursache dreilagig benannt, am laufenden Container gemessen, **auf `svc-2` eingespielt**; der erste Stand hatte einen Fehler, den der Riegel zeigte (Nachtrag); beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
+| 96 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – **am laufenden Dienst auf `svc-2` belegt** (512/256 MiB im Kern, Fork-Bombe bei 508 gebremst, Knoten steht); `--cpus` dort ehrlich nicht durchgesetzt; der erste Stand hatte einen Fehler, den der Riegel selbst zeigte; beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
 | 97 | Ein Neustart des Controller-DIENSTES lässt die Apps unten — nur ein Neustart der MASCHINE holt sie zurück | gilt – Ursache auf die conmon-Zeile gemessen; Behebung ist **eine Zeile in `ulh`**, hier blockiert | Messung |
 
 ### Die Widersprüche auf einen Blick
@@ -7590,6 +7590,89 @@ zwischen „hat" und „gibt nach unten". Aufgeschrieben in
 wurde, **bekommt sie nachträglich**, sobald der Elternordner sie in `subtree_control` aufnimmt
 (gemessen auf `svc-2`: `Kind controllers` ging von `[]` auf `cpu memory pids`). Der Kern reicht
 also nach, und ein halb angelegter Baum ist darum reparierbar statt verloren.
+
+
+### Nachweis am laufenden Dienst — `svc-2`, 30.10.2026, 13:58 UTC
+
+Nach der Behebung oben noch einmal eingespielt (Fassung 0.3.0, Prüfsumme `87a0f341…` lokal gebaut
+und oben gleich) und die Maschine neu gestartet. **Diesmal startet die App, und sie startet
+gebremst.** Das Journal dieses Starts hat drei Zeilen und keine Warnung:
+
+```
+Started ngc-controller.service
+podman: system refresh
+INFO tunnel up api=wss://api-1.ngc.mein.lan:7443/tunnel
+```
+
+**Die Zahlen am echten Terminal-Container**, aus dem Kern gelesen, nicht aus `podman inspect`:
+
+| | vorher (0.2.1) | jetzt (0.3.0) |
+|---|---|---|
+| `/proc/<pid>/cgroup` | `/system.slice/ngc-controller.service` | **`/ngc.apps/ngc-terminal-439982dd`** |
+| `pids.max` | 3466 (`TasksMax` der Einheit) | **512** |
+| `memory.max` | `max` | **268435456** |
+| `memory.swap.max` | — | **0** |
+| `cpu.max` | Datei gibt es nicht | Datei gibt es nicht *(siehe unten)* |
+| `cgroup.procs` der App | — | `759 761` (conmon und der Container) |
+| `pids.current` der Controller-Einheit | 25 (mit den Apps darin) | **9** (ohne sie) |
+
+**Die Fork-Bombe an der echten App**, gedeckelt, im Codeweg, vorher angekündigt:
+
+```
+600 Aufgaben im laufenden Terminal-Container, erlaubt 512
+  ->  "Cannot fork", pids.current 508 von 512, pids.events max 3
+dieselben 600 OHNE die cgroup
+  ->  600 von 600 gestartet
+der Knoten dabei
+  ->  Last 0,00 · controller active · 630 Aufgaben auf dem Knoten
+      · pids.current der Controller-Einheit 9 von 3466 (unberührt)
+      · Tunnel oben, 0 Fehlerzeilen im Journal
+```
+
+Damit ist der Fall, um den es ging, am **laufenden Dienst** gemessen: eine App, die mehr Aufgaben
+nimmt als erlaubt, wird gebremst, und der Knoten bleibt stehen.
+
+**`cpu.max` fehlt, und der Grund ist gemessen.** `ngc.apps` hat `cpu memory pids` zur Verfügung,
+gibt aber nur `memory pids` nach unten: als `ensureCgroup` beim Start lief, hatte die **Wurzel**
+`cpu` noch nicht freigegeben, und der Elternordner konnte nicht weitergeben, was er nicht hatte.
+Genau die Lage aus dem Nachtrag — und genau darum liegt die Behebung richtig: `pids` und `memory`
+sind **nicht** mit `cpu` untergegangen, die App läuft, und `Held` sagt `cpu=false` statt eine Zusage
+zu machen. Da `ensureCgroup` nur beim `Start` läuft und der erste Start beim Boot liegt, heißt das
+praktisch: **auf dieser Anlage wird `--cpus` nicht durchgesetzt.** Ehrlich gemeldet, nicht
+stillschweigend angefragt — und ein Posten zum Bauen (unten).
+
+**Und ein Fehler des Messenden, der dieselbe Zusage zum dritten Mal bestätigt.** Nach der
+Fork-Probe wurde der Container von Hand neu gestartet (`podman restart` als App-Benutzer, aus einer
+ssh-Sitzung), um die Zombies loszuwerden — der echte App-Container hat als Prozess 1 `ngc-hold`,
+und das erntet keine Waisen. Danach saß er in `/user.slice/user-0.slice/session-8.scope`, der cgroup
+**des Aufrufers**: die App lief ungebremst, weil ein Neustart von Hand sie aus ihrer Decke holt.
+Repariert als root, ohne Neustart der Maschine:
+
+```
+echo <conmon-pid> > /sys/fs/cgroup/ngc.apps/ngc-terminal-439982dd/cgroup.procs
+echo <container-pid> > ...
+  ->  /proc/2203/cgroup = /ngc.apps/ngc-terminal-439982dd, pids.max 512, memory.max 268435456
+```
+
+Daraus zwei Dinge: **root darf einen laufenden Prozess nachträglich eintragen** (der App-Benutzer
+darf es nicht, Punkt 96 oben) — ein halb verlorener Container ist also reparierbar. Und: **jeder
+Griff an einen Container, der nicht durch den Controller geht, hebt seine Decke auf.** Das gehört in
+die Betriebsanleitung, nicht in den Quelltext.
+
+Zum dritten Mal in derselben Messreihe hat außerdem ein gewöhnliches `podman exec` seine Aufgaben
+in die cgroup des Aufrufers gelegt und dabei ausgesehen wie „die Grenze trägt nicht" (600 gestartet,
+`pids.current` 7). Es ist jedes Mal das Messwerkzeug gewesen, nie der Riegel — und es ist der Grund,
+warum `CLONE_INTO_CGROUP` im Code auch in `Exec` steht.
+
+### Was daraus zu bauen wäre (Ergänzung)
+
+5. **`--cpus` wird auf dieser Anlage nicht durchgesetzt**, weil die Wurzel beim Boot `cpu` noch
+   nicht nach unten gibt und `ensureCgroup` nur beim Start danach fragt. Zu entscheiden: ob der
+   Controller es später noch einmal versuchen soll, ob die Einheit `CPUWeight=` tragen soll (das
+   bringt systemd dazu, `cpu` früher freizugeben — **eine Zeile in `ulh`**), oder ob die Zusage
+   `--cpus` fallen soll. Heute ist sie ehrlich gemeldet und nicht durchgesetzt.
+6. **Eine Zeile in der Betriebsanleitung:** ein Container, der nicht durch den Controller gestartet
+   wird, läuft ohne seine Decke. Für den Betrieb heißt das: kein `podman start`/`restart` von Hand.
 
 ## Punkt 97: Ein Neustart des Controller-DIENSTES lässt die Apps unten — nur ein Neustart der MASCHINE holt sie zurück
 
