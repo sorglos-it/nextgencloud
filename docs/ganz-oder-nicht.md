@@ -220,15 +220,31 @@ Kein Maschinen-Neustart ohne Ansage. Die App-Daten bleiben unberührt —
 von App-Benutzern; dort liegen Markierungsdatei und Zähler, die der Beweis
 eines anderen Strangs sind.
 
-### M4 — `SIGKILL` auf `apache2` (api-1)
+### M4 — `SIGKILL` auf `apache2` (api-1) — NICHT GEFAHREN, verschoben
 
-Erwartung: **die Anlage bleibt unten.** `Restart=on-abort` deckt ein `SIGKILL`
+**Entschieden am 30.10.2026 vom Koordinator: nicht in dieser Messrunde,
+sondern später als Abnahmemessung von Weg C Posten 1.** Die Begründung folgt
+der Rangfolge, und sie überzeugt mich: M4 würde heute den einzigen Eingang der
+Anlage umlegen und als Ergebnis bestätigen, was die Unit-Zeile schon sagt. Mein
+Satz „die Unit-Zeile allein belegt es nicht" bleibt richtig — aber **ein
+Ausfall der ganzen Anlage, um eine Zeile zu bestätigen, die niemand bestreitet,
+ist den Preis nicht wert.**
+
+Nach Posten 1 (`apache2` auf `Restart=always`) belegt dieselbe Störung etwas
+Neues: dass die Behebung greift, der Apache von selbst zurückkommt und die
+Anlage nur für die Dauer des Neustarts unten ist. Zwei Auflagen für dann:
+eigenes, vorher angesagtes Fenster, und **`kill -TERM` vor `kill -9`**, damit
+der geordnete und der harte Fall auseinander bleiben.
+
+Die Erwartung bleibt als Erwartung stehen und bekommt keine Zahl:
+**die Anlage bleibt unten.** `Restart=on-abort` deckt ein `SIGKILL`
 von außen nicht ab (systemd führt es als `signal`, nicht als `abort`), und der
 Apache auf api-1 ist der einzige Eingang. Wenn das so ist, ist der schwerste
 Einzelpunkt der Anlage nicht „api-1 fällt aus", sondern „der Apache auf api-1
 stirbt und kommt nicht wieder" — und das ist eine Zeile Behebung, nicht ein
 Umbau. Gegenprobe im selben Lauf: `SIGTERM` auf denselben Dienst, der müsste
-nach derselben Regel ebenfalls nicht neu starten.
+nach derselben Regel ebenfalls nicht neu starten. Beides gilt dann gegen die
+**geänderte** Unit, nicht gegen die heutige.
 
 ### M5 — Austritt mit Code 0 nach einem Fehler
 

@@ -262,3 +262,46 @@ Und der Satz aus „Der Satz, der vor jeder Wegwahl kommt" gilt unverändert und
 wird durch M3 nur dringender: die Kopplung oder ihr Fehlen muss als Satz in
 `docs/` stehen. Heute steht dort nichts, und ein Zufall, der sich wie eine
 Entscheidung benimmt, hat gerade zwei Container je App erzeugt.
+
+## Nachtrag 2: M2 ist gefahren, und M4 wird zur Abnahmemessung
+
+**M2 ist gemessen** (`docs/ganz-oder-nicht.md`), und damit ist die Vorbedingung
+erfüllt, die oben für Weg C Posten 1 und 2 gesetzt war. Das Ergebnis bestätigt
+die Rechnung: **zehn Neustarts in 60 Sekunden, Zähler bis 11, kein Aufgeben.**
+Der Riegel gegen die Neustart-Schleife greift heute nicht.
+
+**Die Folge für Posten 1 und 2 ist damit nicht „geht jetzt", sondern ein
+zusätzlicher Posten davor:** `StartLimitIntervalUSec` muss an `RestartSec`
+angepasst werden, sonst fügt `Restart=always` der Anlage eine **unbegrenzte**
+Schleife hinzu. Am Controller wäre das besonders teuer — nach M3b legt jeder
+Controller-Start einen Prozesssatz dazu, und elf Neustarts in einer Minute
+wären elf zusätzliche Sätze.
+
+**M4 wandert aus der Messrunde in den Bauplan.** Entschieden vom Koordinator:
+heute würde M4 den einzigen Eingang umlegen, um eine Unit-Zeile zu bestätigen,
+die niemand bestreitet. Nach Posten 1 belegt dieselbe Störung etwas Neues —
+dass die Behebung greift und der Apache von selbst zurückkommt. **M4 ist damit
+die Abnahmemessung von Posten 1**, mit eigenem, vorher angesagtem Fenster und
+mit `kill -TERM` vor `kill -9`, damit der geordnete und der harte Fall
+auseinander bleiben.
+
+Das ist eine Lehre über die Reihenfolge und nicht nur über diesen Fall: **eine
+Störung, die nur bestätigt, was man schon weiß, ist teuer; dieselbe Störung
+nach der Behebung beweist, dass sie wirkt.** Wer messen will, wartet mit der
+teuren Messung, bis sie etwas Neues sagen kann.
+
+## Reihenfolge, endgültig
+
+1. **Posten 0** — der Controller erkennt seine Container wieder oder räumt sie
+   ab. Sicherheit. Baut der Strang „Die Härtung wirklich durchsetzen"; die
+   Fassung 0.3.0 gehört ihm.
+2. **Posten 0b** — `StartLimitIntervalUSec` an `RestartSec` anpassen, damit es
+   überhaupt einen Riegel gegen die Schleife gibt. Durch M2 belegt.
+3. **Weg C Posten 3** — Lebensprobe im Lastverteiler. Durch M1 und M2 belegt:
+   die scheiternde Anmeldung bekommt eine nackte Apache-Seite ohne Feld `code`.
+4. **Weg C Posten 1 und 2** — `Restart=always` / `on-failure`, erst nach 1 und 2.
+   Abnahme: **M4**.
+5. **Weg B** — wenn Posten 0 steht.
+6. **Weg A** — nicht. Nach M3b ist er schlechter als beim Schreiben: eine
+   Kopplung, die bei jedem Fehler alles neu startet, treibt den Zähler aus M3b
+   schneller hoch.
