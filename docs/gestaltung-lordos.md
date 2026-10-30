@@ -59,8 +59,49 @@ MIT-Lizenz — und die reicht für alles, was hier steht.
 ## 2. Eine Zahl steht an einer Stelle
 
 Alle Zahlen dieses Blatts werden **CSS-Marken** in `apps/web/public/assets/css/shell.css`, im Block
-`:root` ganz oben. Das ist heute schon so und bleibt so: keine Regel und keine App bekommt eine
-eigene Zahl.
+`:root` ganz oben.
+
+### Und genau das stimmt heute nicht — gemessen am 30.10.2026
+
+Hier stand zuerst „das ist heute schon so und bleibt so: keine Regel und keine App bekommt eine
+eigene Zahl". Das war falsch, und es ist beim ersten Umbauschritt aufgefallen.
+
+**Solange jede App ihre eigene Kopie mitbringt, ist „eine Zahl nur an einer Stelle" in diesem Repo
+nicht wahr.**
+
+Belegt am Akzent, der sichtbarsten Farbe. Dieselbe Farbe steht an **sechs** Orten:
+
+| # | Ort | Was dort steht |
+|---|---|---|
+| 1 | `shell.css`, `--accent` | die Vorgabe |
+| 2 | `shell/theme.js`, `ACCENTS` | die **sechs**, aus denen der Benutzer aussucht |
+| 3 | `shell/desktop.js`, `ACCENT_NAMES` | ihre Namen, fest verdrahtet auf Deutsch |
+| 4 | `public/assets/ngc.js` | ein Rückfallwert |
+| 5 | `tests/shell/desktop-look.spec.js` | die Erwartung `#2f7de1` |
+| 6 | `assets/apps/calculator/app.css`, `terminal/app.css` | **je eine ganze Kopie** von `--win-bg`, `--win-fg`, `--win-border`, `--title-bg`, `--field-bg`, `--muted`, `--accent` |
+
+Gemessen: das LordOS-Blau allein in `shell.css` machte einen Prüffall rot und ließ die „="-Taste
+des Rechners im alten Blau stehen.
+
+**Nummer 6 ist der schwerwiegende, und er ist kein Versehen.** Eine App läuft in einem Rahmen mit
+**eigenem Ursprung** (`shell/appframe.js`, Schritt 7). Sie kann `shell.css` nicht lesen, und sie
+soll es auch nicht können — es ist eine Sicherheitsschranke. Nach der Rangfolge steht Sicherheit
+über allem, also wird dieser Riegel **nicht** gelockert, damit Farben hineinkommen. Was gehen kann,
+ist das Gegenteil: ein festes, geprüftes Häufchen Werte in den Rahmen **geben** — keine Vorlage und
+kein Stylesheet aus der Oberfläche. Das ist ein eigener Entwurf mit eigener Messung und fällt unter
+`docs/gestaltung.md` Punkt 8, wo die Frage „wie weit eine Vorlage in eine App darf" ausdrücklich
+als offen steht.
+
+Für dieses Blatt heißt das: Wo unten „wird eine Marke in `shell.css`" steht, gilt das für die
+**Oberfläche** — Schreibtisch, Leiste, Menü, Fensterrahmen. Die **Inhalte** der Apps erreicht es
+nicht. Ein Fenster in LordOS-Farben, dessen Inhalt in den alten Farben steht, ist kein fertiges
+Aussehen.
+
+Zweite Doppelung, kleiner, aber derselbe Fehler: die **hellen** Werte stehen zweimal in
+`shell.css` — einmal unter `html[data-theme="light"]` und einmal im Block
+`@media (prefers-color-scheme: light)`. CSS lässt sich nicht so schreiben, dass beide Wähler einen
+Block teilen, also müssen die Werte vorerst doppelt gepflegt werden. Eigener Schritt, eigene
+Messung.
 
 Die Marken heißen weiter wie heute, wo es sie schon gibt (`--bar-h`, `--radius`, `--accent`,
 `--win-bg`, `--fs`, `--pad`, `--win-min-w`, `--win-min-h`, `--alarm` …). Neue Marken kommen dazu;
@@ -236,8 +277,19 @@ Aus LordOS `themes/default/index.jsx` und `components/MenuBar.jsx`.
 | Schrift im Band | 13 px, Gewicht 500; der Name der App vorn 700 | LordOS |
 | Aufgeklapptes Menü | 260 px breit, 2 px unter dem Band | LordOS |
 
-**Das ist der sichtbarste Umbau:** NGC hat heute `--bar-h: 44px` und eine Leiste **unten**
-(Taskleiste mit Startmenü). Lord Flow hat ein Band **oben** mit 28 Pixeln und ein Dock unten.
+**Korrektur, am Bild und am Quelltext nachgesehen (30.10.2026):** Hier stand, NGC habe die Leiste
+**unten**. Das ist falsch. `#taskbar` ist `position:fixed; top:0` mit `backdrop-filter:blur(18px)
+saturate(150%)` — die Leiste sitzt **schon oben und ist schon durchscheinend mit Unschärfe
+dahinter**. NGC ist damit näher an Lord Flow, als dieses Blatt zuerst behauptet hat.
+
+Was an der Leiste wirklich zu tun bleibt, ist deshalb weniger:
+
+- die Höhe von `--bar-h: 44px` auf **28**,
+- aus dem einen „Start"-Knopf werden die Menüs der App, die vorn steht,
+- und ein **Dock unten** kommt dazu, das es heute gar nicht gibt.
+
+Das Dock ist damit der einzige wirkliche Bruch mit dem heutigen Aufbau — und es ist der Teil, der
+an Thomas' Antwort zum Handy hängt.
 
 ---
 
