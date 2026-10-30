@@ -420,13 +420,25 @@ func trimSaid(s string) string {
 	return "podman said: " + s
 }
 
+// StopGrace is how long a container may take to go after SIGTERM before it is
+// killed - the deadline Stop hands podman.
+//
+// It stands here, as one number with a name, because a second place reads it:
+// node.Restore waits longer than this before it calls a container that podman
+// does not know an orphan (OrphanWait). Written twice, the two numbers would
+// drift apart, and the one that drifted would be the one that kills a healthy
+// container (messen.md: a number lives in one place).
+const StopGrace = 10 * time.Second
+
 // Stop ends the container.
 func (p *Podman) Stop(ctx context.Context, name string) error {
 	u, err := ofName(name)
 	if err != nil {
 		return err
 	}
-	if _, err := p.run(ctx, u, nil, []string{"stop", "--time", "10", name}, nil, nil, nil); err == nil {
+	if _, err := p.run(ctx, u, nil,
+		[]string{"stop", "--time", strconv.Itoa(int(StopGrace / time.Second)), name},
+		nil, nil, nil); err == nil {
 		return nil
 	}
 	// The ten seconds were given and this still failed, so the container is

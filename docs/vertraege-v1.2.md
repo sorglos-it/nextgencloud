@@ -16,7 +16,7 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 97"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 98"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -227,8 +227,8 @@ gibt, aber erst nach dem Schreiben.
 | 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
-| 96 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – **auf `svc-1` und `svc-2` eingespielt und gemessen** (512/256 MiB im Kern, drei Apps, Fork-Bombe bei 508 gebremst, Knoten steht); `--cpus` auf beiden ehrlich nicht durchgesetzt; der erste Stand hatte einen Fehler, den der Riegel selbst zeigte; beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
-| 97 | Stirbt der Controller-DIENST, verliert podman seinen Zustand — und bei jedem Start kommt ein Prozesssatz je App DAZU | gilt – **auf `svc-1` gemessen** (nach zwei Controller-Starts DREI Sätze je App, EIN Behälterdatensatz, mehrere Schreiber auf einem Datenordner; es läuft auf, es verdoppelt nicht); Ursache auf vier Zeilen Quelltext gemessen; **die erste Fassung dieses Punktes behauptete das Gegenteil und war ein Messfehler in WSL** — berichtigt samt einem zweiten Satz aus derselben Runde; Folge von Punkt 96, Behebung dort offen | Messung |
+| 97 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – **auf `svc-1` und `svc-2` eingespielt und gemessen** (512/256 MiB im Kern, drei Apps, Fork-Bombe bei 508 gebremst, Knoten steht); `--cpus` auf beiden ehrlich nicht durchgesetzt; der erste Stand hatte einen Fehler, den der Riegel selbst zeigte; beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
+| 98 | Stirbt der Controller-DIENST, verliert podman seinen Zustand — und bei jedem Start kommt ein Prozesssatz je App DAZU | gilt – **auf `svc-1` gemessen** (nach zwei Controller-Starts DREI Sätze je App, EIN Behälterdatensatz, mehrere Schreiber auf einem Datenordner; es läuft auf, es verdoppelt nicht); Ursache auf vier Zeilen Quelltext gemessen; **die erste Fassung dieses Punktes behauptete das Gegenteil und war ein Messfehler in WSL** — berichtigt samt einem zweiten Satz aus derselben Runde; Folge von Punkt 97, Behebung dort offen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7297,7 +7297,7 @@ Folge der drei tmpfs für den Arbeitsspeicher des Wirts, die Dringlichkeit von P
 Zeile der letzten Liste. Nicht gemessen ist, ob `nosuid` auf `/data` wirkt — das steht in Punkt 72
 und ist dort als geschlossen, nicht gemessen gekennzeichnet; dieser Punkt ändert daran nichts.
 
-## Punkt 96: Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman
+## Punkt 97: Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman
 
 Punkt 72 (Befund 1) und Punkt 95 (Posten 7) haben zweimal gemessen, dass `--pids-limit 512`,
 `--memory 256m` und `--cpus 1.000` **angefragt und nicht durchgesetzt** werden: auf keinem der drei
@@ -7538,7 +7538,7 @@ lassen, und jede Zeile der letzten Liste.
 
 Am 30.10.2026 wurde dieser Stand auf `svc-2` eingespielt (Fassung 0.3.0, die 0.2.1 blieb als
 `/usr/lib/ngc/ngc-controller.vor-haertung` liegen) und die Maschine neu gestartet — nicht nur der
-Dienst, aus dem Grund, der in Punkt 97 steht. **Die Terminal-App ist nicht gestartet**, und das
+Dienst, aus dem Grund, der in Punkt 98 steht. **Die Terminal-App ist nicht gestartet**, und das
 Protokoll sagte genau, was fehlte:
 
 ```
@@ -7655,7 +7655,7 @@ echo <container-pid> > ...
 ```
 
 Daraus zwei Dinge: **root darf einen laufenden Prozess nachträglich eintragen** (der App-Benutzer
-darf es nicht, Punkt 96 oben) — ein halb verlorener Container ist also reparierbar. Und: **jeder
+darf es nicht, Punkt 97 oben) — ein halb verlorener Container ist also reparierbar. Und: **jeder
 Griff an einen Container, der nicht durch den Controller geht, hebt seine Decke auf.** Das gehört in
 die Betriebsanleitung, nicht in den Quelltext.
 
@@ -7686,7 +7686,7 @@ Drei Dinge daran sind neu:
 1. **Zwei Apps, zwei Decken.** Jede sitzt in ihrem eigenen Zweig; keine zählt gegen die andere.
 2. **Der Posten aus Punkt 95 ist zusammengeführt:** `--cap-drop ALL` (Uhr: **null** Fähigkeiten)
    und die Mengen-Grenzen liegen **gleichzeitig** an derselben Maschine an. Punkt 95 konnte das
-   eine zeigen, Punkt 96 auf `svc-2` das andere.
+   eine zeigen, Punkt 97 auf `svc-2` das andere.
 3. **`podman inspect` und der Kern sagen jetzt dasselbe.** Vorher war das der Kern des Befundes:
    `inspect` meldete 512 und 268435456, während der Kern 3466 und `max` hielt. Die Angabe ist von
    einer Zusage zu einer Begleitung geworden — und sie stimmt.
@@ -7694,6 +7694,14 @@ Drei Dinge daran sind neu:
 Die Controller-Einheit hält danach `pids.current` **10 von 3466**, und darin sitzen nur noch der
 Controller selbst und die zwei Pausenprozesse von rootlosem podman. Die Apps sind aus dem geteilten
 Fach heraus.
+
+**Diese Bremse trägt nur, solange die Apps rootlos laufen** — gemessen am 30.10.2026 in WSL
+(podman 5.4.2, cgroup v2): läuft podman als **root**, legt es für den Behälter seine **eigene**
+cgroup an, und der Behälter verlässt `/ngc.apps/<app>` sofort wieder; in der cgroup der App bleibt
+nur, wer sie angelegt hat. Rootloses podman kann das nicht, weil es keine cgroup anlegen darf —
+dieselbe fehlende Delegation, die Punkt 78 als Mangel beschreibt, ist hier die Ursache dafür, dass
+der Riegel hält. Wer die Apps je mit Wurzelrechten starten lässt, nimmt ihnen damit auch die Decke,
+und `podman inspect` sagt es nicht.
 
 **`cpu.max` fehlt auf beiden Knoten, aus derselben gemessenen Ursache** (die Wurzel gibt `cpu` beim
 Boot noch nicht nach unten). Zwei Knoten, dieselbe Zahl: das ist damit keine Eigenheit einer
@@ -7719,12 +7727,12 @@ Terminal-Container auf `svc-2` schon gemessen. Gemessen ist hier, dass die Grenz
    `--cpus` fallen soll. Heute ist sie ehrlich gemeldet und nicht durchgesetzt.
 6. **Eine Zeile in der Betriebsanleitung:** ein Container, der nicht durch den Controller gestartet
    wird, läuft ohne seine Decke. Für den Betrieb heißt das: kein `podman start`/`restart` von Hand.
-7. **Die Entkopplung hat eine Kehrseite, und sie steht in Punkt 97.** Weil die Apps nicht mehr in
+7. **Die Entkopplung hat eine Kehrseite, und sie steht in Punkt 98.** Weil die Apps nicht mehr in
    der cgroup der Einheit sitzen, überleben sie den Tod des Dienstes — und der zurückkommende
    Controller legt einen zweiten Prozesssatz daneben, weil er sie nicht wiedererkennt. Auf `svc-1`
    gemessen. Die Zahlen und die Behebung stehen dort, nicht hier.
 
-## Punkt 97: Stirbt der Controller-DIENST, verliert podman seinen Zustand — und bei jedem Start kommt ein Prozesssatz je App DAZU
+## Punkt 98: Stirbt der Controller-DIENST, verliert podman seinen Zustand — und bei jedem Start kommt ein Prozesssatz je App DAZU
 
 Gemessen am 30.10.2026 auf `svc-1` und `svc-2`. **Dieser Punkt stand zuerst falsch hier**, und die
 Berichtigung ist ein Teil des Punktes, nicht eine Fußnote darunter: die Behauptung war, eine App
@@ -7753,7 +7761,7 @@ lehrreichste Teil.
    zweimal `podman … system refresh`, und beide App-Unterordner unter `/run/ngc` tragen danach den
    Zeitstempel des Dienst-Starts. Der Laufordner ist also wieder da, und die Apps kommen hoch.
 5. Diese Auffrischung setzt jeden Behälter auf **„läuft nicht"** — und das ist der Fehler. Die
-   Prozesse laufen nämlich weiter (siehe unten, sie hängen seit Punkt 96 nicht mehr an der
+   Prozesse laufen nämlich weiter (siehe unten, sie hängen seit Punkt 97 nicht mehr an der
    Einheit). Der zurückkommende Controller fragt `podman ps --filter status=running`, bekommt
    „nichts", und startet. **Daneben.**
 
@@ -7771,7 +7779,7 @@ pid=4350 ppid=1  seit 17:00:47  cgroup /ngc.apps/ngc-uhr-ad8c00e2
 pids.current = 14
 ```
 
-14:08:24 ist die Uhrzeit, zu der Punkt 96 auf `svc-1` eingespielt wurde: **das sind die Container
+14:08:24 ist die Uhrzeit, zu der Punkt 97 auf `svc-1` eingespielt wurde: **das sind die Container
 von damals, und sie haben den Schlag überlebt.**
 
 **Und es sind nicht zwei Behälter.** Beide Wächter tragen dieselbe Behälter-Kennung
@@ -7784,7 +7792,7 @@ folgen drei Dinge, und jedes einzelne ist wichtiger als der Zählfehler:
   einen Behälter, und das ist richtig. Nur die cgroup `/ngc.apps/<app>` zeigt die zwei Sätze. Ein
   Abgleich muss die **Prozesse** zählen, nicht die Behälter.
 - **`Stop` erreicht den Alten nicht.** podman kennt nur den Satz, auf den sein Datensatz zeigt; der
-  andere hängt an `ppid=1` und an keiner Verwaltung. Damit greift auch die Wand, die Punkt 96 in
+  andere hängt an `ppid=1` und an keiner Verwaltung. Damit greift auch die Wand, die Punkt 97 in
   `Start` gebaut hat, hier nicht: sie ruft `Stop`, und das ist podman.
 - **Zwei `ngc-hold` schreiben auf denselben Datenordner.** Bei der Uhr ist das harmlos (ein
   Zähler). Bei einer App mit einer Datenbank darin ist es ein Weg zu beschädigten Daten. Der
@@ -7813,6 +7821,41 @@ einen Satz je App dazu; nach n Starts laufen n Sätze.** Drei Folgen:
   `/ngc.apps/<app>` räumt dagegen jeden überzähligen Satz ab, wie viele es auch sind — und das ist
   der Grund für diese Wahl, nicht die Bequemlichkeit.
 
+**Und nach einer Aktualisierung sind die Waisen über podman nicht mehr erreichbar.** Gemessen auf
+`svc-1` um 18:19 UTC, nachdem die Uhr um 18:18:05 auf 1.0.2 gehoben wurde. Die Ereignisse des
+Tauschs:
+
+```
+18:18:05.432  container died     f42bcd313a5e  (uhr:1.0.1)
+18:18:05.565  container remove   f42bcd313a5e
+18:18:05.622  container create   5ec5da237f4b  (uhr:1.0.2)
+18:18:05.682  container start    5ec5da237f4b
+```
+
+`containers.json` kennt danach **nur** `5ec5da237f4b`. Der Datensatz der 1.0.1 ist **gelöscht** —
+und ihre Prozesse 789 und 4352 laufen weiter. Damit findet sie **kein** `podman ps`, **kein**
+`podman stop`, **kein** `podman rm`: es gibt keinen Behälter mehr, auf den sich ein solcher Befehl
+beziehen könnte. Nur ein `kill` auf die Prozessnummer oder ein Neustart der Maschine räumt sie.
+
+**Das entscheidet die Wahl des Werkzeugs**, und nicht die Bequemlichkeit: eine Behebung, die über
+podman aufräumt — die naheliegende — würde die heute bestehenden Waisen auf **jeder** Maschine
+stehen lassen und auf einer frischen Maschine grün aussehen. `cgroup.kill` auf
+`/ngc.apps/<app>` setzt an den **Prozessen** an und trifft sie darum.
+
+**Und seit diesem Tausch laufen zwei verschiedene FASSUNGEN auf einem Datenordner.** Die Prozesse
+789 und 4352 fahren 1.0.1 (Schicht `4500702b93a7`, Programm-Prüfsumme `1846f6d3a4cf`), Prozess 7321
+fährt 1.0.2 (`24dc2ae6a07f`, `74792027b62f`) — alle drei in `/ngc.apps/ngc-uhr-ad8c00e2`,
+`pids.current = 21`, alle auf `/var/lib/ngc/apps/org.sorglos.uhr`. Aus „zwei Schreiber auf
+denselben Dateien" ist damit **zwei verschiedene Programmfassungen auf einem Datenbestand**
+geworden, und das ist das stärkste Argument, das dieser Befund hat: ein Datenbestand, den eine
+ältere Fassung weiterschreibt, während die neue ihn umbaut, ist nicht reparierbar, sondern nur noch
+wiederherstellbar.
+
+**Ein Nebenbefund, der sich am ersten festhält:** Schicht `4500702b93a7` ist von zwei laufenden
+Prozessen gemountet, also lässt sich das Abbild der 1.0.1 **nicht löschen** — der Abbild-Haufen (3
+Abbilder, 97 MB) ist nicht einmal von Hand aufzuräumen, solange Waisen laufen. Zwei Fehler, die
+sich gegenseitig halten.
+
 **Die Ursache im Quelltext, mit Zeilen.** Der Entschluss hängt an einer einzigen Zahl, und die
 kommt aus podmans eigener Datenbank:
 
@@ -7823,9 +7866,9 @@ node/restore.go:222     if up && !c.hasCgroup(name) { ... up = false }
 node/restore.go:232     if !up { Start(ctx, name, limitsOf(a)) }
 ```
 
-Zeile 222 ist der Zweig aus Punkt 96, und er ist der falsche Weg herum: er fängt „läuft, aber ohne
+Zeile 222 ist der Zweig aus Punkt 97, und er ist der falsche Weg herum: er fängt „läuft, aber ohne
 Decke" und setzt `up == true` voraus. Hier ist `up` falsch, obwohl der Container läuft, also greift
-er nie. Der Widerspruch ist aber schon heute **messbar**, mit einer Funktion aus Punkt 96:
+er nie. Der Widerspruch ist aber schon heute **messbar**, mit einer Funktion aus Punkt 97:
 `runtime.HasCgroup(name)` ist wahr, sobald `cgroup.procs` eine Aufgabe hält — beim Waisen also
 wahr, während `Running` falsch sagt. Diese zwei Zahlen gegeneinander sind der Melder, der fehlt.
 
@@ -7833,6 +7876,14 @@ wahr, während `Running` falsch sagt. Diese zwei Zahlen gegeneinander sind der M
 gemessen: über alle `.go`-Dateien gesucht, kein Treffer auf `system refresh`. Die Prüfung, die es
 härter machen würde, wäre `podman ps -a` auf den Waisen (`Exited` oder `Created`); sie ist nicht
 gefahren, weil sie an der Behebung nichts entscheidet.
+
+**Ein Nebenbefund über `/run/ngc`, der beim Suchen nach dem richtigen ulh-Zweig anfiel.** Die
+Einheit sagt `RuntimeDirectoryMode=0700`, die Anlage zeigt `stat -c %a /run/ngc` → `711`. Beide
+sagen die Wahrheit: systemd legt das Verzeichnis mit 0700 an, und der Controller zieht es beim
+ersten `EnsureRun` unbedingt auf 0711 (`runtime/run.go:76`, mit Begründung im Kommentar — was dort
+steht, wird nicht geglaubt, es wird gesetzt). Die Einheit sagt also, was systemd tut, und `stat`,
+was danach gilt. **Wer aus einem Dateimodus auf eine Herkunft schließt, liest das Ergebnis eines
+Dritten** — als Kennzeichen dafür, welche Fassung aufgespielt ist, taugt er nicht.
 
 ### Der Messfehler — warum dieser Punkt zuerst das Gegenteil behauptete
 
@@ -7854,17 +7905,17 @@ findet, prüft **alles**, was aus derselben Runde stammt, nicht nur den Satz, au
 wurde. Und: ein Nachbau in einer anderen Umgebung darf nur über die Umgebung sprechen, in der er
 lief — hier hätte „in WSL bleibt sie unten" dagestanden, nicht „sie bleibt unten".
 
-### Was Punkt 96 daran geändert hat, und warum das gut und schlecht ist
+### Was Punkt 97 daran geändert hat, und warum das gut und schlecht ist
 
-`KillMode` der Einheit ist `control-group` mit `SendSIGKILL=yes`, und **vor** Punkt 96 saßen die
+`KillMode` der Einheit ist `control-group` mit `SendSIGKILL=yes`, und **vor** Punkt 97 saßen die
 App-Container in der cgroup der Einheit (Punkt 72, Befund 1). Gemessen auf `svc-2`: `cgroup.procs`
 der Einheit hielt `658 724 746 748` — Controller, catatonit, conmon und den Haltevorgang. Ein
 Dienst-Tod nahm die Apps also mit, und beim Hochkommen war nichts da, das doppelt werden konnte.
 
-Seit Punkt 96 sitzen sie in `/ngc.apps/<app>` und überleben den Dienst-Tod — an `svc-1` jetzt
+Seit Punkt 97 sitzen sie in `/ngc.apps/<app>` und überleben den Dienst-Tod — an `svc-1` jetzt
 gemessen, vorher nur abgewogen. **Das ist die gute Seite und die Ursache der Verdoppelung
-zugleich:** die Entkopplung ist richtig, aber Punkt 96 hat keinen Abgleich beim Hochkommen
-mitgebracht. Die Verdoppelung ist damit eine Folge von Punkt 96 und wird von demselben Strang
+zugleich:** die Entkopplung ist richtig, aber Punkt 97 hat keinen Abgleich beim Hochkommen
+mitgebracht. Die Verdoppelung ist damit eine Folge von Punkt 97 und wird von demselben Strang
 behoben, der sie gebaut hat.
 
 ### Was daraus zu bauen wäre
@@ -7873,7 +7924,14 @@ behoben, der sie gebaut hat.
    Laufordner nicht, podman frischt nicht auf, der Zustand bleibt, und es gibt nichts zu
    verdoppeln. Eine Zeile, und sie steht in **`ulh`**, nicht in diesem Repo (`shared/ulh.md`: die
    Einheit schreibt `ngc-controller.sh`, und die Datei sagt selbst „Never edit by hand").
-   **BLOCKIERT**, wie `Delegate=` in Punkt 96. Thomas' Entscheidung.
+   **BLOCKIERT**, wie `Delegate=` in Punkt 97. Thomas' Entscheidung. Welcher ulh-Zweig auf der
+   Anlage liegt, ist dabei zuerst zu klären: die aufgespielte Einheit sagt
+   `RuntimeDirectoryMode=0700` und entspricht damit dem Text von `origin/ngc-all`, nicht dem von
+   `origin/ngc-skripte` (0711 samt Kommentarblock). Ein Dateimodus taugt dafür **nicht** als
+   Kennzeichen: `/run/ngc` steht auf 711, weil der Controller es selbst dorthin zieht
+   (`runtime/run.go:76`, unbedingt und mit Begründung). Es gibt außerdem einen unfertigen Zweig
+   `haertung-delegate`, Stand `e10f141`, der `Delegate=yes` und `DelegateSubgroup=supervisor` in
+   dieselbe Datei schreibt; an ihm arbeitet niemand, er ist keine Ankündigung.
 2. **Der Abgleich beim Hochkommen, und zwar auch dann, wenn Posten 1 kommt.** Widerspruch erkannt
    (`cgroup.procs` hält Aufgaben, `Running` sagt „läuft nicht") → `cgroup.kill` schreiben, warten
    bis `cgroup.procs` leer ist, dann **ein** `Start` mit Decke. An den Prozessen angesetzt, weil
@@ -7883,13 +7941,26 @@ behoben, der sie gebaut hat.
    gelten, über die der Controller nichts mehr weiß und die er nicht anhalten kann — genau der halb
    funktionierende Zustand, den die Rangfolge über einen abreißenden Anschluss stellt. Der Abriss
    trifft nur den Fall, in dem der Controller ohnehin gerade hart gestorben ist.
-   **Abnahme:** `pgrep -c -u <app-benutzer> ngc-hold` muss über **mindestens drei** Neustarts des
-   Controllers hinweg `1` bleiben. Ein Fehler, der linear wächst, wird mit einem einzigen Neustart
-   nicht widerlegt.
-   **Vorbedingung, bevor das gebaut wird:** bewiesen, dass die zwei Zahlen im Normalbetrieb nie
-   gleichzeitig so stehen — nicht während eines gewöhnlichen Starts, nicht während eines Stopps,
-   nicht während einer Aktualisierung. Ein Zeitfenster von 50 ms reicht, um irgendwann einen
-   gesunden Container zu töten, und das wäre schlimmer als der Fehler.
+   **Abnahme, zwei Zahlen und nicht eine:** `pgrep -c -u <app-benutzer> ngc-hold` muss über
+   **mindestens drei** Neustarts des Controllers hinweg `1` bleiben **und mit der Zahl der
+   Einträge in `containers.json` übereinstimmen**. Heute stehen dort 3 gegen 1, und die
+   **Abweichung** ist der Fehler, nicht die 3 für sich: eine Maschine mit drei Behältern und drei
+   Prozesssätzen ist gesund. Ein Fehler, der linear wächst, wird mit einem einzigen Neustart
+   ohnehin nicht widerlegt.
+   **Die Vorbedingung dafür ist gemessen, und sie ist NICHT erfüllt.** Am 30.10.2026 in WSL
+   (podman 5.4.2 wie auf den Knoten, eigener Speicher, eigener Benutzer): „die cgroup hält
+   Aufgaben" und „podman sagt: läuft nicht" stehen im **gewöhnlichen Betrieb** zusammen — bei
+   jedem Stopp (`podman stop` setzt den Zustand sofort, die Aufgaben leben weiter, bis der
+   Behälter aus ist), bei jedem Start (die erste Aufgabe ist in der cgroup, ehe podman „läuft"
+   sagt, ~56 ms und damit an der Auflösung der Messung), und in der Aktualisierung, die den Stopp
+   enthält. Gemessen ist die **Existenz** des Fensters, nicht seine Länge: das Prüfabbild hatte
+   als Prozess 1 ein `sleep` ohne SIGTERM-Behandler und starb erst am SIGKILL nach der Frist,
+   `ngc-hold` stirbt sofort. Die Obergrenze ist die Stopp-Frist von 10 s.
+   **Ein Melder aus einem einzigen Hinsehen würde also bei jedem Stopp zuschlagen und ist damit
+   schlimmer als der Fehler.** Vorgeschlagen und noch nicht entschieden: **zweimal hinsehen mit
+   Abstand** — ein Stopp ist nach seiner Frist vorbei und die cgroup leer, ein Waise bleibt (auf
+   `svc-1` über Stunden). Der Widerspruch, der nach einer Wartezeit länger als die Stopp-Frist noch
+   steht, ist kein Betriebszustand. Beim Hochkommen kostet das Warten niemanden etwas.
 3. **Reparatur eines schon verdoppelten Knotens** ist Betrieb, nicht Quelltext, und die Regel
    dafür ist bestimmbar: **behalte den Satz, auf den podmans Datensatz zeigt, beende jede andere
    Aufgabe in der cgroup.** Nicht „den gesunden" — welcher gesund ist, kann niemand messen; welcher
@@ -7913,10 +7984,11 @@ behoben, der sie gebaut hat.
   nur lesen, über `/proc/<pid>/mountinfo`, `/proc/<pid>/root/...` und die drei JSON-Dateien.
 
 **Getrennt gehalten.** Gemessen sind: `RuntimeDirectoryPreserve=no`, `KillMode=control-group`, die
-`cgroup.procs` der Einheit vor Punkt 96, die conmon-Meldung samt Pfad, das Scheitern von
+`cgroup.procs` der Einheit vor Punkt 97, die conmon-Meldung samt Pfad, das Scheitern von
 `podman system migrate`, die vier Prozesse samt Zeitstempeln und cgroups auf `svc-1`, die drei Sätze je App nach dem zweiten Start, die
 gemeinsame Behälter-Kennung, das gemeinsame Abbild, die zwei `system refresh` im Journal, der neue
 Zeitstempel von `/run/ngc`, und die vier Zeilen Quelltext. Abgewogen sind: dass zwei Schreiber die
 Daten beschädigen, dass die Auffrischung podmans eigene ist, die Folge für den Updater und jede
-Zeile der Bauliste. Nicht gemessen ist, ob der Melder im Normalbetrieb ruhig bleibt — das ist die
-Vorbedingung aus Posten 2 und steht noch aus.
+Zeile der Bauliste. Gemessen, aber in WSL und nicht an der Anlage: dass der Melder im Normalbetrieb
+NICHT ruhig bleibt, und dass die Bremse aus Punkt 97 nur rootlos trägt. Nicht gemessen ist die
+LÄNGE des Fensters mit einem Prozess 1, der SIGTERM behandelt.

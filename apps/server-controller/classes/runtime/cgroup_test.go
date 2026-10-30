@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/store"
 )
@@ -44,6 +46,12 @@ type fakeKernel struct {
 	// call is put into a cgroup, as the kernel does. A case about a start that
 	// went past its cgroup turns it off.
 	placed bool
+	// staysFull is the kernel that does NOT empty the cgroup on a
+	// cgroup.kill. Only the case about a kill that did not take sets it, and
+	// that case is the one in which no app may be started.
+	staysFull bool
+	// killed are the cgroups a cgroup.kill was written to, in order.
+	killed []string
 }
 
 func aKernel(t *testing.T, offer ...string) *fakeKernel {
@@ -92,6 +100,9 @@ func aKernel(t *testing.T, offer ...string) *fakeKernel {
 		}
 		k.write(path+"/cgroup.subtree_control", "")
 		k.write(path+"/cgroup.procs", "")
+		// cgroup.kill is there in every cgroup of a v2 tree, and the write
+		// seam above refuses a file that is not there.
+		k.write(path+"/cgroup.kill", "0")
 		return nil
 	}
 	paths.cgroupWrite = func(path, value string) error {
@@ -130,6 +141,35 @@ func aKernel(t *testing.T, offer ...string) *fakeKernel {
 			}
 			for _, c := range ask {
 				k.append(path, c)
+			}
+			return nil
+		}
+		if filepath.Base(path) == "cgroup.kill" {
+			// The kernel turns a "1" here into a SIGKILL for EVERY task of
+			// this cgroup, and afterwards cgroup.procs is empty. The
+			// emptying is the WIRKUNG of this write, and a stand-in that
+			// only takes the write and leaves cgroup.procs standing would let
+			// every case about KillCgroup pass without a single task dying -
+			// the same trap as the subtree_control above, one layer on
+			// (messen.md: the check has to hit the effect, not its
+			// preparation). k.staysFull plays the kernel that does not get
+			// everything, which is the one case that must NOT start an app.
+			if value != "1" {
+				return os.ErrInvalid
+			}
+			// Noted and not stored: cgroup.kill is write-only on a real
+			// kernel - a read of it answers 0, whatever was written. A
+			// stand-in that kept the value would let a case assert something
+			// the kernel does not offer, and then the case would measure the
+			// stand-in (this is how the case below failed first).
+			// The path as the CALLER spelled it, not filepath.Dir of it: a
+			// cgroup path is built with "/" everywhere, and on Windows
+			// filepath.Dir hands back backslashes - then the case compares
+			// two spellings of one directory and fails for a reason that has
+			// nothing to do with killing.
+			k.killed = append(k.killed, strings.TrimSuffix(path, "/cgroup.kill"))
+			if !k.staysFull {
+				k.write(filepath.Dir(path)+"/cgroup.procs", "")
 			}
 			return nil
 		}
@@ -543,5 +583,111 @@ func TestExecWithoutACgroupRunsRatherThanRefusing(t *testing.T) {
 	}
 	if !f.ran() {
 		t.Fatal("podman was not started at all")
+	}
+}
+
+// 16. KillCgroup ends every task of a cgroup and does not come back before the
+// cgroup is empty. The emptiness is what it promises: whoever calls it starts a
+// container next, and a task left behind would be the second writer on one
+// data directory (point 98).
+func TestKillCgroupEndsTheTasksAndWaitsForTheCgroupToBeEmpty(t *testing.T) {
+	k := aKernel(t)
+	var waited int
+	paths.sleep = func(time.Duration) { waited++ }
+	// A plain name and not anApp(t): that helper LOOKS A SYSTEM USER UP and
+	// skips where there is none, so on a machine without the app users these
+	// two cases did not run at all - and "ok" from a run of skipped cases
+	// looked exactly like a measurement (messen.md: a skipped case is not a
+	// case that ran). Two mutants of 30.10.2026 lived on that, and they are
+	// what found it. KillCgroup asks no user; it only needs a name the regexp
+	// takes.
+	const name = "ngc-uhr-ad8c00e2"
+	// No podman here: what is measured is KillCgroup, and for that the cgroup
+	// only has to HOLD a task. A start would drag the whole engine into a case
+	// about one write, and on a machine without the engine the case would skip
+	// - a skipped case is not a case that ran (messen.md).
+	if _, err := ensureCgroup(name, Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	k.write(cgroupDirOf(name)+"/cgroup.procs", "4711")
+	// The preparation has to have WORKED: without a task in there this case
+	// would measure a kill of nothing and pass for the wrong reason.
+	if !HasCgroup(name) {
+		t.Fatal("the preparation of this case did not hold: no task in the cgroup")
+	}
+	if err := KillCgroup(name); err != nil {
+		t.Fatalf("KillCgroup = %v, want the tasks ended", err)
+	}
+	if HasCgroup(name) {
+		t.Fatal("KillCgroup came back while the cgroup still holds a task")
+	}
+	if want := []string{cgroupDirOf(name)}; !slices.Equal(k.killed, want) {
+		t.Fatalf("killed %v, want %v - the kernel was not asked to kill", k.killed, want)
+	}
+	if waited != 0 {
+		t.Fatalf("waited %d times although the cgroup was empty at the first look", waited)
+	}
+}
+
+// 17. And a kernel that does not get everything: the cgroup still holds a task
+// after the kill. Then this says so and does not pretend - the caller must not
+// start a second set of processes on the same data.
+func TestKillCgroupSaysSoWhenATaskSurvives(t *testing.T) {
+	k := aKernel(t)
+	k.staysFull = true
+	var waited int
+	paths.sleep = func(time.Duration) { waited++ }
+	// A plain name and not anApp(t): that helper LOOKS A SYSTEM USER UP and
+	// skips where there is none, so on a machine without the app users these
+	// two cases did not run at all - and "ok" from a run of skipped cases
+	// looked exactly like a measurement (messen.md: a skipped case is not a
+	// case that ran). Two mutants of 30.10.2026 lived on that, and they are
+	// what found it. KillCgroup asks no user; it only needs a name the regexp
+	// takes.
+	const name = "ngc-uhr-ad8c00e2"
+	if _, err := ensureCgroup(name, Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	k.write(cgroupDirOf(name)+"/cgroup.procs", "4711")
+	if !HasCgroup(name) {
+		t.Fatal("the preparation of this case did not hold: no task in the cgroup")
+	}
+	err := KillCgroup(name)
+	if err == nil {
+		t.Fatal("a cgroup that still holds a task counted as emptied")
+	}
+	if !errors.Is(err, ErrCgroup) {
+		t.Fatalf("err = %v, want it to carry ErrCgroup", err)
+	}
+	if !strings.Contains(err.Error(), "still holds a task") {
+		t.Fatalf("err = %v, want it to say what is still there", err)
+	}
+	if waited == 0 {
+		t.Fatal("it did not look again even once")
+	}
+}
+
+// 18. A name that is no name reaches no kernel at all, like every other call of
+// this file.
+func TestKillCgroupRefusesANameThatIsNoName(t *testing.T) {
+	aKernel(t)
+	paths.cgroupWrite = func(string, string) error {
+		t.Fatal("a name that is no name reached the kernel")
+		return nil
+	}
+	if err := KillCgroup("../../etc"); !errors.Is(err, ErrName) {
+		t.Fatalf("err = %v, want ErrName", err)
+	}
+}
+
+// 19. The wait before a contradiction counts as an orphan is longer than the
+// deadline a stop hands podman - that is the whole reason it is safe, and it is
+// a sum of one named number, not a number of its own. Measured on 30.10.2026:
+// at every stop podman says "not running" while the tasks still live, so a
+// wait that was SHORTER than the deadline would kill a healthy container.
+func TestTheOrphanWaitOutlastsTheDeadlineOfAStop(t *testing.T) {
+	if OrphanWait <= StopGrace {
+		t.Fatalf("OrphanWait = %v, StopGrace = %v - a wait that does not outlast a stop kills healthy containers",
+			OrphanWait, StopGrace)
 	}
 }

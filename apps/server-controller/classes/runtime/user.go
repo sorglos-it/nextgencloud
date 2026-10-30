@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -109,7 +110,11 @@ var paths = struct {
 	// A case has ordinary files in their place, and against os.Remove it would
 	// measure that difference instead of the call (DropCgroup).
 	cgroupDrop func(path string) error
-	chmod      func(path string, mode os.FileMode) error
+	// sleep is the waiting between two looks into cgroup.procs. It is here so
+	// a case about KillCgroup takes no real time: a case that really waits is
+	// a case somebody switches off.
+	sleep func(d time.Duration)
+	chmod func(path string, mode os.FileMode) error
 }{
 	useradd:   "/usr/sbin/useradd",
 	userdel:   "/usr/sbin/userdel",
@@ -128,6 +133,7 @@ var paths = struct {
 	cgroupWrite: cgroupWrite,
 	cgroupJoin:  inCgroup,
 	cgroupDrop:  os.Remove,
+	sleep:       time.Sleep,
 }
 
 // cgroupRootDefault is where a cgroup v2 tree is mounted on every system NGC

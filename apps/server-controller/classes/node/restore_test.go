@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/runtime"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/serve"
@@ -121,13 +122,28 @@ type restoreStand struct {
 	// noCgroup names the containers that run in no cgroup of this program:
 	// the state a controller from before the limits were real leaves behind.
 	noCgroup map[string]bool
+	// orphan names the apps whose cgroup still holds tasks although the
+	// engine knows no container of them: the state a hard death of the
+	// controller leaves behind (point 98). It is a state of its own and not
+	// the opposite of noCgroup - "runs braked by nothing" and "runs although
+	// podman forgot it" are two different faults.
+	orphan map[string]bool
+	// waited is every wait of the restore, in order, and killed every app
+	// whose cgroup was emptied.
+	waited  []time.Duration
+	killed  []string
+	killErr map[string]error
+	// onWait runs instead of waiting, so a case can play what happens DURING
+	// the wait - an ordinary stop that finishes, for instance.
+	onWait func()
 }
 
 func newRestoreStand(t *testing.T) *restoreStand {
 	t.Helper()
 	s := &restoreStand{t: t, st: newState(t), eng: newRestoreEngine(),
 		unlock: map[string]error{}, paid: map[string]bool{}, licErr: map[string]error{},
-		runDirErr: map[string]error{}, noCgroup: map[string]bool{}}
+		runDirErr: map[string]error{}, noCgroup: map[string]bool{},
+		orphan: map[string]bool{}, killErr: map[string]error{}}
 	s.cfg = RestoreConfig{
 		State:  s.st,
 		Engine: s.eng,
@@ -147,7 +163,29 @@ func newRestoreStand(t *testing.T) *restoreStand {
 		// (runtime/cgroup_test.go) and on a real one (docs). Here it is only
 		// the state "this container runs braked by nothing", and the stand
 		// says which containers are in it.
-		HasCgroup: func(name string) bool { return !s.noCgroup[name] },
+		HasCgroup: func(name string) bool {
+			if s.orphan[name] {
+				return true
+			}
+			// Only a container the engine has can hold tasks of its own: a
+			// cgroup that says "occupied" for an app with no container at all
+			// would be the orphan above, and that is set by hand.
+			return s.eng.up[name] && !s.noCgroup[name]
+		},
+		KillCgroup: func(name string) error {
+			s.killed = append(s.killed, name)
+			if err := s.killErr[name]; err != nil {
+				return err
+			}
+			delete(s.orphan, name)
+			return nil
+		},
+		Wait: func(d time.Duration) {
+			s.waited = append(s.waited, d)
+			if s.onWait != nil {
+				s.onWait()
+			}
+		},
 		Unlock: func(_ context.Context, app string) error {
 			s.unlocked = append(s.unlocked, app)
 			return s.unlock[app]
@@ -620,5 +658,135 @@ func TestRestoreGivesBackABrokenDatabase(t *testing.T) {
 	}
 	if len(s.eng.log()) != 0 || len(s.unlocked) != 0 || len(s.ran) != 0 {
 		t.Fatal("something was started although no row could be read")
+	}
+}
+
+// Tasks of an app that are still running although the engine knows no
+// container of it are ENDED before the app is started again - and they are
+// looked at twice, with a wait in between.
+//
+// This is the state a hard death of the controller leaves behind (point 98):
+// systemd deletes /run/ngc with the unit, podman refreshes its own state and
+// then says nothing runs, while the processes live on - since the limits are
+// real they no longer sit in the cgroup of the unit, so the death of the
+// service does not take them. One surplus set per start of the controller,
+// three per app on svc-1 after two starts. Starting without ending them puts a
+// SECOND writer on one data directory.
+func TestRestoreEndsTheTasksOfAnAppTheEngineHasForgotten(t *testing.T) {
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	name := runtime.UserName(firstApp)
+	s.orphan[name] = true // tasks, but no container the engine knows
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Looked at twice: one wait, and it is the one the measurement derived -
+	// longer than the deadline of a stop.
+	if !reflect.DeepEqual(s.waited, []time.Duration{runtime.OrphanWait}) {
+		t.Fatalf("waited %v, want exactly one wait of %v", s.waited, runtime.OrphanWait)
+	}
+	if !reflect.DeepEqual(s.killed, []string{name}) {
+		t.Fatalf("emptied %v, want the cgroup of %s", s.killed, name)
+	}
+	// And only THEN started, with the ceiling of its manifest.
+	want := []string{"running " + name, "start " + name}
+	if got := s.eng.log(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the engine saw %v, want %v", got, want)
+	}
+	if len(s.eng.limits) != 1 || s.eng.limits[0] != (runtime.Limits{CPU: standCPU, Memory: standMemory}) {
+		t.Fatalf("started with %+v, want the manifest's %d/%d", s.eng.limits, standCPU, standMemory)
+	}
+}
+
+// And the living control of the case above, which is the one that decides
+// whether the wait was worth anything: a contradiction that is GONE after the
+// wait kills nothing.
+//
+// That is the ordinary stop, measured on 30.10.2026: "podman stop" sets the
+// state to not-running at once and the tasks live on until the container is
+// really out - at every stop, not now and then. A detector that looked once
+// would kill a healthy container here, and the only thing that tells the two
+// apart is that an ordinary stop is OVER after its deadline while an orphan
+// stands for hours.
+func TestRestoreKillsNothingWhenTheTasksAreGoneAfterTheWait(t *testing.T) {
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	name := runtime.UserName(firstApp)
+	s.orphan[name] = true
+	// What happens DURING the wait: the stop that was still running finishes.
+	s.onWait = func() { delete(s.orphan, name) }
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.waited) != 1 {
+		t.Fatalf("waited %v, want exactly one wait", s.waited)
+	}
+	if len(s.killed) != 0 {
+		t.Fatalf("emptied %v, and there was nothing left to end", s.killed)
+	}
+	want := []string{"running " + name, "start " + name}
+	if got := s.eng.log(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the engine saw %v, want %v", got, want)
+	}
+}
+
+// An app whose surplus tasks cannot be ended stays OFF. It is the same rule as
+// for a container that cannot be stopped: an app that would run twice on its
+// own data is worse than an app that is off and logged.
+func TestRestoreLeavesAnAppOffWhenItsSurplusTasksCannotBeEnded(t *testing.T) {
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	name := runtime.UserName(firstApp)
+	s.orphan[name] = true
+	s.killErr[name] = errors.New("no")
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.killed) != 1 {
+		t.Fatalf("emptied %v, want one attempt", s.killed)
+	}
+	if got := s.eng.log(); !reflect.DeepEqual(got, []string{"running " + name}) {
+		t.Fatalf("the engine saw %v - nothing may be started here", got)
+	}
+	if len(s.ran) != 0 {
+		t.Fatalf("%d start actions ran, want none", len(s.ran))
+	}
+}
+
+// And the second living control: the ordinary restore of an app that is simply
+// off. Nothing is waited for and nothing is ended - otherwise every start of
+// every node would carry the wait of the branch above.
+func TestRestoreNeitherWaitsNorKillsForAnAppThatIsPlainlyOff(t *testing.T) {
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.waited) != 0 || len(s.killed) != 0 {
+		t.Fatalf("waited %v and emptied %v, want neither", s.waited, s.killed)
+	}
+	name := runtime.UserName(firstApp)
+	if got := s.eng.log(); !reflect.DeepEqual(got, []string{"running " + name, "start " + name}) {
+		t.Fatalf("the engine saw %v", got)
+	}
+}
+
+// Third living control: an app that RUNS and sits in its cgroup is neither
+// waited for nor emptied. The branch asks podman first and the kernel second,
+// and in that order: for a container the engine knows, the tasks in its cgroup
+// are its own and ending them would kill the app that is working.
+func TestRestoreNeitherWaitsNorKillsForAnAppThatRunsInItsCgroup(t *testing.T) {
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	name := runtime.UserName(firstApp)
+	s.eng.up[name] = true // runs, and HasCgroup therefore says occupied
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.waited) != 0 || len(s.killed) != 0 {
+		t.Fatalf("waited %v and emptied %v for a container that is up and braked", s.waited, s.killed)
+	}
+	if got := s.eng.log(); !reflect.DeepEqual(got, []string{"running " + name}) {
+		t.Fatalf("the engine saw %v, want only the question", got)
 	}
 }

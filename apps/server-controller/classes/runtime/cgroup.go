@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/store"
 )
@@ -346,6 +347,73 @@ func HasCgroup(name string) bool {
 	}
 	b, err := os.ReadFile(cgroupDirOf(name) + "/cgroup.procs")
 	return err == nil && len(strings.Fields(string(b))) > 0
+}
+
+// OrphanWait is how long a contradiction has to stand before it counts as an
+// orphan: the cgroup of an app holds a task while podman says nothing of this
+// app runs.
+//
+// Why there has to be a wait at all, measured on 30.10.2026 in WSL (podman
+// 5.4.2 as on the nodes, cgroup v2, own store and own user): those two numbers
+// stand that way in ORDINARY operation, and not rarely.
+//
+//   - At every stop. "podman stop" sets the state to not-running at once, and
+//     the tasks live on until the container is really out - 134 answers in a
+//     row in the measurement.
+//   - At every start. The first task is in the cgroup before podman says
+//     running - one answer, about 56 ms, which was the resolution of the
+//     measurement and not necessarily the length of the window.
+//   - In an update, which contains the stop.
+//
+// So a detector that looks ONCE would fire at every stop of every app, and
+// kill a healthy container. What the measurement gives is the EXISTENCE of the
+// window, not its length: the probe image had a sleep as process 1 with no
+// SIGTERM handler, and the kernel drops signals to process 1 without one, so
+// it died at the SIGKILL after the deadline. ngc-hold handles SIGTERM and goes
+// at once. The length is therefore unknown - but its CEILING is not: no stop
+// takes longer than the deadline Stop hands podman, because after it the
+// container is killed.
+//
+// Hence the sum below, and not a round number somebody cannot explain later:
+// the deadline itself, plus a slack for the kernel to reap the last task and
+// for conmon to leave. An ordinary stop is over when this is up, and the
+// cgroup is empty; an orphan stands (on svc-1 for hours, point 98). A
+// contradiction that survives this wait is no state of operation.
+const OrphanWait = StopGrace + 2*time.Second
+
+// KillCgroup ends every task in the cgroup of an app at once and waits until
+// none is left.
+//
+// It writes cgroup.kill, which the kernel turns into a SIGKILL for every task
+// in that cgroup, however many there are. That number matters: after a hard
+// death of the controller there is not ONE surplus process set but one per
+// start of the controller - three per app on svc-1 after two starts, point 98.
+// Something that handled "the one orphan" would leave the third standing.
+//
+// It kills and does not ask podman to stop: podman knows only the set its own
+// record points at, and the others hang on ppid 1 and on nothing else - that
+// is what the measurement on svc-1 showed, and it is why Stop cannot do this
+// job.
+func KillCgroup(name string) error {
+	if !validName.MatchString(name) {
+		return ErrName
+	}
+	dir := cgroupDirOf(name)
+	if err := paths.cgroupWrite(dir+"/cgroup.kill", "1"); err != nil {
+		return errors.Join(ErrCgroup, fmt.Errorf("%s: cgroup.kill: %w", dir, err))
+	}
+	// And then it is read back, like every other write in this file: a kill
+	// that was accepted and left a task behind is not a kill, and a caller
+	// that started a container next would be the second writer on one data
+	// directory (point 98).
+	for i := 0; i < 50; i++ {
+		if !HasCgroup(name) {
+			return nil
+		}
+		paths.sleep(10 * time.Millisecond)
+	}
+	return errors.Join(ErrCgroup,
+		errors.New(dir+" still holds a task after cgroup.kill"))
 }
 
 // DropCgroup takes the cgroup of an app away, after its container is gone.

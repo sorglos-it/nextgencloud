@@ -95,7 +95,17 @@ type RestoreConfig struct {
 	// so without a stand-in every case about a container that is already
 	// running would measure the cgroup tree of the machine the case runs on.
 	HasCgroup func(name string) bool
-	Log       *slog.Logger // nil: slog.Default()
+	// KillCgroup ends every task in the cgroup of an app and waits until none
+	// is left (nil: runtime.KillCgroup). A function for the reason HasCgroup
+	// is one, and for a second: a case about this must not be able to kill
+	// anything on the machine it runs on.
+	KillCgroup func(name string) error
+	// Wait is the waiting between the two looks at the contradiction below
+	// (nil: time.Sleep). It is here so the cases of this package take no real
+	// twelve seconds - a case that really waits is a case somebody switches
+	// off.
+	Wait func(d time.Duration)
+	Log  *slog.Logger // nil: slog.Default()
 }
 
 // Restore brings the apps of this server back up, in the order the state hands
@@ -229,6 +239,43 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 		}
 		up = false
 	}
+	// And the other way round: podman says nothing of this app runs, while its
+	// cgroup still holds a task. Then a process set of this app is up that
+	// podman has forgotten - after a hard death of the controller one set per
+	// start of it, three per app on svc-1 after two starts (point 98). Podman
+	// forgot them because it refreshes its own state when its runtime
+	// directory is gone, which systemd deletes with the unit; the processes
+	// did not notice, because since the limits are real they no longer sit in
+	// the cgroup of the unit and the death of the service does not take them.
+	// Starting now would put a SECOND writer on one data directory.
+	//
+	// It is looked at TWICE, and that is the whole care of this branch. Those
+	// two numbers stand that way in ordinary operation as well - at every stop
+	// and at every start, measured (runtime.OrphanWait names the window and
+	// the measurement). Only a contradiction that survives a wait longer than
+	// the deadline of a stop is no state of operation: an ordinary stop is
+	// over by then and the cgroup empty, an orphan stands for hours.
+	//
+	// And it is only looked at HERE, while the node comes up, never again
+	// while it runs: a recurring check would sooner or later look exactly into
+	// the stop of a neighbour, and the wait that makes this safe would make a
+	// watchdog useless. A watchdog is a new decision and needs its own
+	// measurement.
+	if !up && c.hasCgroup(name) {
+		c.wait(runtime.OrphanWait)
+		if c.hasCgroup(name) {
+			log.Warn("tasks of an app are still running although the engine knows no container of it, they are ended before it starts again",
+				"app", a.ID, "waited", runtime.OrphanWait)
+			if err := c.killCgroup(name); err != nil {
+				// Not started. An app whose surplus tasks cannot be ended is
+				// an app that would run twice on one data directory, and that
+				// is worse than an app that is off and logged.
+				log.Warn("the surplus tasks of an app could not be ended, it stays off rather than running twice on its data",
+					"app", a.ID, "err", err)
+				return
+			}
+		}
+	}
 	if !up {
 		if err := c.Engine.Start(ctx, name, limitsOf(a)); err != nil {
 			log.Warn("the container of an app did not start", "app", a.ID, "err", err)
@@ -245,6 +292,23 @@ func (c RestoreConfig) hasCgroup(name string) bool {
 		return c.HasCgroup(name)
 	}
 	return runtime.HasCgroup(name)
+}
+
+// killCgroup and wait answer through their fields if ones were wired and
+// through the real calls otherwise, for the reason hasCgroup does.
+func (c RestoreConfig) killCgroup(name string) error {
+	if c.KillCgroup != nil {
+		return c.KillCgroup(name)
+	}
+	return runtime.KillCgroup(name)
+}
+
+func (c RestoreConfig) wait(d time.Duration) {
+	if c.Wait != nil {
+		c.Wait(d)
+		return
+	}
+	time.Sleep(d)
 }
 
 // limitsOf is the ceiling of this app, out of its own manifest - the same two
