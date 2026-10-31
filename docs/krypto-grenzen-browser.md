@@ -66,12 +66,12 @@ gelesen, damit später zu sehen ist, wo das Lesen danebenlag.
 
 | Nr. | Erwartung | Wird wie geprüft |
 |---|---|---|
-| E1 | Es gibt **kein** einzelnes `hasEd25519`, an dem alle Übersprünge hängen. Zwei getrennte Systeme: zehn `skipWithout…` über sechs gemessene Lücken, und daneben elf lokale Kopien eines lockereren `hasEd25519`. | Dateizeilen, Abschnitt 2 |
-| E2 | Die webkit-Grenze ist **die Kurve selbst** (`generateKey` fällt), die firefox-Grenze ist **ein einzelner Ausgang** (`exportKey("jwk")` eines eingeführten Schlüssels). Verschiedene Stufen, verschiedene Behebungen. | Fähigkeitstafel, Abschnitt 4 |
-| E3 | In Playwrights webkit kommt **die Maske nie** – `browserFits()` fällt vor allem anderen, der Mensch liest `boot.tooold`. | Anmeldemessung, Abschnitt 5 |
-| E4 | In firefox kommt eine Anmeldung **sehr wohl durch**, aber nur über **Passkey**: Passwortfeld aus, Passkey-Knopf an. | Anmeldemessung, Abschnitt 5 |
+| E1 | *(bestätigt)* Es gibt **kein** einzelnes `hasEd25519`, an dem alle Übersprünge hängen. Zwei getrennte Systeme: zehn `skipWithout…` über sechs gemessene Lücken, und daneben elf lokale Kopien eines lockereren `hasEd25519`. | Dateizeilen, Abschnitt 2 |
+| E2 | *(bestätigt, und schärfer: es ist eine HERKUNFTSfrage)* Die webkit-Grenze ist **die Kurve selbst** (`generateKey` fällt), die firefox-Grenze ist **ein einzelner Ausgang** (`exportKey("jwk")` eines eingeführten Schlüssels). Verschiedene Stufen, verschiedene Behebungen. | Fähigkeitstafel, Abschnitt 4 |
+| E3 | In Playwrights webkit kommt **die Maske nie** – `browserFits()` fällt vor allem anderen, der Mensch liest `boot.tooold`. | Anmeldemessung, Abschnitt 5 – **bestätigt** |
+| E4 | In firefox kommt eine Anmeldung **sehr wohl durch**, aber nur über **Passkey**: Passwortfeld aus, Passkey-Knopf an. | Anmeldemessung, Abschnitt 5 – **bestätigt** |
 | E5 | Die webkit-Grenze ist eine Grenze **des Prüfgerüsts**, nicht von Safari. Safari ab 17 hat Ed25519. Dann ist „in diesem Browser kann sich niemand anmelden" für echtes Safari **falsch**. | Abschnitt 6, und sie ist mit diesem Prüfsatz **nicht** zu messen |
-| E6 | Die elf lokalen `hasEd25519`-Kopien sind in firefox **zu locker**: sie fragen nur `importKey("raw")`, das kann firefox – also lassen sie Fälle laufen, die danach an `exportKey("jwk")` sterben. | Abschnitt 4 gegen Abschnitt 2 |
+| E6 | *(halb bestätigt: zu locker ja, aber es fällt heute kein Fall deswegen – siehe Lücke 3)* Die elf lokalen `hasEd25519`-Kopien sind in firefox **zu locker**: sie fragen nur `importKey("raw")`, das kann firefox – also lassen sie Fälle laufen, die danach an `exportKey("jwk")` sterben. | Abschnitt 4 gegen Abschnitt 2 |
 
 Was diese Erwartung **widerlegen** würde, und das wäre das beste Ergebnis von allen:
 eine Anmeldung, die in firefox **und** in webkit durchkommt. E3 und E4 sind genau darauf
@@ -281,11 +281,79 @@ nicht gemessen**. Genau diese vier Zellen füllt die Sonde.
 
 ## 5. Kommt eine Anmeldung durch?
 
-> **Noch nicht gemessen**, siehe Abschnitt 4. Die Sonde fährt gegen die örtliche Anlage
-> des Prüfsatzes (`mock/api.js` plus der PHP-Server davor), nicht gegen die
-> sechs-VM-Anlage und nicht gegen ngc-ein.
+Gemessen am 31.10.2026, 14:51–14:52, gegen die örtliche Anlage des Prüfsatzes
+(`mock/api.js` plus der PHP-Server dahinter) auf Port 8201 – nicht gegen die
+sechs-VM-Anlage und nicht gegen ngc-ein. 6 bestanden, 0 rot, Ausstieg 0, 24,3 s,
+TIME_WAIT 1 383 → 2 254.
 
-Was aus dem Quelltext zu erwarten ist, steht als E3 und E4 in Abschnitt 1.
+**Die Kontrolle ist grün: chromium kommt auf BEIDEN Wegen zum Schreibtisch.** Ohne das
+wäre keine Zeile dieser Tafel zu deuten – eine Engine, die alles kann, muss hineinkommen,
+sonst ist die Vorrichtung kaputt und nicht der Browser.
+
+| | chromium | firefox | webkit |
+|---|---|---|---|
+| `browserFits()` | ja | ja | **nein** |
+| `passwordLoginFits()` | ja | **nein** | nein |
+| `passkeyFits()` | ja | ja | nein |
+| Was der Mensch zuerst sieht | Maske | Maske | **nur eine Meldung** |
+| Passwortfeld | an | **aus** | – |
+| „Anmelden" | an | **aus** | – |
+| „Mit Passkey anmelden" | an | **an** | – |
+| **Passwort-Anmeldung** | **Schreibtisch** | nicht möglich, Knopf ist aus | nicht möglich, keine Maske |
+| **Passkey-Anmeldung** | **Schreibtisch** | **Schreibtisch** | nicht möglich, keine Maske |
+
+Was der Mensch in firefox liest, bevor er etwas eintippt:
+
+> Dieser Browser kann die Passwort-Anmeldung nicht ausführen. Bitte mit Passkey anmelden.
+
+Was der Mensch in webkit liest, bevor er etwas eintippt:
+
+> Dieser Browser ist zu alt für NGC. Bitte Chrome 137 oder Safari 17.4 oder neuer benutzen.
+
+### Die Antwort auf die Frage des Auftrags
+
+**In firefox kann sich ein Mensch anmelden – über Passkey, und die Maske sagt ihm das.**
+Das ist der Ausgang, den der Auftrag als bestes Ergebnis genannt hat, und er ist
+gemessen: `Ende=desktop`. E4 aus Abschnitt 1 ist bestätigt, E3 ebenfalls. Die
+Passwort-Anmeldung ist dort tatsächlich zu, aber sie ist **vorgesehen, abgeschaltet und
+benannt** – nicht ein Fehlschlag, der als falsches Passwort erscheint.
+
+**Zwei unabhängige Messungen sagen dasselbe.** Der Anmelde-Strang hat am selben Tag auf
+`main` gemessen, dass `shell/login.spec.js:319` – ein Passkey-Fall mit
+Software-Authentikator – in firefox **grün** ist (firefox 275 bestanden, 0 rot, 250
+übersprungen). Diese Sonde kommt über einen anderen Weg zum selben Ergebnis. Eine Zahl,
+die zweimal unabhängig herauskommt, ist etwas anderes als eine, die einmal herauskommt.
+
+**In webkit kann sich niemand anmelden**, und zwar schon vor der Maske: `browserFits()`
+fällt, weil die CFRG-Kurven fehlen. Das gilt für **Playwrights webkit 26**. Über echtes
+Safari sagt diese Messung nichts (Abschnitt 6) – und die Meldung, die NGC dort zeigt,
+empfiehlt Safari 17.4 oder neuer, also genau die Fassung, die die Kurven hat.
+
+### Was diese Antwort gekostet hat, und warum es hierhin gehört
+
+Sie steht erst im **sechsten** Lauf. Die drei davor haben eine Zahl gemeldet, die falsch
+war, und zwar dreimal derselbe Fehler in anderem Mantel – jedes Mal eine Wartebedingung,
+die einen Zustand beschreibt, der **schon vor dem Klick** galt, und die darum den Klick
+nie melden konnte:
+
+| Lauf | Bedingung | Warum sie in firefox nicht gilt |
+|---|---|---|
+| 2 | kein Warten, sofort gelesen | der Start war noch nicht fertig |
+| 3 | „der Versuch läuft, solange ALLE Knöpfe aus sind" | „Anmelden" ist dort **dauerhaft** aus |
+| 4, 5 | „eine Warnung mit Text ist ein Ende" | der Hinweis zur Passwort-Anmeldung trägt `role="alert"` und **steht von Anfang an da** |
+| 6 | „ein Ende ist, was vorher NICHT da war" | engine-unabhängig – trägt |
+
+**Und die Kontrolle hat keinen der drei gefangen.** chromium kam jedes Mal auf beiden
+Wegen zum Schreibtisch, die Kontrolle war jedes Mal grün – weil chromium die Eigenschaft
+nicht hat, an der die Bedingung scheiterte: einen dauerhaft abgeschalteten Knopf und
+einen dauerhaft stehenden Hinweis. Daraus die Verschärfung der Regel, die ihren Platz in
+`messen.md` hat:
+
+> Eine Variante, die gelingen muss, ist die richtige Kontrolle – aber sie deckt nur die
+> Annahmen ab, die sie mit den anderen Varianten **teilt**. Eine Bedingung, die von der
+> Variante abhängt, prüft sie nicht. Darum: eine Wartebedingung fragt nach einer
+> **Änderung**, nicht nach einem Zustand – eine Änderung gibt es in jeder Variante, einen
+> Zustand nicht.
 
 ---
 
@@ -409,9 +477,9 @@ Nicht als ein PR.
 
 ## 8. Offene Punkte
 
-1. Die vier verdeckten Zellen der webkit-Zeile in Abschnitt 4 – braucht einen Lauf.
-2. Kommt eine Anmeldung in firefox über Passkey durch (E4)? Braucht einen Lauf.
-3. Trägt 1c, oder brauchen die Sitzungsschlüssel in webkit doch X25519? Braucht einen Lauf.
+1. ~~Die vier verdeckten Zellen der webkit-Zeile~~ – **gemessen**, Abschnitt 4.
+2. ~~Kommt eine Anmeldung in firefox über Passkey durch (E4)?~~ – **ja, gemessen**, Abschnitt 5.
+3. Trägt Weg 1c, oder brauchen die Sitzungsschlüssel in webkit doch X25519? **Noch offen.** Die Tafel sagt, dass webkit P-256 vollständig kann, also wäre der Passkey-BEWEIS dort machbar; ob die Sitzung DANACH ohne X25519 auskommt, ist nicht gemessen. `fixtures/page.js:429` verlangt für `passkeyGap` auch `x25519` – wenn das stimmt, trägt 1c nicht. Das ist die nächste Messung.
 4. Hat ein echtes Safari die Kurven? **Auf diesem Rechner nicht messbar** (Abschnitt 6).
 5. Der gemeldete Satzlauf vom 31.10.2026 (chromium 302/137/2, webkit 147/0/134) hat
    **firefox nicht dabei**, obwohl `apps/web/tests/playwright.config.js` alle drei
