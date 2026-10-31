@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { b64decode, b64encode, utf8 } from "../../public/assets/js/contracts/b64.js";
 import * as trust from "../../public/assets/js/contracts/trust.js";
+import { SEED, ed25519FromSeed, x25519FromSeed } from "./seeded.js";
 import * as sign from "../../public/assets/js/contracts/sign.js";
 import * as proof from "../../public/assets/js/contracts/proof.js";
 import * as core from "../../public/assets/js/contracts/core.js";
@@ -145,10 +146,16 @@ export async function buildWorld() {
   // is a list the shell's own parser accepts.
   const list = await trust.parseList(b64decode(genesis.chain[0].payload));
 
-  const apiSign = await ed25519();
-  const apiNoise = await x25519();
-  const ctlNoise = await x25519();
-  const listSigner = await ed25519();
+  // FROM SEEDS AND NOT FROM generateKey, and this is the whole reason the
+  // anchor check could never be exercised: every run used to build fresh
+  // random keys, so version 1 carried different bytes each time and its hash
+  // with them. A fixed anchor file therefore COULD NOT match -- which is why
+  // apps/web/tests/trust-anchor.json held a filler pattern and why the cases
+  // had to bypass the anchor with standInOn. mock/seeded.js says the rest.
+  const apiSign = await ed25519FromSeed(SEED.apiSign1);
+  const apiNoise = await x25519FromSeed(SEED.apiNoise1);
+  const ctlNoise = await x25519FromSeed(SEED.ctlNoise);
+  const listSigner = await ed25519FromSeed(SEED.listV1);
 
   const seed = seedOf(PASSWORD, KDF);
   const userPub = await proof.publicFromSeed(seed);
