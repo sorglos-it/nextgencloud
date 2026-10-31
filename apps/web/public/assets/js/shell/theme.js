@@ -184,6 +184,14 @@ export function applyAccent(c) {
   if (!ACCENTS.includes(c)) return;
   document.documentElement.style.setProperty("--accent", c);
   write(KEY_ACCENT, c);
+  // The listeners, exactly as applyTheme calls them. MEASURED before this
+  // line, with a calculator open and the accent switched from blue to pink:
+  // the shell went to #e14f8a and the app's frame stayed on #2f7de1. The
+  // reason is here and not in the frame - appframe.js listens on
+  // onThemeChange and sends the theme AND the accent in that one message, so
+  // an accent that calls nobody never leaves the shell. A running change
+  // reached an open app window at no point before this line.
+  tell();
 }
 
 // What the document shows, read off the document itself for the reason
