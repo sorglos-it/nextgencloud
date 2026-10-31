@@ -5,6 +5,7 @@
 // prototype in docs/prototype.html builds the same surface with innerHTML;
 // look and handling are taken from it, that habit is not.
 import { el, button, text, clear } from "./dom.js";
+import { t } from "./lang.js";
 import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
 import { storeApp } from "../apps/store.js";
@@ -49,10 +50,19 @@ const BUILTIN = {
 // a second spelling of it somewhere else is a button that opens nothing.
 const STORE_APP = "ngc.store";
 
-// Accent colours in the order of theme.js, with the name the swatch carries
-// for a screen reader. Six colours, no colour picker: a wall of choices is
-// what the design rules forbid, and a name is easier to hit than a hex value.
-const ACCENT_NAMES = ["Blau", "Türkis", "Pink", "Orange", "Violett", "Grün"];
+// Accent colours in the order of theme.js, with the KEY of the name the swatch
+// carries for a screen reader. Six colours, no colour picker: a wall of choices
+// is what the design rules forbid, and a name is easier to hit than a hex
+// value.
+//
+// The names used to stand here, in German, in a shell that promises five
+// languages: a Spanish user got "Farbe Türkis" read out. They are sentences
+// now, in assets/lang/*.json and in BUILT_IN - the same six colours and the
+// same six German words, moved and not changed.
+const ACCENT_KEYS = [
+  "look.accent.blue", "look.accent.teal", "look.accent.pink",
+  "look.accent.orange", "look.accent.violet", "look.accent.green",
+];
 
 // How long two returns to this window have to be apart before the apps are
 // asked for a second time. Switching back to a tab raises "visibilitychange"
@@ -333,7 +343,7 @@ class Desktop {
 
     const colors = el("div", "swatches");
     ACCENTS.forEach((c, i) => {
-      const b = button(null, null, "Farbe " + ACCENT_NAMES[i]);
+      const b = button(null, null, t("look.accent", { name: t(ACCENT_KEYS[i]) }));
       b.style.background = c;
       b.dataset.accent = c;
       b.addEventListener("click", () => {
