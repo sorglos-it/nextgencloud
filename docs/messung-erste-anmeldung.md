@@ -772,3 +772,181 @@ Zeile.
 - `web-api-1` steht in der Vertrauensliste als `controller`, nicht als `web`.
 - Der Argon2-Wecker steht nach `new Worker(...)` und zählt das Laden mit.
 - Das `await new Promise` in `Link.connect` hat keine Frist.
+
+## Der Platzhalter-Anker: der zweite Befund dieses Auftrags (30.10.2026)
+
+`apps/web/tests/trust-anchor.json` trägt `{ "seq": 1, "hash": "q6urq6ur..." }` —
+lauter 0xAB. Kein Hash einer Fassung, ein Füllmuster.
+
+Das ist mehr als ein Hindernis im Prüfsatz. Es heißt, dass **die Ankerprüfung
+der ganzen Weboberfläche nie geprüft worden ist.** `standInOn` ist nicht die
+Ursache, sondern die Narbe darüber: eine Prüfung, die den Anker umgeht, kann
+nicht sagen, ob die Prüfung gegen den Anker überhaupt greift. Ein Riegel ohne
+eine einzige Prüfung ist ein unbekannter Riegel.
+
+Auflagen für die Behebung, von der Leitsitzung und angenommen: der Anker wird
+von einem Werkzeug **erzeugt**, nicht hineingeschrieben, und der Fall, der ihn
+gegen Abdriften sichert, erzeugt ihn **neu und vergleicht** — nicht eine
+Konstante gegen eine Konstante. Sonst steht der Platzhalter nur unter einer
+anderen festen Zahl, und der nächste Umbau der Nachbild-Welt lässt sie stehen.
+
+## Warum Weg B der richtige war, mit der besseren Begründung
+
+Gesucht wurden alle Aufrufstellen. Es sind vier, und zwei kannte vorher
+niemand:
+
+    shell/main.js:284    die bekannte, hatte keines
+    auth/setup.js:539    login() im Erstlauf, ohne openTrust
+    auth/setup.js:544    loginView() als Rückfall, ohne openTrust
+    auth/login.js:393    die Durchleitung aus loginView
+
+Stellen 2 und 3 sind die beste Begründung für Weg B, die bisher auf dem Tisch
+lag, und sie ist stärker als „eine Pflichtangabe bricht an einer vergessenen
+Stelle": **der Erstlauf meldet den ersten Verwalter selbst an.** Bei Weg A wäre
+genau er am Stellvertreter geblieben. Und bei einer frischen Anlage mit einem
+Knoten fällt das **nicht auf**, weil Fassung 1 dort die neueste ist. Der Fehler
+wäre unsichtbar geblieben, bis der zweite Rechner dazukommt — also genau bis zu
+dem Tag, an dem er am schwersten zu finden ist.
+
+## Eine stille Globale, von mir gebaut und von mir gefunden
+
+Im ersten Wurf von `openerFor` war `lastSeq` nicht deklariert, also eine stille
+Globale. Das hätte die Grenze „genau einmal nachholen" über **mehrere**
+Anmeldeversuche hinweg aufgehoben — und damit genau die Auflage ausgehöhlt, der
+sie dienen sollte. Jetzt eine Laufvariable des Öffners, je Maske.
+
+Es gehört ins Blatt und nicht nur in die Commit-Meldung, weil es die Art Fehler
+ist, die eine Behebung unbemerkt in ihr Gegenteil dreht.
+
+## Kann sich eine frische Anlage noch anmelden? (am Code beantwortet)
+
+Die Frage der Leitsitzung: der Erstlauf ruft die Anmeldung mit einem Anker, den
+er gerade geschrieben hat, und die Kette hat dort genau eine Fassung. Gibt es
+einen Lauf, in dem der Öffner startet, bevor Fassung 1 lesbar ist? Das wäre
+schlimmer als Thomas' Fehler.
+
+**Nein, und es folgt aus der Reihenfolge.** Zwei Zeilen tragen es:
+
+- `auth/login.js` ruft `openTrust()` **nach** `http.loginFinish(...)`.
+- `login/finish.go:104` ruft `h.S.Trust(ctx)` und antwortet bei einem Fehler
+  `E_UNREACHABLE`. Ohne lesbare Vertrauensliste gibt es also **keine 200 und
+  keinen Keks**.
+
+Der Öffner läuft damit nur in einem Lauf, in dem die Liste schon lesbar war.
+Dazu kommt, dass der Kettenpfad selbst (`login/trust.go:34`) über `h.Live(...)`
+geht und die Liste **für diese Anfrage** aktuell holt (`live.Trust`), also kein
+alter Zwischenspeicher antwortet. Und `from=1` auf einer Liste bei Fassung 1
+gibt Fassung 1 zurück, nicht 204 — die 204 gilt nur für die Nummer nach der
+neuesten.
+
+Ein Lauf, in dem der Öffner vor Fassung 1 startet, kann es also nicht geben.
+Der Fall gehört trotzdem in den Prüfsatz: er ist jetzt durch eine Reihenfolge
+gesichert, und Reihenfolgen verschiebt der nächste Umbau.
+
+## Nebenfund: die Liste ist erst nach der Anmeldung zu holen
+
+`apps/server-api/classes/login/trust.go:34` holt über `h.Live(ctx, r)` zuerst
+die Sitzung; ohne sie bleibt es bei `E_LOGIN`. Der Kettenpfad **verlangt also
+eine Sitzung**, und damit ist die Vertrauensliste ohne Anmeldung nicht zu
+holen. Der Browser prüft die Gegenstelle erst, nachdem er seinen Beweis
+geschickt hat.
+
+**Richtigstellung zu der Formulierung, in der das zuerst festgehalten wurde:**
+der Browser zeigt der Gegenstelle **nicht sein Passwort.** Das Passwort
+verlässt den Browser nie — `contracts/proof.js` leitet in einem Worker einen
+Schlüssel daraus ab und schickt eine **Unterschrift** über die Bytes der
+Client-Bescheinigung, an Nonce und Zweck gebunden. Was eine unverifizierte
+Gegenstelle zu sehen bekommt, ist dieser Beweis, nicht das Geheimnis. Der
+Unterschied ist nicht kosmetisch: ein abgefangener Beweis gilt für diese eine
+Bescheinigung und diesen einen Nonce, ein abgefangenes Passwort für alles.
+
+Was dabei wirklich von einer noch ungeprüften Gegenstelle kommt, ist
+`challenge.kdf` — die Argon2-Parameter. Auch das ist eingefasst:
+`proof.validateKDF` hält jeden Wert gegen den Vertrag, bevor abgeleitet wird,
+also kann eine Gegenstelle die Ableitung nicht beliebig schwach machen.
+
+Ob die Reihenfolge „erst anmelden, dann prüfen, wem" so gewollt ist, ist eine
+Frage an den Entwurf der Anmeldung und nicht an diesen Auftrag. Notiert, nicht
+verfolgt; die Leitsitzung hängt sie an „Was fehlt bis zur ersten Version".
+
+## Dieselbe Figur, zweimal an einem Tag
+
+Zwei eigene Fehlschlüsse dieses Auftrags sind derselbe:
+
+- **E3:** ein Argon2-Budget von 108 s gegen eine nie gemessene Dauer gehalten
+  und das Ergebnis Entlastung genannt.
+- **Der leere Prüfbericht:** 20 Minuten ohne Ausgabe mit der eigenen Vorhersage
+  erklärt („die Anmelde-Fälle laufen in ihre Zeitgrenzen") statt gemessen. Die
+  Stille kam von `| tail`, das die ganze Ausgabe bis zum Ende der Leitung
+  zurückhält. Das Gegenargument, das ich mir selbst hätte machen müssen: **eine
+  Zeitgrenze, die reißt, schreibt eine Zeile.**
+
+Beide Male: eine Beobachtung mit der Erwartung erklärt, statt sie zu messen.
+Das Muster ist teurer als jeder der beiden Einzelfälle, weil es sich wie eine
+Messung anfühlt.
+
+Fortschritt wird ab jetzt ungefiltert in eine Datei geschrieben und die Datei
+gelesen, während sie wächst — nicht erschlossen.
+
+## Dreimal dieselbe Figur, an einem Tag
+
+Alle drei sind eigene Fehlschlüsse dieses Auftrags, und alle drei sind dieselbe
+Bewegung: eine Beobachtung mit der Erwartung erklären, statt sie zu messen.
+
+1. **Budget gegen Vermutung (E3).** Ein Argon2-Budget von 108 s gegen eine nie
+   gemessene Dauer gehalten und das Ergebnis Entlastung genannt. Gemessen waren
+   es 0,94 s, und der erste Lauf war der schnellste.
+2. **Leere Datei gegen Vorhersage.** 20 Minuten ohne Ausgabe als „die
+   Anmelde-Fälle laufen in ihre Zeitgrenzen" gedeutet. Die Stille kam von
+   `| tail`, das die ganze Ausgabe bis zum Ende zurückhält. Eine Zeitgrenze,
+   die reißt, schreibt eine Zeile.
+3. **Ausstiegscode gegen Mantel.** `npx playwright test ... ; echo "AUSSTIEG=$?"`
+   — das `; echo` macht den Mantel immer erfolgreich. Gemeldet wurde „exit
+   code 0" für einen Lauf, der mit `ERR_MODULE_NOT_FOUND` keinen einzigen Fall
+   gefahren hat.
+
+Die Verallgemeinerung, die bei 2 und 3 gefehlt hat: **der Ausstiegscode des
+Laufs muss die letzte Anweisung sein oder ausdrücklich durchgereicht werden**,
+und das gilt für jede Hülle, nicht nur für eine Pipe. Aufgeschrieben war
+bisher nur der Pipe-Fall — die halbe Lehre, und die halbe Lehre greift nicht.
+
+Gefunden wurde Nummer 3 nicht durch Klugheit, sondern weil Nummer 2 die Regel
+hinterlassen hatte, die Berichtsdatei zu lesen statt der Erfolgsmeldung zu
+glauben. So soll eine Regel wirken.
+
+Wer das liest, lernt mehr als aus der Behebung, um die es im PR geht.
+
+## Erwartung an den Webprüfsatz, vor dem Lauf (30.10.2026)
+
+Vergleichspunkt: Lauf vom 02.10.2026, chromium + webkit in einem Zug,
+**580 bestanden + 216 übersprungen = 796**, Ausstiegscode 0, 10,1 Minuten.
+
+**Rot ist hier das erwartete Ergebnis und nicht die schlechte Nachricht.** Ein
+Prüfsatz, der nach einem Umbau grün bleibt, den er abdecken müsste, ist das
+schlechtere Ergebnis — die unveränderten 323 zu 0 von `tools/check.sh` haben
+heute genau das gezeigt.
+
+Aber „rot" allein entscheidet nichts. Nach diesem Bau gibt es **drei Sorten
+Rot**, und nur eine ist das Ergebnis:
+
+- **`login: no way to open the trust list`** — eine Aufrufstelle, die ich nicht
+  verdrahtet habe. Das wäre ein Fehler in meinem Bau, und ich baue nach.
+- **`session: malformed certificate` oder `session: bad signature`** — die
+  Kette geht gegen den Platzhalter-Anker nicht auf. **Das ist das erwartete
+  Rot**, und es ist zugleich der Beweis, dass die Fälle meinen Weg wirklich
+  anfassen.
+- **eine gerissene Zeitgrenze ohne eine dieser Meldungen** — dann haben die
+  Fälle etwas anderes getroffen, und das Rot sagt über meinen Weg nichts. Der
+  Lauf wäre dann so wenig eine Messung wie die 323 zu 0.
+
+Weicht die Zahl der **übersprungenen** Fälle von 216 ab, ist das zuerst ein
+Verdacht auf die Umgebung und kein Befund: ein ausgefallener Hilfsserver macht
+aus einem Überspringen einen laufenden Fall. Die beiden Fälle unterscheiden
+sich an den **Namen** der neu laufenden Fälle, nicht an der Summe — also werden
+die Namen mitgeschrieben.
+
+Fassung geprüft: `@playwright/test` **1.55.1**, gelesen aus
+`node_modules/@playwright/test/package.json` und nicht aus der Sperrdatei. Es
+zählt, was daliegt, nicht was eine Datei darüber behauptet — dasselbe
+Vorgehen, mit dem heute entschieden wurde, welche Datei an der Anlage wirklich
+ausgeliefert wird.
