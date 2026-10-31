@@ -149,6 +149,32 @@ test("a colour picked while an app is open reaches that app's frame", async ({ s
   await expect.poll(inFrame).toBe("#e14f8a");
 });
 
+// The six swatches carry the only thing a user can aim at - there is no colour
+// picker - so their names are measured in ALL FIVE languages and not only in
+// the one the suite otherwise runs in. A key that stands in four files and is
+// missing from the fifth does not show up in a German run at all.
+//
+// Türkis is the swatch under test because it is the one word that differs in
+// every language; "Orange" and "Pink" would pass with a file that was never
+// translated.
+for (const [locale, want] of [
+  ["de-DE", "Farbe Türkis"],
+  ["en-US", "Color Turquoise"],
+  ["es-ES", "Color Turquesa"],
+  ["fr-FR", "Couleur Turquoise"],
+  ["it-IT", "Colore Turchese"],
+]) {
+  test.describe(`in ${locale}`, () => {
+    test.use({ locale });
+    test("the second swatch is named in this language", async ({ shell }) => {
+      await shell.getByRole("button", { name: "Start" }).click();
+      const second = shell.locator("#smlook .swatches button").nth(1);
+      // The name as the BROWSER hands it out, not the string the source holds.
+      expect(await second.evaluate((e) => e.getAttribute("aria-label"))).toBe(want);
+    });
+  });
+}
+
 // The dock. Measured rather than described, because every number in it was
 // either computed (40, section 8 of the sheet) or read off LordOS (64).
 test("the dock holds the apps, magnifies one, and marks the open one", async ({ shell }) => {

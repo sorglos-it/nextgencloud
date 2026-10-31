@@ -19,5 +19,12 @@
   "setup.signin": "NGC está configurado. Inicie sesión ahora.",
   "boot.noroute.password": "Este navegador no puede realizar el inicio de sesión con contraseña de NGC: no entrega la parte pública de una clave de contraseña. Usa Chrome 137 o Safari 17.4 o más reciente. Firefox no puede hasta la versión 141.",
   "boot.noroute.passkeysoff": "En este navegador no es posible iniciar sesión: no puede hacerlo con contraseña y las claves de acceso están desactivadas aquí. Activa las claves de acceso en los ajustes del navegador o usa Chrome 137 o Safari 17.4 o más reciente.",
-  "boot.tooold": "Este navegador es demasiado antiguo para NGC. Usa Chrome 137 o Safari 17.4 o más reciente."
+  "boot.tooold": "Este navegador es demasiado antiguo para NGC. Usa Chrome 137 o Safari 17.4 o más reciente.",
+  "look.accent": "Color {name}",
+  "look.accent.blue": "Azul",
+  "look.accent.teal": "Turquesa",
+  "look.accent.pink": "Rosa",
+  "look.accent.orange": "Naranja",
+  "look.accent.violet": "Violeta",
+  "look.accent.green": "Verde"
 }

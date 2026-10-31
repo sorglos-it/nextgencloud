@@ -7,7 +7,14 @@
    this step does not carry is written there too - the shadow, the window frame
    and the font follow in their own steps. */
 :root{
-  --bar-h: 44px;
+  /* The height of the menu band at the top. 28 is LordOS MENU_H; NGC stood at
+     44. The entries inside it are 22 high (LordOS), which is why that number
+     and this one travel together: an entry of 34 does not fit in a band of 28,
+     and lowering only the band would have cut the entries off. */
+  --bar-h: 28px;
+  /* The blur behind the band and behind a menu, LordOS --blur. One number, so
+     the two surfaces that float cannot drift apart - they were 18 and 22. */
+  --blur: 24px;
   /* THE DOCK. 40 is Thomas' decision of 2026-10-30, and it is computed, not
      chosen: with the 8 px grid a dock is 16 + n*S + 8*(n-1) wide, so at 360 px
      - a phone held upright - 54 (LordOS) fits five icons, 48 fits six and 40
@@ -121,7 +128,16 @@ html[data-density="luftig"]{--fs:15.5px;--pad:13px}
 
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden;
+/* The font stack holds no Apple name. -apple-system stood here and is gone:
+   Thomas' brief for this rebuild takes form from LordOS and NOT Apple's fonts
+   or marks, and -apple-system is a keyword that asks for exactly those (San
+   Francisco). MEASURED on this machine before taking it out: the browser
+   resolved the stack to Segoe UI, which stands first, so -apple-system was
+   never reached here - which is why the pictures before and after are the
+   same file, and that is the finding, not a failed measurement. On a Mac it
+   WAS reached, and there the look now follows system-ui instead of being
+   named Apple's font outright. */
+body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
      color:var(--bar-fg);background:var(--page-bg);-webkit-user-select:none;user-select:none;
      touch-action:manipulation}
 #root{position:fixed;inset:0}
@@ -182,18 +198,19 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 
 /* ---------- Taskleiste (oben) ---------- */
 #taskbar{position:fixed;top:0;left:0;right:0;height:var(--bar-h);display:flex;align-items:center;
-         gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(18px) saturate(150%);
-         border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000}
-#startbtn{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;
-          border-radius:8px;cursor:pointer;font:inherit;font-weight:600;color:#fff;
+         gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(var(--blur)) saturate(150%);
+         border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000;
+         font-size:13px;font-weight:500}
+#startbtn{display:flex;align-items:center;gap:8px;height:22px;padding:0 9px;border:0;
+          border-radius:5px;cursor:pointer;font:inherit;font-weight:600;color:#fff;
           background:linear-gradient(135deg,var(--accent),var(--accent-2));
           box-shadow:0 2px 8px rgba(0,0,0,.3)}
 #startbtn:hover{filter:brightness(1.12)}
 #startbtn.open{filter:brightness(.9)}
 #startbtn .logo{font-size:16px}
 #tasks{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden}
-.task{display:flex;align-items:center;gap:7px;height:34px;max-width:190px;padding:0 12px;
-      border-radius:8px;cursor:pointer;flex:0 1 auto;min-width:0;font:inherit;
+.task{display:flex;align-items:center;gap:7px;height:22px;max-width:190px;padding:0 9px;
+      border-radius:5px;cursor:pointer;flex:0 1 auto;min-width:0;font:inherit;
       background:rgba(127,127,127,.14);border:1px solid transparent;color:var(--bar-fg)}
 .task:hover{background:rgba(127,127,127,.26)}
 .task.active{background:rgba(127,127,127,.32);border-color:rgba(127,127,127,.45)}
@@ -203,8 +220,10 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 #tray button{background:none;border:0;color:inherit;font:inherit;cursor:pointer;opacity:.85;
              font-size:16px}
 #tray button:hover{opacity:1}
-#clock{text-align:right;line-height:1.15;font-variant-numeric:tabular-nums;font-size:12.5px}
-#clock b{display:block;font-size:13.5px;font-weight:600}
+/* ONE line, because two cannot stand in a band of 28. The time keeps its own
+   weight so it is still the part the eye finds first. */
+#clock{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:13px}
+#clock b{font-weight:600}
 
 /* ---------- Dock ----------
    It lies BELOW the band, the start menu and every window (sheet section 8:
@@ -238,7 +257,7 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 /* ---------- Startmenü ---------- */
 #startmenu{position:fixed;top:calc(var(--bar-h) + 6px);left:8px;width:min(420px,calc(100vw - 16px));
            max-height:min(620px,calc(100vh - var(--bar-h) - 20px));background:var(--menu-bg);
-           backdrop-filter:blur(22px) saturate(150%);border:1px solid rgba(127,127,127,.30);
+           backdrop-filter:blur(var(--blur)) saturate(150%);border:1px solid rgba(127,127,127,.30);
            border-radius:14px;box-shadow:var(--shadow);z-index:100001;display:none;
            flex-direction:column;overflow:hidden;color:var(--win-fg)}
 #startmenu.open{display:flex;animation:pop .13s ease-out}
