@@ -148,3 +148,42 @@ test("a colour picked while an app is open reaches that app's frame", async ({ s
   expect(await accent(shell)).toBe("#e14f8a");
   await expect.poll(inFrame).toBe("#e14f8a");
 });
+
+// The dock. Measured rather than described, because every number in it was
+// either computed (40, section 8 of the sheet) or read off LordOS (64).
+test("the dock holds the apps, magnifies one, and marks the open one", async ({ shell }) => {
+  const dock = shell.locator("#dock");
+  await expect(dock).toBeVisible();
+  const first = dock.locator(".dapp").first();
+  const size = async () => {
+    const r = await first.boundingBox();
+    return [Math.round(r.width), Math.round(r.height)];
+  };
+  expect(await size()).toEqual([40, 40]);
+  await first.hover();
+  // The magnifier is a transition, so it is waited for and not slept through.
+  await expect.poll(size).toEqual([64, 64]);
+
+  // The dot is read off the register of open windows, so it has to appear and
+  // go away again with the window and not only once.
+  expect(await dock.locator(".dapp.on").count()).toBe(0);
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await expect(dock.locator(".dapp.on")).toHaveCount(1);
+  expect(await dock.locator(".dapp.on").getAttribute("aria-label")).toBe("Rechner");
+  await shell.locator(".wbtn.close").first().click();
+  await expect(dock.locator(".dapp.on")).toHaveCount(0);
+});
+
+// A dock carries icons and no names, so an app's name reaches it only as a
+// LABEL. The mock's list holds an app called "<img src=x onerror=alert(1)>Böse"
+// on purpose; this measures that the name arrives as text in an attribute and
+// never as markup - there must be no img in the dock at all.
+test("a hostile app name reaches the dock as text and not as markup", async ({ shell }) => {
+  const dock = shell.locator("#dock");
+  await expect(dock).toBeVisible();
+  const evil = dock.locator('.dapp[aria-label^="<img"]');
+  await expect(evil).toHaveCount(1);
+  expect(await evil.getAttribute("aria-label")).toBe("<img src=x onerror=alert(1)>Böse");
+  expect(await dock.locator("img").count()).toBe(0);
+});
