@@ -252,6 +252,13 @@ async function screen(shell) {
       passwordField: field === null ? "not there" : (field.disabled ? "AUS" : "AN"),
       notes: box === null ? [] : [...box.querySelectorAll(".warn, [role=alert]")]
         .map((n) => n.textContent).filter((s) => s !== ""),
+      // THE SENTENCE THE PERSON READS when an attempt fails, and it is the
+      // whole point of the measurement: runs 3 and 4 both ended in "mask said
+      // something" and neither printed WHAT it said, because this was read in
+      // a second evaluate a moment later, by which time the mask had cleared
+      // it. One evaluate, one state - a value read a tick after the state it
+      // belongs to is a different state.
+      alert: box === null ? "" : (box.querySelector('[role="alert"]')?.textContent || ""),
     };
   });
 }
@@ -289,16 +296,46 @@ async function settled(shell) {
 // not have - a permanently disabled button. A control only covers the
 // assumptions the control's own variant shares. Where a condition depends on
 // the variant, it has to be written so it does not.
-async function attemptOver(shell) {
-  await expect.poll(async () => shell.evaluate(() => {
-    if (document.querySelector("#taskbar") !== null) return "desktop";
-    if (document.querySelector("#root .msg") !== null) return "message";
-    const box = document.querySelector("form.loginbox");
-    const said = box === null ? null : box.querySelector('[role="alert"]');
-    if (said !== null && said.textContent !== "") return "said something";
-    return "working";
-  }), { message: "the login attempt ended in one of its three endings", timeout: 60_000 })
+// ONE state function, and screen() below reads the same one. The second
+// repair of this helper, and the reason is that the first one did not work:
+// after it, firefox still finished in 1.3 s with the passkey button caught
+// mid-press. The two functions disagreed about PRECEDENCE - this one asked for
+// "#root .msg" BEFORE the mask, screen() asked for the mask first - so a .msg
+// node standing beside the mask ended the wait at the first tick while
+// screen() still reported a mask. Two readers of one DOM with two orders are
+// the same trap as two files that almost share a name.
+//
+// It also RETURNS the ending it saw, and the caller prints it. A wait that
+// stops for a reason nobody records is why this took three runs: twice the
+// figure was wrong and twice the output said nothing about why the wait ended.
+// THE ENDING IS A CHANGE, not a state - and getting that wrong cost three
+// runs in a row, each time the same mistake wearing a different coat.
+//
+// Run 3: "the attempt runs while every button is disabled" - false in firefox,
+// where "Anmelden" is disabled for good.
+// Run 4: "an alert with text is an ending" - false in firefox, where the note
+// "Dieser Browser kann die Passwort-Anmeldung nicht ausführen" carries
+// role="alert" and STANDS THERE FROM THE START, before anything is clicked.
+//
+// Both conditions describe a state that already held BEFORE the event, so
+// neither could ever report the event. The repair is to stop asking "what does
+// the screen look like" and ask "what has changed since the click": a desktop
+// that was not there, a sentence that differs from the one already standing,
+// or a shell message. That question does not depend on the engine, which is
+// what the previous two did and why the control in chromium never caught them.
+function endingOf(before, now) {
+  if (now.where === "desktop") return "desktop";
+  if (now.where === "message") return `shell: "${now.message}"`;
+  if (now.where === "mask" && now.alert !== before.alert) return `mask: "${now.alert}"`;
+  return "working";
+}
+
+// before: the screen as it stood immediately before the button was pressed.
+async function attemptOver(shell, before) {
+  await expect.poll(async () => endingOf(before, await screen(shell)),
+    { message: "the login attempt ended in something that was not there before", timeout: 60_000 })
     .not.toBe("working");
+  return endingOf(before, await screen(shell));
 }
 
 // ---- the two cases --------------------------------------------------------
@@ -354,19 +391,20 @@ test("kommt eine Anmeldung durch - Passwort und Passkey getrennt", async ({ shel
   // It presses the button only if the button can be pressed: a disabled
   // button is itself the answer, and clicking it would measure playwright's
   // patience instead of the shell.
-  let pwAttempted = false;
+  let pwAttempted = false, pwEnding = "nicht versucht";
   if (start.where === "mask" && start.passwordField === "AN") {
     await shell.getByLabel("Benutzername").fill(USER_NAME);
     await shell.getByLabel("Passwort").fill(PASSWORD);
     const go = shell.getByRole("button", { name: "Anmelden", exact: true });
     if (!(await go.isDisabled())) {
       pwAttempted = true;
+      const before = await screen(shell);
       await go.click();
-      await attemptOver(shell);
+      pwEnding = await attemptOver(shell, before);
     }
   }
   const afterPw = await screen(shell);
-  console.log(`ANMELDUNG ${e} | Passwort | versucht=${pwAttempted} | ${JSON.stringify(afterPw)}`);
+  console.log(`ANMELDUNG ${e} | Passwort | versucht=${pwAttempted} | Ende=${pwEnding} | ${JSON.stringify(afterPw)}`);
 
   // THE CONTROL, and its absence is what made the first run of this file
   // worthless. An engine whose three gates all answer true can do everything
@@ -408,18 +446,19 @@ test("kommt eine Anmeldung durch - Passwort und Passkey getrennt", async ({ shel
 
   const atMask = await settled(shell);
   console.log(`ANMELDUNG ${e} | Schirm vor Passkey | ${JSON.stringify(atMask)}`);
-  let pkAttempted = false;
+  let pkAttempted = false, pkEnding = "nicht versucht";
   if (atMask.where === "mask") {
     await shell.getByLabel("Benutzername").fill(PASSKEY_NAME);
     const button = shell.getByRole("button", { name: "Mit Passkey anmelden" });
     if ((await button.count()) > 0 && !(await button.isDisabled())) {
       pkAttempted = true;
+      const before = await screen(shell);
       await button.click();
-      await attemptOver(shell);
+      pkEnding = await attemptOver(shell, before);
     }
   }
   const afterPk = await screen(shell);
-  console.log(`ANMELDUNG ${e} | Passkey | versucht=${pkAttempted} | ${JSON.stringify(afterPk)}`);
+  console.log(`ANMELDUNG ${e} | Passkey | versucht=${pkAttempted} | Ende=${pkEnding} | ${JSON.stringify(afterPk)}`);
 
   // The same control for the passkey route: in an engine with all three gates
   // open, clara's passkey has to reach a desktop too. A "no" there is a
