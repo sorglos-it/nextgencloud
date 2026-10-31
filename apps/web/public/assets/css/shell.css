@@ -105,7 +105,16 @@ html[data-density="luftig"]{--fs:15.5px;--pad:13px}
 
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden;
+/* The font stack holds no Apple name. -apple-system stood here and is gone:
+   Thomas' brief for this rebuild takes form from LordOS and NOT Apple's fonts
+   or marks, and -apple-system is a keyword that asks for exactly those (San
+   Francisco). MEASURED on this machine before taking it out: the browser
+   resolved the stack to Segoe UI, which stands first, so -apple-system was
+   never reached here - which is why the pictures before and after are the
+   same file, and that is the finding, not a failed measurement. On a Mac it
+   WAS reached, and there the look now follows system-ui instead of being
+   named Apple's font outright. */
+body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
      color:var(--bar-fg);background:var(--page-bg);-webkit-user-select:none;user-select:none;
      touch-action:manipulation}
 #root{position:fixed;inset:0}
