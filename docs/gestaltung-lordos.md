@@ -83,6 +83,13 @@ Belegt am Akzent, der sichtbarsten Farbe. Dieselbe Farbe steht an **sechs** Orte
 Gemessen: das LordOS-Blau allein in `shell.css` machte einen Prüffall rot und ließ die „="-Taste
 des Rechners im alten Blau stehen.
 
+**Das ist NICHT erledigt, auch wenn es niemandem mehr wehtut.** Thomas hat am 30.10.2026 entschieden,
+dass die sechs NGC-Farben bleiben (Abschnitt 3). Damit muss heute **keine** Farbe mehr durch alle
+sechs Orte — es gibt keine neue, die dort anzukommen hätte. **Die sechs Orte sind trotzdem alle
+noch da**, mit demselben Wert sechsmal geschrieben. Die nächste Farbe, die sich ändert, läuft in
+genau denselben Befund. Wer hier später „erledigt" liest, liest falsch: erledigt ist der Anlass,
+nicht die Doppelung.
+
 **Nummer 6 ist der schwerwiegende, und er ist kein Versehen.** Eine App läuft in einem Rahmen mit
 **eigenem Ursprung** (`shell/appframe.js`, Schritt 7). Sie kann `shell.css` nicht lesen, und sie
 soll es auch nicht können — es ist eine Sicherheitsschranke. Nach der Rangfolge steht Sicherheit
