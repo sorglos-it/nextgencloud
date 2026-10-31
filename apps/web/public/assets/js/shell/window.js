@@ -209,6 +209,9 @@ export class Win {
 
   setTitle(t) {
     text(this.el.querySelector(".t"), t);
+    // The band reads the title off this very element, so it is told to look
+    // again rather than handed a copy.
+    this.desktop.markBar?.();
     text(this.tab.querySelector(".lbl"), t);
     this.tab.setAttribute("aria-label", "Fenster " + t);
   }
@@ -220,7 +223,7 @@ export class Win {
     // The dock's dot is set from the register, and the register changed in the
     // line above. Here and in close() are the only two places it changes, so
     // these are the only two places that have to say so.
-    this.desktop.markDock?.();
+    this.desktop.markBar?.();
     this.focus();
     return this;
   }
@@ -249,11 +252,14 @@ export class Win {
     this.el.classList.add("focus");
     this.tab.classList.add("active");
     this.el.style.zIndex = String(++d.zTop);
+    // The band names the app in front, and the app in front is this one now.
+    d.markBar?.();
   }
 
   minimize() {
     this.min = true;
     this.el.classList.add("min");
+    this.desktop.markBar?.();
     this.tab.classList.add("min");
     this.el.classList.remove("focus");
     this.tab.classList.remove("active");
@@ -312,9 +318,14 @@ export class Win {
     this.el.remove();
     this.tab.remove();
     this.desktop.windows.delete(this.id);
-    this.desktop.markDock?.();
     if (this.desktop.focused === this) this.desktop.focused = null;
     this.desktop.focusTopmost();
+    // LAST, and that order is MEASURED: standing before these two lines it ran
+    // while desktop.focused still pointed at this very window, and the band
+    // went on naming a window that was gone. focusTopmost may hand the front
+    // to another window or to nobody, and only afterwards is there anything
+    // true to say.
+    this.desktop.markBar?.();
   }
 
   // ---- dragging (mouse, pen and finger, all through pointer events) --------
