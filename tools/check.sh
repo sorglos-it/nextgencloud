@@ -41,6 +41,16 @@ git() { command git -c safe.directory="$PWD" "$@"; }
 gone=$(git diff --name-only --diff-filter=D HEAD | grep -c . || true)
 [ "$gone" = 0 ] || die "$gone tracked files are missing from the tree - restore them ('git restore --source=HEAD -- <paths>', never 'git restore .') before trusting any number from this run"
 
+# The decision book (docs/vertraege-v1.2.md) is read against itself here, with
+# the structural checks and not with the slow Go work, for the reason the head
+# of this file gives: it costs well under a second, and the thing it catches is
+# invisible to every other check in the repo. Twice two parallel sessions handed
+# out the same point number, and PR 120 then had to correct references that
+# pointed at 72 instead of 73 - all of it found by a human, late. The book is a
+# log that several sessions append to at once, so the collision is a property of
+# how it is written, not an accident that will stop happening.
+bash tools/check-buch.sh
+
 files=$(git ls-files '*.go' ':!:vendor/*')
 nfiles=$(printf '%s\n' "$files" | grep -c . || true)
 # An empty list is not "nothing to format", it is a failed listing. git's own
@@ -209,13 +219,29 @@ go vet ./...
 # really compile it: -race itself needs cgo and a C compiler (here only in the
 # ESP toolchain), vet with the tag does not. Measured 17.10.2026.
 go vet -tags=race ./...
-# NOTE 18.10.2026: the CI branch offered a second way to count a run -
-# NGC_CHECK_TEST_JSON, a -json stream teed to a file for tools/ci-count.sh.
-# It is NOT taken here, and the reason is the line above: this run is -v into
-# a log BECAUSE the log is read back for tests that step aside in silence.
-# A -json run would have to carry that reading too, and a second run only to
-# count is what the CI branch set out to avoid. Whoever wants the JSON builds
-# it ON this mechanism, not beside it.
+# NGC_CHECK_TEST_JSON, the -json stream tools/ci-count.sh counts, is written
+# below - and it is built ON this one run, not beside it.
+#
+# NOTE 18.10.2026 said the mechanism was "NOT taken here" and ended with
+# "whoever wants the JSON builds it ON this mechanism". The workflow kept
+# setting the variable and kept running ci-count.sh on the file, so from that
+# day every Linux run was red on a file nobody wrote: "test.json is empty -
+# nothing ran". Measured on main, runs of 18., 19. and 20.10.2026, all three
+# with that same line. The two halves had drifted apart, and the error message
+# was right both times - the file really was empty.
+#
+# What closes it without a second run: go tool test2json turns exactly the -v
+# output this script already has into that stream. It comes with the Go
+# toolchain, so it adds no dependency, and the text log stays the primary
+# thing - it is still what the readback below greps.
+#
+# One limit, named rather than left to be found: a merged -v stream of
+# "go test ./..." does not tell test2json which package each line belongs to,
+# so ci-count.sh reports "packages: 1 ok" however many ran, and a failing
+# package comes out with an empty name. Measured 20.10.2026, both the green
+# and the red path. The CASE numbers are right - 3349 passed, 0 failed, 87
+# skipped locally - and those are what ci-count judges; the package line is
+# not a finding and must not be read as one.
 # -v, and into a file, because of what go test does NOT print without it.
 # Measured 18.10.2026 on this machine: for a test that calls t.Skipf -- and
 # even for one that writes to os.Stderr itself -- a run without -v prints
@@ -227,8 +253,75 @@ go vet -tags=race ./...
 # No pipe: the exit code of a pipe belongs to its last link, and this script
 # has been dead behind a "0" once already.
 log=$(mktemp)
-if ! go test -v ./... > "$log" 2>&1; then
-	grep -E -- '^--- FAIL|^\s+--- FAIL|^FAIL' "$log" || cat "$log"
+# The file ci-count.sh reads is created HERE, before the run, and that is a
+# decision, not tidiness. ci-count.sh tells three cases apart - file missing,
+# file empty, file counted - and "missing" is only honest if this script really
+# creates it the moment it reaches its tests. Without this line a stop earlier
+# in the script (structural check, go vet) and a test run that wrote nothing
+# look the same to the counter, and for three days in October 2026 the CI said
+# "is empty - nothing ran" while the real cause was one step away.
+if [ -n "${NGC_CHECK_TEST_JSON:-}" ]; then
+	: >"$NGC_CHECK_TEST_JSON" ||
+		die "cannot write the test JSON stream to $NGC_CHECK_TEST_JSON"
+fi
+# The run stands in an "if", not bare with $? after it: this script is
+# "set -e", so a bare red run would end it here and the conversion below -
+# the one the CI counts - would never happen.
+if go test -v ./... >"$log" 2>&1; then
+	rc=0
+else
+	rc=$?
+fi
+# Converted BEFORE the exit code is acted on, so a red run is counted too:
+# the workflow step runs with "if: always()" and a count that only exists
+# for green runs is a count that is missing exactly when it is needed.
+if [ -n "${NGC_CHECK_TEST_JSON:-}" ]; then
+	go tool test2json -t <"$log" >"$NGC_CHECK_TEST_JSON" ||
+		die "go tool test2json could not turn the test log into a JSON stream"
+	[ -s "$NGC_CHECK_TEST_JSON" ] ||
+		die "the JSON stream of the test run is empty - ci-count.sh would have nothing to count"
+fi
+if [ "$rc" != 0 ]; then
+	# The NAME of a failing test is not why it failed, and until 20.10.2026
+	# this printed only the name: a red CI run said
+	# "--- FAIL: TestAPackageLargerThanOneWindowGetsThrough (0.01s)" and not
+	# one line more, because go test -v writes a test's own output BEFORE
+	# that line and the grep took only the line itself. Nobody could tell a
+	# load-sensitive wobble from a real defect, which is exactly the question
+	# a red run has to answer.
+	#
+	# So every failing test is printed with its block: from its "=== RUN" to
+	# its "--- FAIL", which is where t.Errorf and t.Fatal land. The old grep
+	# stays as the summary at the end, and "cat" stays as the fallback for a
+	# failure that has no case at all (a build error).
+	if grep -qE -- '^--- FAIL|^[[:space:]]+--- FAIL' "$log"; then
+		echo "check: the failing tests with their own output:"
+		# Two passes over the same log: the first collects the names that
+		# failed, the second prints every line of those tests. A subtest is
+		# covered by its top level name, so a failure inside t.Run comes
+		# with the lines of the parent that lead to it.
+		awk '
+			NR == FNR {
+				if ($0 ~ /^(--- |[[:space:]]+--- )FAIL: / && match($0, /: [^ ]+/))
+					bad[substr($0, RSTART + 2, RLENGTH - 2)] = 1
+				next
+			}
+			/^=== RUN / {
+				# $3 and not substr($0, 10): go test writes three spaces after
+				# RUN, and counting them gave a name with a leading space that
+				# matched nothing - measured 20.10.2026, the block printed
+				# empty. A test name carries no space, so the field is exact.
+				cur = $3
+				i = index(cur, "/")
+				top = (i ? substr(cur, 1, i - 1) : cur)
+			}
+			{ if (cur in bad || top in bad) print }
+		' "$log" "$log"
+	else
+		cat "$log"
+	fi
+	echo "check: summary of the failures:"
+	grep -E -- '^--- FAIL|^\s+--- FAIL|^FAIL' "$log" || true
 	rm -f "$log"
 	exit 1
 fi

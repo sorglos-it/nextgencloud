@@ -19,6 +19,43 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 )
 
+// DialTimeout bounds the TCP dial of ONE node, and it is what decides whether
+// a caller ever REACHES the second node. It is a setting of ours and of
+// nobody else: the driver leaves Config.Timeout at zero (dsn.go, NewConfig),
+// and at zero connector.go skips its own deadline and hands net.Dialer no
+// timeout at all, so without this line the dial falls to the kernel -
+// tcp_syn_retries is 6 on all six machines of the installation (read
+// 25.10.2026), which is about 130 s against a host that drops the SYN.
+//
+// It was 5 s until 25.10.2026, and 5 s is exactly dbwait.UserWait: the budget
+// of ONE node's dial was the whole budget of the request. Measured on
+// 24.10.2026 with one database node gone, the first caller got 503 db-busy
+// after 5,03 s while two healthy nodes stood next to it - the balancer below
+// would have taken the next node, but the request was already over. The
+// second caller got 200 in 0,03 s, because picker.failed had put the dead
+// node at the back by then.
+//
+// One second is chosen, and what it is chosen AGAINST is measured: 30 dials
+// from api-1 to the three nodes on 25.10.2026 took 0,101 ms at best and
+// 4,129 ms at worst. A second is over two hundred times the worst of those,
+// so an ARP miss, a switch hiccup or a loaded node has room many times over.
+//
+// It does NOT shorten the time a SLOW node gets to answer, and that is the
+// whole reason the dial is the right place to cut: everything after the
+// accept - the TLS handshake, the authentication, the SET - stays under
+// connectDeadline (10 s, nodes.go) and the driver's ReadTimeout (60 s). A
+// node that is merely slow is not turned into a dead one here; only a node
+// that does not answer the SYN at all is given up on sooner.
+//
+// Each node name of this installation resolves to its address AND to `::`
+// (read 25.10.2026 on api-1: db-1 -> 10.2.3.212 and ::), so Go's dialer
+// splits this budget over two addresses. `::` is local and refuses at once,
+// which is why the healthy dial above is sub-millisecond; against a stopped
+// machine the IPv4 half gets what is left, and that is the number that
+// matters here. The `::` record itself belongs to the net, not to this file
+// (book point 80).
+const DialTimeout = 1 * time.Second
+
 // maxPacket has to be above the largest blob: a canonical ui-tar is at most
 // store.MaxUITotal (64 MiB). The server is set to the same value
 // (max_allowed_packet in templates/galera.cnf), and nothing but a test keeps
@@ -165,7 +202,7 @@ func nodeConfig(cfg config.DB, node string) (*mysql.Config, error) {
 	c.ParseTime = false // timestamps are numbers
 	c.Loc = time.UTC
 	c.MaxAllowedPacket = maxPacket
-	c.Timeout = 5 * time.Second
+	c.Timeout = DialTimeout
 	c.ReadTimeout = 60 * time.Second
 	c.WriteTimeout = 60 * time.Second
 	// The driver writes to stderr by default; NGC logs on its own and never

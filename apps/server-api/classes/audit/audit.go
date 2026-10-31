@@ -27,6 +27,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/secrets"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -65,6 +66,18 @@ const (
 	// valid ID either, so no person can ever be called this.
 	UserSystem = "system"
 )
+
+// The actions Pairing notes. They are words of this package, not of the
+// caller: the only name a pairing request carries is one a stranger sent, and
+// the "Aktion" column of the log is a line an administrator reads.
+const (
+	ActionPair = "pair"
+	ActionJoin = "join"
+)
+
+// pairActions is the closed list of the two, so a hand-made call cannot invent
+// a third (TestAPairingOfAnUnknownActionIsDropped).
+var pairActions = []string{ActionPair, ActionJoin}
 
 // maxDetail is how long a detail may be. It is roomy enough for the base64url
 // of a signature (86 characters) and short enough that no secret of any length
@@ -185,14 +198,31 @@ func (lg *Log) Login(ctx context.Context, user, result, detail string) error {
 	return lg.add(ctx, core.LogEntry{User: user, Kind: kind, Result: result, Detail: detail}, lost)
 }
 
-// Channel notes that a channel opened or was refused.
-func (lg *Log) Channel(ctx context.Context, user, app, action, node string, code wire.Code) error {
+// Channel notes that a channel opened or was refused. why says which check
+// said no and becomes the detail of the entry; a channel that opened carries
+// reason.None and no detail.
+//
+// Why the detail is bounded to the closed list of package reason and not to
+// the shape of a text: a code alone is no reason -- "E_INTERNAL" tells an
+// administrator nothing -- but the field that fixes that is the one field of
+// this log a caller could otherwise fill freely, and this package takes no
+// free text (see the package comment). So a sentence outside the list is
+// dropped and the entry is written all the same, as everything else here is:
+// whoever looks for a hole does not need the field, only the event to be
+// missing.
+func (lg *Log) Channel(ctx context.Context, user, app, action, node string, code wire.Code,
+	why reason.Reason) error {
 	result := "ok"
 	if code != "" {
 		result = string(code)
 	}
-	return lg.Add(ctx, core.LogEntry{User: user, Kind: core.LogChannel, App: app, Action: action,
-		Node: node, Result: result})
+	detail := string(why)
+	lost := why != reason.None && !reason.Known(why)
+	if lost {
+		detail = Dropped
+	}
+	return lg.add(ctx, core.LogEntry{User: user, Kind: core.LogChannel, App: app, Action: action,
+		Node: node, Result: result, Detail: detail}, lost)
 }
 
 // Task notes a signed task with its signature, so it can be shown later who
@@ -208,6 +238,46 @@ func (lg *Log) Task(ctx context.Context, user, app, action, node, signature stri
 	}
 	return lg.add(ctx, core.LogEntry{User: user, Kind: core.LogTask, App: app, Action: action,
 		Node: node, Detail: signature}, lost)
+}
+
+// Pairing notes an attempt that SPENT a one-time code: a controller pairing
+// (ActionPair, tunnel.PathPair) or a further API server joining (ActionJoin,
+// tunnel.PathJoin). code is "" for the attempt that got through and a
+// wire.Code for the one that did not; why names the check that said no and
+// must be one of package reason.
+//
+// Why only the attempts that spent a code, and not every request that reaches
+// those two handlers: neither path asks anybody to sign in, so a line per
+// request is a line anybody on the network can order, without limit, and a
+// log that an outsider can fill is a worse fault than the one this fixes.
+// What a spent code bounds it against is a number an administrator himself
+// set: he handed out the codes. A request with a hash that was never a secret
+// of this installation spends nothing and therefore writes nothing -- it also
+// takes nothing away from him.
+//
+// Why the kind is core.LogTrust and not a kind of its own: the kinds are a
+// closed list in shared/core/results.go (lines 36-47), and shared/ is frozen.
+// A pairing is a step on the way into the trust list, so "Vertrauensliste" is
+// the truthful one of the ten; the sentence in the detail says which step.
+//
+// NO value of the attempt goes in: not the name the request carried, not the
+// hash of the code, not the key. The name is a stranger's text, and the hash
+// and the key are of the secret itself.
+func (lg *Log) Pairing(ctx context.Context, action string, code wire.Code, why reason.Reason) error {
+	lost := !slices.Contains(pairActions, action)
+	if lost {
+		action = Dropped
+	}
+	result := "ok"
+	if code != "" {
+		result = string(code)
+	}
+	detail := string(why)
+	if why != reason.None && !reason.Known(why) {
+		detail, lost = Dropped, true
+	}
+	return lg.add(ctx, core.LogEntry{Kind: core.LogTrust, Action: action, Result: result,
+		Detail: detail}, lost)
 }
 
 // Note keeps an entry of any other kind (core.LogTrust, LogRights, LogApp,

@@ -191,7 +191,9 @@ func TestConnectorHidesTheKey(t *testing.T) {
 // makes the rest of this work at all, since each of these statements already
 // reads the encrypted file.
 func TestPragmas(t *testing.T) {
-	db, err := OpenDB(testConfig(t, "state.db"))
+	// The read handle, because it is the one that carries several
+	// connections; the write handle carries one and the connector is the same.
+	write, db, err := OpenRW(testConfig(t, "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +207,8 @@ func TestPragmas(t *testing.T) {
 	}
 	// Hold every connection of the pool at once, so each of them is a new one
 	// and each has to have run the callback.
-	for i := range maxOpenConns {
+	defer write.Close()
+	for i := range readConns {
 		conn, err := db.Conn(ctx)
 		if err != nil {
 			t.Fatalf("connection %d: %v", i, err)
@@ -223,27 +226,30 @@ func TestPragmas(t *testing.T) {
 	}
 }
 
-// TestPoolKeepsOneConnection pins the shape of the pool: four connections at
-// once, but only one of them stays. Every connection runs a SQLite build of
-// its own, and its memory - up to maxMemory after one large blob - comes back
-// only when the connection closes.
+// TestPoolKeepsOneConnection pins the shape of the pool: the read handle
+// opens readConns connections at once, but only one of them stays. Every
+// connection runs a SQLite build of its own, and its memory - up to maxMemory
+// after one large blob - comes back only when the connection closes.
+//
+// That the WRITE handle has exactly one connection is TestTheWriteHandleHasOneConnection.
 func TestPoolKeepsOneConnection(t *testing.T) {
-	db, err := OpenDB(testConfig(t, "state.db"))
+	write, db, err := OpenRW(testConfig(t, "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer write.Close()
 	defer db.Close()
-	if got := db.Stats().MaxOpenConnections; got != maxOpenConns {
-		t.Errorf("%d connections at once, want %d", got, maxOpenConns)
+	if got := db.Stats().MaxOpenConnections; got != readConns {
+		t.Errorf("%d connections at once, want %d", got, readConns)
 	}
-	conns := make([]*sql.Conn, maxOpenConns)
+	conns := make([]*sql.Conn, readConns)
 	for i := range conns {
 		if conns[i], err = db.Conn(ctx); err != nil {
 			t.Fatalf("connection %d: %v", i, err)
 		}
 	}
-	if got := db.Stats().OpenConnections; got != maxOpenConns {
-		t.Errorf("%d connections open, want %d", got, maxOpenConns)
+	if got := db.Stats().OpenConnections; got != readConns {
+		t.Errorf("%d connections open, want %d", got, readConns)
 	}
 	for i, conn := range conns {
 		if err := conn.Close(); err != nil {

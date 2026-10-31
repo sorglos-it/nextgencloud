@@ -50,19 +50,28 @@
 // nothing here to cover - confirm.js has it for the app store. Where there is
 // no session and no verified list, the surface says the change cannot be made
 // and why; it does not draw a button that would do nothing.
-import { el, button, text, clear } from "../shell/dom.js";
+import { el, button, text, clear, field } from "../shell/dom.js";
 import * as core from "../contracts/core.js";
 import * as trust from "../contracts/trust.js";
 import * as tunnel from "../contracts/tunnel.js";
+import * as proof from "../contracts/proof.js";
 import { askSignature } from "../shell/confirm.js";
-import { PURPOSE_TRUST_LIST } from "../contracts/sign.js";
+import { PURPOSE_TRUST_LIST, keyIDAsync } from "../contracts/sign.js";
 import { b64encode } from "../contracts/b64.js";
 import { validTunnelURL } from "../contracts/url.js";
-import { coreApp, validAppID, validName } from "../contracts/text.js";
+import { coreApp, validAppID, validLoginName, validName } from "../contracts/text.js";
+import { APPS, NODES, RIGHTS, USERS } from "../shell/changed.js";
+import { freshness } from "../shell/stale.js";
 
 // How many log lines one page holds. The contract allows 1 to 500; fifty is
 // a screenful and a half, and paging is one button.
 const LOG_LIMIT = 50;
+
+// How many bytes the id of a user is. trust.ValidID takes 16 and nothing
+// else (Go: shared/trust/trust.go, ValidID -> len(b) == 16), and this is the
+// second place that makes one: auth/setup.js writes the id of the first
+// admin with the same number.
+const USER_ID_SIZE = 16;
 
 // The same sentence wherever an answer did not hold up. It says nothing about
 // what was wrong with it: that would describe the inside of the server, and
@@ -240,17 +249,200 @@ function nodeID(name, l) {
   return id;
 }
 
+// --------------------------------------------- who may run root tasks there
+//
+// A CONTROLLER THAT NAMES NOBODY CAN DO NOTHING, and until this screen there
+// was no way to name anybody. Measured on 19.10.2026 at a full installation
+// out of a published release: the node "ngc-2" was paired and taken in, the
+// app store offered it, and "Aktivieren" answered "Das hat der Rechner nicht
+// angenommen." with no sentence of the server behind it - the refusal happens
+// in the rights check, which writes no log line on either side. Setting up an
+// app is a root task (apps/store.js, rootTask(A.activate, ...)), and
+// trust.MayRoot lets one through only where the user stands in the node's
+// rootUsers or one of their roles in its rootRoles (Go: shared/trust/trust.go
+// :419). Both lists were written EMPTY by the only two places that wrote them
+// at all (askJoin, askJoinAPI), and no other place in the whole interface ever
+// wrote them: so on every freshly taken-in controller, nobody could ever
+// install an app. That is not a broken flow, it is a missing screen.
+//
+// WHY THERE IS NO DEFAULT HERE. Whom to trust with root on a machine is a
+// security decision and it belongs to the person who owns the installation,
+// not to this file: a default would hand the right out in the one moment
+// nobody is looking, and there is no way back out of a right nobody noticed
+// being given. So nothing is ticked, the question says what a tick means, and
+// the surface takes a server in even when nothing is ticked - and then says so
+// in the sentence it answers with, because a server that can do nothing is
+// worth saying out loud.
+//
+// A USER AND A ROLE ARE NOT THE SAME GIFT, and the question says which is
+// which: a user names the one person, a role names every present AND future
+// member of it, including ones somebody adds later. Both ways are offered
+// because both are in the contract (Node.RootUsers, Node.RootRoles) and a home
+// installation with one admin wants the short way; which of them is the better
+// habit is the owner's call, which is why the surface asks rather than decides.
+//
+// ONLY A CONTROLLER CARRIES THEM. An API node may carry no root lists at all
+// (Go: ValidAPINode asks for len(RootUsers)+len(RootRoles) == 0) and
+// trust.MayRoot only ever looks at a node of kind controller, so a version
+// that named anybody on an API node would be refused as invalid. The picker is
+// therefore drawn for controllers and nowhere else.
+
+// The one sentence for a controller nobody may run root tasks on. It stands in
+// the row of such a server and in the question that changes it, so both say the
+// same thing. The answer right after a take-up says it the other way round -
+// what nobody can do there yet - because a sentence about a server that was
+// just taken in has to say what follows from it.
+const NO_ROOT = "Mit Systemrechten: niemand";
+
+// rootPicker draws the choice and reads it back. node is the controller as the
+// verified list carries it, or null for one that is not in the list yet: the
+// boxes then start on what the list says, or on nothing at all.
+//
+// The users and roles come out of the VERIFIED list and not out of an action of
+// the API, for the same reason fillListed does: what an admin is about to sign
+// has to be built from the version the shell checked. It is also what makes the
+// result valid without a second check - trust.List.Validate refuses a root list
+// naming a user or a role the list does not have.
+// mine is the id of the user whose session this is, and it is used in ONE
+// case: a controller that is not in the list yet, where that person's box
+// starts ticked. Only theirs, only rootUsers, and abwaehlbar - the box is a
+// box like every other. The reason is V1.2 point 71: a take-up that ends with
+// two empty lists leaves a machine on which nobody can set up an app, and the
+// only way out of it used to be a surface that did not exist. Whoever can sign
+// a version of the trust list holds the installation anyway, so offering them
+// the tick adds no power; it only removes the case where someone takes a
+// controller in and finds out at the first app that they may do nothing there.
+// A role is NOT pre-ticked: a role hands the right to everyone who carries it
+// today or tomorrow, which is a different decision from "me on this machine".
+function rootPicker(l, node, mine = "") {
+  const allUsers = Array.isArray(l?.users) ? l.users.filter(isObj) : [];
+  const allRoles = Array.isArray(l?.roles) ? l.roles.filter(isObj) : [];
+  const nowUsers = node !== null && Array.isArray(node.rootUsers)
+    ? node.rootUsers
+    : (node === null && typeof mine === "string" && mine !== "" ? [mine] : []);
+  const nowRoles = node !== null && Array.isArray(node.rootRoles) ? node.rootRoles : [];
+  const fs = el("fieldset", "role rootpick");
+  fs.append(el("legend", null, "Aufgaben mit Systemrechten"));
+  fs.append(el("p", "hint", "Wer hier einen Haken hat, darf auf diesem Server Apps "
+    + "einrichten, entfernen, Daten löschen und das Terminal öffnen."));
+  const users = new Map();
+  const roles = new Map();
+  const opts = el("div", "opts");
+  for (const u of allUsers) {
+    if (typeof u.id !== "string" || typeof u.name !== "string") continue;
+    opts.append(pickBox(users, u.id, u.name, nowUsers.includes(u.id),
+      "Benutzer " + u.name + " darf Aufgaben mit Systemrechten ausführen"));
+  }
+  fs.append(el("p", "sub", "Einzelne Personen"), opts);
+  const ropts = el("div", "opts");
+  for (const r of allRoles) {
+    if (typeof r.name !== "string") continue;
+    ropts.append(pickBox(roles, r.name, r.name, nowRoles.includes(r.name),
+      "Rolle " + r.name + " darf Aufgaben mit Systemrechten ausführen"));
+  }
+  fs.append(el("p", "sub", "Ganze Rollen"), ropts,
+    el("p", "hint", "Eine Rolle gilt auch für alle, die ihr später beitreten."));
+  return {
+    el: fs,
+    // Sorted, so that the same choice always writes the same bytes, and
+    // without duplicates by construction - one box per id and per role name.
+    chosen() {
+      return {
+        rootUsers: [...users.entries()].filter(([, cb]) => cb.checked).map(([id]) => id).sort(plain),
+        rootRoles: [...roles.entries()].filter(([, cb]) => cb.checked).map(([r]) => r).sort(plain),
+      };
+    },
+  };
+}
+
+function pickBox(into, value, label, on, aria) {
+  const lab = el("label", "opt");
+  const cb = el("input", null);
+  cb.type = "checkbox";
+  cb.checked = on;
+  // The legend of a fieldset is not part of a checkbox's name, so the name
+  // carries what the tick means on its own.
+  cb.setAttribute("aria-label", aria);
+  lab.append(cb, el("span", "t", label));
+  into.set(value, cb);
+  return lab;
+}
+
+const isObj = (x) => x !== null && typeof x === "object";
+
+// same compares two sorted lists of strings, so that a question answered
+// without a change writes nothing: a version that changes nothing still costs
+// a signature and a new number in the chain.
+const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+// rootWho says in one line who may run root tasks on a controller, with the
+// names of the users rather than their ids: an id in a row is a row nobody can
+// read.
+function rootWho(l, node) {
+  const us = (Array.isArray(node.rootUsers) ? node.rootUsers : []).map((id) => userOf(l, id));
+  const rs = Array.isArray(node.rootRoles) ? node.rootRoles : [];
+  if (us.length + rs.length === 0) return NO_ROOT;
+  const parts = [...us];
+  for (const r of rs) parts.push("Rolle " + r);
+  return "Mit Systemrechten: " + parts.join(", ");
+}
+
+// tooManyRoot says why a choice cannot be written, and "" when it can. The
+// limit is the contract's (Go: MaxRoot per list, trust.MAX_ROOT here), and it
+// is said HERE rather than left to buildNextVersion: a refusal of the whole
+// version reads as a sentence about the list, and nobody can act on that.
+function tooManyRoot(want) {
+  if (want.rootUsers.length > trust.MAX_ROOT || want.rootRoles.length > trust.MAX_ROOT) {
+    return "Es sind zu viele Haken gesetzt. Mehr als " + trust.MAX_ROOT
+      + " Personen und mehr als " + trust.MAX_ROOT + " Rollen kann ein Server nicht führen.";
+  }
+  return "";
+}
+
+function userOf(l, id) {
+  const u = (Array.isArray(l?.users) ? l.users : []).find((x) => isObj(x) && x.id === id);
+  return u && typeof u.name === "string" ? u.name : String(id);
+}
+
 // ------------------------------------------------------------------- the app
 
 class Users {
   constructor(win, ctx) {
+    this.ctx = ctx ?? null;
+    // The sentence to carry over the next build of the Server panel.
+    this.keep = "";
+    // The same for the two panels that now write a version of the trust list
+    // themselves. A sentence put into the note and THEN followed by a
+    // rebuild is a sentence nobody reads: build() clears the panel and makes
+    // a new, empty note. Measured on the first run of the new cases - the
+    // note was "" where it should have said that the role was created. So
+    // the sentence travels the way the Server panel's does: it is parked
+    // here and the next build of that panel writes it.
+    this.keepUsers = "";
+    this.keepRights = "";
     this.link = ctx?.link ?? null;
     this.trust = ctx?.trust ?? null;
     this.session = ctx?.session ?? null;
     // The apps of this desktop, so a right can be shown as "Fotos · teilen"
-    // instead of "de.example.fotos/teilen". A missing list is no error: the
+    // instead of "de.example.fotos/teilen", and so buildRights knows which
+    // rights there are to hand out at all. A missing list is no error: the
     // rights that a role already holds are shown as they stand.
+    //
+    // This list is ngc.desktop/apps, which only shows an app the viewer holds
+    // <app>/use for -- and it is a complete list here all the same, because
+    // only an admin reaches this app (core.Action.Admin) and an admin holds
+    // the right of every installed app without a row (rights.Of, adminApps on
+    // the API). Before that it was a closed circle: a freshly installed app
+    // was in nobody's menu, so its right was in nobody's list either, and the
+    // page said "Es gibt noch keine App, für die es Rechte gäbe." while the
+    // app stood installed. Whoever narrows the API's list again breaks THIS
+    // page, not just the menu.
     this.apps = Array.isArray(ctx?.apps) ? ctx.apps : [];
+    // AND READ AGAIN AT EVERY BUILD. ctx.apps answers the desktop's list as it
+    // stands now (shell/desktop.js, appCtx), and a panel that is built again
+    // because an app came or went must not build itself from the list that was
+    // there when this window opened.
+    this.appsNow = () => (Array.isArray(this.ctx?.apps) ? this.ctx.apps : this.apps);
     this.users = null; // ngc.users/list, once, shared by the log and the question
     this.log = [];
     this.loaded = new Set();
@@ -285,15 +477,54 @@ class Users {
       this.panels.append(p);
       this.panel.set(id, p);
     }
-    this.root.append(this.tabs, this.panels);
+    // Since when these screens have been standing, and the one button that
+    // asks again. Every panel here is built from answers of the API that
+    // another admin can change, and no message of the session link says so: a
+    // screen that can be old must not look fresh (shell/stale.js).
+    this.fresh = freshness(() => this.rebuild(this.current));
+    this.root.append(this.tabs, this.fresh.el, this.panels);
     win.body.append(this.root);
+
+    // WHAT THE PERSON WALKED INTO (report of 19.-21.10.2026): a right granted
+    // here and a server taken in here showed up only after Ctrl+F5, because
+    // every panel was built exactly once (this.loaded) and nothing ever asked
+    // it to be built again. Now whoever changed something says which STATE
+    // moved, and the panels that show that state are built again.
+    //
+    // A SERVER NEEDS NO LINE OF ITS OWN: joinNode writes a new version of the
+    // trust list and follows it, which is a change of the list, and the
+    // desktop turns every settled version into all four topics
+    // (shell/desktop.js, startDesktop). So the machinery that was already
+    // there carries it; only the ear was missing.
+    const ch = ctx?.changed ?? null;
+    this.off = [];
+    if (ch !== null) {
+      this.off.push(ch.on(NODES, () => this.rebuild("servers")));
+      this.off.push(ch.on(USERS, () => this.rebuild("users")));
+      this.off.push(ch.on(RIGHTS, () => this.rebuild("rights")));
+      // An app that came or went changes which rights there are to hand out.
+      this.off.push(ch.on(APPS, () => this.rebuild("rights")));
+    }
+
     this.show(TABS[0][0]);
   }
 
   destroy() {
     this.dead = true;
     this.abort.abort();
+    this.fresh?.stop();
+    for (const off of this.off ?? []) off();
+    this.off = [];
     this.closeAsk();
+  }
+
+  // rebuild draws one panel again. A panel that was never opened is left
+  // alone: it is built from scratch when it is shown, so there is nothing
+  // stale in it to replace, and asking the API for a screen nobody is looking
+  // at would be a question for nothing.
+  rebuild(id) {
+    if (this.dead || !this.loaded.has(id)) return;
+    this.build(id);
   }
 
   // ---- tabs ---------------------------------------------------------------
@@ -329,6 +560,7 @@ class Users {
   }
 
   build(id) {
+    this.fresh?.done();
     const p = this.panel.get(id);
     if (id === "users") this.buildUsers(p);
     if (id === "rights") this.buildRights(p);
@@ -356,6 +588,8 @@ class Users {
     msg.setAttribute("role", "status");
     const tbl = table(["Name", "Rollen", "Anmeldung in zwei Schritten", "Gesperrt", "Zuletzt angemeldet"]);
     p.append(el("h3", null, "Benutzer"), msg, tbl.el);
+    text(msg, this.keepUsers);
+    this.keepUsers = "";
     let list;
     try {
       list = await this.call(core.ACT_LIST);
@@ -376,6 +610,192 @@ class Users {
       );
       tbl.body.append(r);
     }
+    p.append(this.userForm(msg));
+  }
+
+  // ---- einen zweiten Benutzer anlegen -------------------------------------
+  //
+  // THE WHOLE POINT OF THIS FORM, and why it is here and not on the API: a
+  // user of this installation does not live in a database row. The row in
+  // ngc_user is written at the FIRST LOGIN out of the signed list
+  // (Go: login/finish.go) and carries no key at all. Who exists, what they
+  // are called and which roles they hold comes out of the trust list and out
+  // of nothing else (coreapp/users.go, ngc.users/list says so itself). So
+  // creating a user IS writing the next version of the trust list, signed by
+  // a person, and there is no shorter way that is not a lie.
+  //
+  // THE KEY IS THE PASSWORD. A user without a key is not a valid list
+  // (Go: validateUsers, len(u.Keys) == 0 -> ErrInvalid), and the key of a
+  // password user is derived from the password itself: Argon2id over the
+  // typed word, Ed25519 out of the seed (contracts/proof.js, deriveSeed ->
+  // publicFromSeed). The admin and the new person do not sit at the same
+  // browser, so somebody's password has to travel - and THAT is the whole
+  // design question, answered here the way
+  // docs/superpowers/specs/2026-10-23-zweiter-benutzer.md answers it: way
+  // (b), a first password the admin sets and the person replaces.
+  //
+  // THE PRICE IS IN THE QUESTION, not in a comment. Until the new person
+  // changes it, the admin knows their key and could sign in their name. That
+  // sentence stands in the dialog below, in German, where the admin reads it
+  // before they sign - because a cost that is only written in the source is
+  // a cost the person paying it never hears about.
+  //
+  // WHAT NEVER HAPPENS HERE: the first password is not sent anywhere. It is
+  // read out of the field, turned into a seed, the seed into a public key,
+  // and the seed is wiped in a finally - the same three lines auth/setup.js
+  // runs for the first admin. What goes on the wire is the public key.
+  userForm(msg) {
+    const box = el("fieldset", "newuser");
+    box.append(el("legend", null, "Neuer Benutzer"));
+    const stop = this.cannotChange("Es kann gerade kein Benutzer angelegt werden.");
+    if (stop !== "") {
+      box.append(el("p", "muted", stop));
+      return box;
+    }
+    const cur = this.trust.current();
+    const name = field("Anmeldename", "text");
+    name.input.maxLength = 64;
+    const pw1 = field("Erstes Passwort", "password");
+    const pw2 = field("Erstes Passwort wiederholen", "password");
+    const roleBox = el("div", "opts");
+    const boxes = new Map();
+    for (const r of cur.list.roles) {
+      const lab = el("label", "opt");
+      const cb = el("input", null);
+      cb.type = "checkbox";
+      cb.setAttribute("aria-label", "Rolle " + r.name);
+      lab.append(cb, el("span", "t", r.name));
+      roleBox.append(lab);
+      boxes.set(r.name, cb);
+    }
+    const go = button("go", "Benutzer anlegen", "Neuen Benutzer anlegen");
+    go.addEventListener("click", () => this.askNewUser({ name, pw1, pw2, boxes }, go, msg));
+    box.append(
+      name.box,
+      el("p", "muted", "Kleine Buchstaben, Ziffern und . _ - , das erste Zeichen ein Buchstabe "
+        + "oder eine Ziffer, höchstens 64 Zeichen."),
+      el("p", "hint", "Rollen"),
+      roleBox,
+      // A role is not a detail of a user: an app is invisible to this person
+      // for as long as no role of theirs holds its right "benutzen"
+      // (Go: rights.Of over the user's roles, coreapp Dispatcher.apps). Said
+      // here, where the haken is set, and not after the person complains
+      // that their desktop is empty.
+      el("p", "muted", "Ohne Rolle kann niemand angelegt werden, und eine App sieht nur, "
+        + "wessen Rolle das Recht »benutzen« dafür hat."),
+      pw1.box,
+      pw2.box,
+      go,
+    );
+    return box;
+  }
+
+  async askNewUser({ name, pw1, pw2, boxes }, from, msg) {
+    const login = name.input.value.trim();
+    const roles = [...boxes.entries()].filter(([, cb]) => cb.checked).map(([r]) => r).sort(plain);
+    const pass = pw1.input.value;
+    // Every one of these is said before a key is derived and long before
+    // anybody is asked to sign. The order is the order the person filled the
+    // form in, so the first thing they hear about is the first thing they
+    // typed.
+    if (!validLoginName(login)) {
+      text(msg, "»" + login + "« ist kein gültiger Anmeldename.");
+      return;
+    }
+    const cur = this.trust.current();
+    if (cur.list.users.some((u) => u.name === login)) {
+      text(msg, "Den Anmeldenamen »" + login + "« gibt es schon.");
+      return;
+    }
+    if (cur.list.users.length >= trust.MAX_USERS) {
+      text(msg, "Diese Anlage hat schon " + trust.MAX_USERS
+        + " Benutzer. Mehr trägt die Liste nicht.");
+      return;
+    }
+    if (roles.length === 0) {
+      text(msg, "Wählen Sie mindestens eine Rolle. Ohne Rolle kann niemand angelegt werden.");
+      return;
+    }
+    // TWO ROLE SETTINGS MAKE A PASSWORD USER IMPOSSIBLE, and they are named
+    // here instead of coming back as "Diese Änderung ergibt keine gültige
+    // Vertrauensliste." passkeyOnly forbids the one kind of key this form can
+    // make; passwordToo demands a passkey beside it, which this form cannot
+    // make at all (Go: validateUsers, both refusals). Neither is set on a
+    // role this surface creates - but a role can come from anywhere, so the
+    // sentence is here.
+    const hard = roles.filter((r) => {
+      const def = trust.role(cur.list, r);
+      return def === null || def.passkeyOnly === true || def.passwordToo === true;
+    });
+    if (hard.length > 0) {
+      text(msg, "Für die Rolle »" + hard[0] + "« kann hier niemand angelegt werden: "
+        + "sie verlangt einen Passkey, und dieses Formular legt ein Passwort an.");
+      return;
+    }
+    if (pass === "" || pass !== pw2.input.value) {
+      text(msg, pass === "" ? "Geben Sie ein erstes Passwort ein."
+        : "Die beiden Passwörter sind nicht gleich.");
+      return;
+    }
+
+    this.ask({
+      title: "Benutzer »" + login + "« anlegen",
+      body: [
+        el("p", null, "»" + login + "« wird in die Vertrauensliste dieser Anlage "
+          + "eingetragen und kann sich danach mit diesem Passwort anmelden."),
+        el("p", null, "Rollen: " + roles.join(", ") + "."),
+        // THE PRICE OF WAY (b), in the dialog, before the signature.
+        el("p", "who", "Sie haben das erste Passwort selbst getippt. Bis »" + login
+          + "« es ändert, kennen Sie seinen Schlüssel und könnten in seinem "
+          + "Namen unterschreiben. Geben Sie es ihm persönlich weiter und bitten Sie ihn, "
+          + "es gleich zu ändern."),
+      ],
+      go: "Benutzer anlegen",
+      from,
+      run: async () => {
+        // The KDF is new for this user: its salt is theirs, so two people
+        // with the same password do not get the same key (Go: proof.UserKey,
+        // and the same four lines auth/setup.js writes for the first admin).
+        const kdf = {
+          alg: proof.KDF_ARGON2ID,
+          salt: crypto.getRandomValues(new Uint8Array(proof.SALT_SIZE)),
+          m: proof.DEFAULT_MEM_KIB, t: proof.DEFAULT_TIME, p: proof.DEFAULT_PAR,
+        };
+        const seed = await proof.deriveSeed(pass, kdf);
+        let pub;
+        try {
+          pub = await proof.publicFromSeed(seed);
+        } finally {
+          // The seed lives for this one derivation and is gone whichever way
+          // this ends.
+          seed.fill(0);
+        }
+        const user = {
+          id: b64encode(crypto.getRandomValues(new Uint8Array(USER_ID_SIZE))),
+          name: login,
+          roles,
+          keys: [{
+            id: await keyIDAsync(pub), kind: proof.KIND_PASSWORD, alg: proof.ALG_EDDSA,
+            pub, credId: new Uint8Array(0), kdf,
+          }],
+        };
+        await this.joinNode((next) => {
+          next.users.push(user);
+        });
+        // The fields are cleared, and the two password fields first: a first
+        // password left standing on screen is a first password the next
+        // person at this desk reads.
+        pw1.input.value = "";
+        pw2.input.value = "";
+        name.input.value = "";
+        for (const cb of boxes.values()) cb.checked = false;
+        this.keepUsers = "»" + login + "« ist angelegt und kann sich anmelden.";
+        this.ctx?.changed?.tell(USERS);
+        this.rebuild("users");
+      },
+      failed: "Der Benutzer konnte nicht angelegt werden.",
+      msg,
+    });
   }
 
   // ---- Rollen und Rechte --------------------------------------------------
@@ -388,6 +808,8 @@ class Users {
       el("p", "hint", "Ein Haken heißt: alle mit dieser Rolle dürfen das."),
       msg,
     );
+    text(msg, this.keepRights);
+    this.keepRights = "";
     let roles;
     try {
       roles = await this.call(core.ACT_RIGHTS);
@@ -402,6 +824,7 @@ class Users {
     // stands on screen that the contract would refuse on the way out.
     const known = new Set();
     for (const r of roles) for (const right of r.rights) known.add(right);
+    this.apps = this.appsNow();
     for (const a of this.apps) {
       if (!validAppID(a.id) || coreApp(a.id)) continue;
       for (const act of [core.RIGHT_USE, ...(Array.isArray(a.actions) ? a.actions : [])]) {
@@ -410,6 +833,114 @@ class Users {
     }
     const all = [...known].filter(core.validRight).sort(plain);
     for (const r of roles) p.append(this.roleBox(r, all, msg));
+    p.append(this.roleForm(msg));
+  }
+
+  // roleForm makes a new role. It stands under the roles that are there,
+  // because that is the order the work happens in: look at what exists, then
+  // add what is missing.
+  //
+  // WHY THIS HAD TO BE BUILT BEFORE A SECOND USER COULD EXIST, measured on
+  // origin/main: an installation leaves the setup with EXACTLY ONE role,
+  // admin (auth/setup.js, "One role, and it is the one the whole installation
+  // hangs from"), and trust.List.Validate refuses any user whose role is not
+  // in the same list (Go: shared/trust/trust.go, validateUsers -> l.Role(name)
+  // -> ErrInvalid). So before this form, the only role a second person could
+  // be given was admin - which is not a second user, it is a second key to
+  // everything. The rights panel above was unreachable for the same reason:
+  // it had one role to show and that role's rights are fixed and uncheckable.
+  //
+  // THE LEVEL IS critical AND NOT off. critical is what the admin role
+  // carries out of the setup, and it only ever asks for a second proof where
+  // the operation itself is critical (trust.needsConfirm: level critical
+  // reads op.critical and nothing else). off would ask for nothing, ever.
+  // Between two levels that behave the same for everything a new role can do
+  // today, the one that keeps asking later is the one to write down.
+  //
+  // THE BLACK AND WHITE LISTS STAY EMPTY, named rather than left out: they
+  // are the per-app exceptions to the level, and an exception nobody asked
+  // for is an exception nobody can see. They are changed where they are
+  // read, not handed out with a new role.
+  roleForm(msg) {
+    const box = el("fieldset", "newrole");
+    box.append(el("legend", null, "Neue Rolle"));
+    const stop = this.cannotChange("Es kann gerade keine Rolle angelegt werden.");
+    if (stop !== "") {
+      box.append(el("p", "muted", stop));
+      return box;
+    }
+    box.append(el("p", "hint", "Eine Rolle sammelt Rechte. Legen Sie sie an, haken Sie oben an, "
+      + "was sie darf, und geben Sie sie dann einem Benutzer."));
+    const f = field("Name der Rolle", "text");
+    f.input.maxLength = 32;
+    const why = el("p", "muted", "Kleine Buchstaben, Ziffern und Bindestriche, "
+      + "der erste Buchstabe keine Ziffer, höchstens 32 Zeichen.");
+    const go = button("go", "Rolle anlegen", "Neue Rolle anlegen");
+    go.addEventListener("click", () => this.askNewRole(f.input, go, msg));
+    box.append(f.box, why, go);
+    return box;
+  }
+
+  askNewRole(input, from, msg) {
+    const name = input.value.trim();
+    // Said HERE and not left to buildNextVersion: a refusal of the whole
+    // version would say "Diese Änderung ergibt keine gültige Vertrauensliste."
+    // about a typo in one field - the same reason askAddress says its own
+    // sentence. And it is said BEFORE anybody is asked for their key: a
+    // signature over bytes that were never going to be accepted is a password
+    // typed for nothing.
+    if (!validName(name)) {
+      text(msg, "»" + name + "« ist kein gültiger Rollenname.");
+      return;
+    }
+    const cur = this.trust.current();
+    if (trust.role(cur.list, name) !== null) {
+      text(msg, "Die Rolle »" + name + "« gibt es schon.");
+      return;
+    }
+    if (cur.list.roles.length >= trust.MAX_ROLES) {
+      text(msg, "Diese Anlage hat schon " + trust.MAX_ROLES + " Rollen. Mehr trägt die Liste nicht.");
+      return;
+    }
+    this.ask({
+      title: "Rolle »" + name + "« anlegen",
+      body: [
+        el("p", null, "Die Rolle wird in die Vertrauensliste dieser Anlage eingetragen. "
+          + "Sie darf zunächst nichts."),
+        el("p", null, "Was sie darf, haken Sie danach auf dieser Seite an. Eine App, für die "
+          + "die Rolle das Recht »benutzen« nicht hat, steht bei niemandem mit dieser Rolle "
+          + "im Startmenü."),
+      ],
+      go: "Rolle anlegen",
+      from,
+      run: async () => {
+        await this.joinNode((next) => {
+          next.roles.push({
+            name, level: trust.LEVEL_CRITICAL, black: [], white: [],
+            passkeyOnly: false, passwordToo: false,
+          });
+        });
+        input.value = "";
+        this.keepRights = "Die Rolle »" + name + "« ist angelegt. Sie darf noch nichts.";
+        // The panel is built again from here, and that is not the same as the
+        // rights question above, which only moves boxes that are already on
+        // screen: a new role is a whole box that is not there yet, and
+        // ngc.users/rights is the only thing that knows it now exists.
+        this.ctx?.changed?.tell(RIGHTS);
+        this.rebuild("rights");
+        // AND THE USERS PANEL, which has no idea a role was created and
+        // whose form offers one haken per role of the verified list. Without
+        // this line the new role is on this screen and not on that one, and
+        // the admin who just made it cannot give it to anybody until the
+        // page is reloaded - the exact complaint of 19.-21.10.2026, one
+        // panel further along. It is a local rebuild and not a tell(USERS):
+        // what moved is the trust list, not ngc.users/list, so no other ear
+        // in the shell has anything to do.
+        this.rebuild("users");
+      },
+      failed: "Die Rolle konnte nicht angelegt werden.",
+      msg,
+    });
   }
 
   roleBox(r, all, msg) {
@@ -417,6 +948,20 @@ class Users {
     box.append(el("legend", null, r.role));
     const opts = el("div", "opts");
     const boxes = new Map();
+    // The role admin holds every app right on the API itself and holds it
+    // without a row (rights.Of, adminApps), so there is nothing here to tick
+    // and nothing to clear: a haken that cannot change anything would be a
+    // lie, and one that looked clearable would promise a removal the API does
+    // not carry out. The rights stand, named, with no box and no save button.
+    if (r.role === trust.ROLE_ADMIN) {
+      box.append(
+        el("p", "hint", "Diese Rolle darf jede eingerichtete App benutzen. Das ist fest und lässt sich nicht abwählen."),
+      );
+      for (const right of all) opts.append(el("p", "opt fixed", rightName(right, this.apps)));
+      if (all.length === 0) opts.append(el("p", "muted", "Es ist noch keine App eingerichtet."));
+      box.append(opts);
+      return box;
+    }
     for (const right of all) {
       const lab = el("label", "opt");
       const cb = el("input", null);
@@ -465,6 +1010,13 @@ class Users {
         await this.call(core.ACT_SET_RIGHTS, { role: r.role, rights: want });
         r.rights = want;
         text(msg, "Die Rechte der Rolle »" + r.role + "« sind gespeichert.");
+        // THE START MENU. A right that was just granted is what decides
+        // whether an app stands in it (core.ActApps answers what this user may
+        // use), and until this line it did not move until the page was
+        // reloaded. The rights panel is NOT asked to build itself again from
+        // here: the sentence above it is the answer to the click, and the
+        // boxes already show what was sent.
+        this.ctx?.changed?.tell(RIGHTS);
       },
       failed: "Die Rechte konnten nicht gespeichert werden.",
       msg,
@@ -485,7 +1037,14 @@ class Users {
   // ---- Server -------------------------------------------------------------
   buildServers(p) {
     clear(p);
-    p.append(el("h3", null, "Server"));
+    const top = el("p", "note", "");
+    top.setAttribute("role", "status");
+    // What was said right before this panel was built again. Taking a server
+    // in replaces this whole panel - that is the point - and the sentence that
+    // confirmed it would go with it. So it is carried over, once.
+    text(top, this.keep ?? "");
+    this.keep = "";
+    p.append(el("h3", null, "Server"), top);
     const pending = section("pending", "Wartende Server",
       "Vergleichen Sie diesen Fingerabdruck mit dem, den das Skript auf dem Server anzeigt.");
     const pendapi = section("pendapi", "Wartende API-Server",
@@ -646,6 +1205,13 @@ class Users {
       const api = n.kind === trust.NODE_API;
       r.append(el("span", "nm", n.id), el("span", "kind", api ? "API-Server" : "Server"));
       if (api) r.append(chars(n.url));
+      // Who may run root tasks there is shown in the row and not only in the
+      // question: a server that nobody may set up an app on looks exactly like
+      // a working one until somebody tries, and then the refusal says nothing
+      // about rights (measured 19.10.2026: "Das hat der Rechner nicht
+      // angenommen.", no sentence of the server, no log line anywhere).
+      const says = api ? null : el("span", "root", rootWho(l, n));
+      if (says !== null) r.append(says);
       if (why === "") {
         // Only an API server has an address: the contract keeps a controller's
         // url empty (Go: trust.List.Validate refuses a controller with one),
@@ -654,6 +1220,15 @@ class Users {
         if (api) {
           const b = button("b", "Adresse ändern", "Adresse von " + n.id + " ändern");
           b.addEventListener("click", () => this.askAddress(n, b, box));
+          r.append(b);
+        } else {
+          // THE WAY BACK FROM A SERVER TAKEN IN WRONG. A controller whose root
+          // lists name nobody could do nothing a root task needs, for ever:
+          // nothing in this interface could write those two lists after the
+          // take-up, and re-pairing the server is not a repair anybody should
+          // need for a tick that was missing.
+          const b = button("b", "Systemrechte ändern", "Systemrechte auf " + n.id + " ändern");
+          b.addEventListener("click", () => this.askRoot(n, b, box, says));
           r.append(b);
         }
         // The last API server is not offered: an installation whose list names
@@ -736,6 +1311,78 @@ class Users {
         from.disabled = true;
       },
       failed: "Die Adresse konnte nicht geändert werden.",
+      msg: box.querySelector(".note"),
+    });
+  }
+
+  // askRoot changes who may run root tasks on a controller: the other half of
+  // the take-up, and the half that was missing. The boxes start on what the
+  // verified list says, so the question shows the state it is about, and the
+  // change is written into the next version like every other change of the
+  // list - signed by the person, checked by the shell before it is sent.
+  //
+  // THE KEYS ARE NOT TOUCHED. As with an address, this is a small change: the
+  // server keeps every key it has, and only who may tell it to do something as
+  // root moves. What it is NOT is cosmetic - this is the right to install and
+  // remove software on that machine and to open a terminal on it.
+  askRoot(n, from, box, says) {
+    const l = this.trust?.current?.()?.list;
+    if (!l) {
+      Users.say(box, "Die Vertrauensliste liegt noch nicht vor.");
+      return;
+    }
+    const pick = rootPicker(l, n);
+    const was = {
+      rootUsers: [...(Array.isArray(n.rootUsers) ? n.rootUsers : [])].sort(plain),
+      rootRoles: [...(Array.isArray(n.rootRoles) ? n.rootRoles : [])].sort(plain),
+    };
+    this.ask({
+      title: "Systemrechte auf »" + n.id + "« ändern",
+      body: [
+        el("p", null, "Wer hier steht, darf auf diesem Server Apps einrichten und entfernen, "
+          + "Daten löschen und das Terminal öffnen."),
+        el("p", null, rootWho(l, n)),
+        pick.el,
+        el("p", null, "Die Schlüssel des Servers bleiben dieselben. Es ändert sich nur, "
+          + "wer ihm Aufgaben mit Systemrechten geben darf."),
+      ],
+      go: "Systemrechte ändern",
+      from,
+      run: async () => {
+        const want = pick.chosen();
+        const why = tooManyRoot(want);
+        if (why !== "") {
+          Users.say(box, why);
+          return;
+        }
+        if (same(want.rootUsers, was.rootUsers) && same(want.rootRoles, was.rootRoles)) {
+          Users.say(box, "Daran hat sich nichts geändert. Es wurde nichts geschrieben.");
+          return;
+        }
+        await this.joinNode((next) => {
+          const node = next.nodes.find((x) => isObj(x) && x.id === n.id);
+          // The version is built from the list the shell verified, so the node
+          // is there; a list it is not in is not the one this screen was drawn
+          // from.
+          if (!node) throw new Error("Dieser Server steht nicht mehr in der Vertrauensliste.");
+          // Set, not merged: what the person ticked IS the answer, and the
+          // version is built from the list in force - so a neighbour who
+          // changed this node in between is overwritten by a choice that was
+          // made with a sentence in front of it, not by a stale half of one.
+          node.rootUsers = want.rootUsers;
+          node.rootRoles = want.rootRoles;
+        });
+        Users.say(box, "Die Systemrechte auf »" + n.id + "« sind geändert.");
+        // The row has to stop saying the old thing: it is the one place a
+        // person reads who may do this, and a line that is now wrong is worse
+        // than no line. It is read out of the version THAT NOW STANDS, never
+        // out of what was just sent - joinNode followed the chain to it.
+        const now = this.trust?.current?.()?.list;
+        const node = now?.nodes?.find((x) => isObj(x) && x.id === n.id);
+        if (says && now && node) text(says, rootWho(now, node));
+        from.disabled = true;
+      },
+      failed: "Die Systemrechte konnten nicht geändert werden.",
       msg: box.querySelector(".note"),
     });
   }
@@ -878,14 +1525,28 @@ class Users {
   // cannotChange says in one sentence why no server can be taken in right
   // now, and "" when one can. Nothing draws a button this sentence answers:
   // a button that cannot do its job is a promise the surface does not keep.
-  cannotChange() {
+  //
+  // WHAT IS MISSING, NOT WHAT IS BROKEN. Both sentences name a thing that is
+  // not there yet and will be - a list that has not arrived, a session that
+  // has not been opened. Neither says that anything failed, and neither is
+  // red: a surface that greets a second person with an alarm teaches them
+  // that this installation is broken, when all that happened is that they
+  // have not logged in yet. The same rule carries the forms below, where the
+  // missing thing is a right rather than a list.
+  //
+  // tail names what cannot be done right now. It is a parameter and not a
+  // fixed sentence because three different forms ask this question - a
+  // server, a role, a user - and "Es kann gerade kein Server aufgenommen
+  // werden." under a form about a person would be the surface talking about
+  // something else.
+  cannotChange(tail = "Es kann gerade kein Server aufgenommen werden.") {
     const cur = this.trust?.current?.();
-    if (!cur?.list) return "Die Vertrauensliste liegt noch nicht vor. Es kann gerade kein Server aufgenommen werden.";
+    if (!cur?.list) return "Die Vertrauensliste liegt noch nicht vor. " + tail;
     // A version of the trust list is signed by the PERSON, with a key that
     // stands in the list itself; without knowing whose session this is, there
     // is nobody to ask.
     if (typeof this.session?.user !== "string" || this.session.user === "") {
-      return "Dafür ist eine Anmeldung nötig. Es kann gerade kein Server aufgenommen werden.";
+      return "Dafür ist eine Anmeldung nötig. " + tail;
     }
     return "";
   }
@@ -897,6 +1558,10 @@ class Users {
     }
     const v = this.trust.current();
     const id = nodeID(n.name, v.list);
+    // The box of the person doing this starts ticked, and nothing else does.
+    // It can be taken off again, and the answer below says either way what
+    // follows from it (rootPicker carries the why).
+    const pick = rootPicker(v.list, null, this.session?.user ?? "");
     this.ask({
       title: "Server »" + n.name + "« aufnehmen",
       body: [
@@ -905,18 +1570,39 @@ class Users {
         el("p", null, "In der Liste heißt er: " + id),
         el("p", "fp mono", seen.fp),
         el("p", null, "Nehmen Sie ihn nur auf, wenn genau dieser Fingerabdruck auf dem Server steht."),
+        pick.el,
+        el("p", null, "Ihr Haken ist gesetzt. Nehmen Sie ihn weg, wenn Sie auf diesem Server "
+          + "selbst nichts einrichten sollen — dann kann es dort zunächst niemand. "
+          + "Das lässt sich später unter »Eingetragene Server« ändern."),
       ],
       go: "Server aufnehmen",
       from,
       run: async () => {
+        const want = pick.chosen();
+        const why = tooManyRoot(want);
+        if (why !== "") {
+          Users.say(box, why);
+          return;
+        }
         await this.joinNode((next) => {
           next.nodes.push({
             id, kind: trust.NODE_CONTROLLER, name: n.name, noise: n.key,
             sign: new Uint8Array(0), url: "", tls: new Uint8Array(0),
-            rootUsers: [], rootRoles: [],
+            // WHAT THE PERSON TICKED, read off the boxes. One box starts
+            // ticked (rootPicker, mine), and it is theirs alone; everything
+            // else in these two lists got there by a hand. They are the whole
+            // reason a taken-in controller can do anything at all
+            // (trust.MayRoot), so nothing is added here that no box carried.
+            rootUsers: want.rootUsers, rootRoles: want.rootRoles,
           });
         });
-        Users.say(box, "Der Server »" + n.name + "« ist aufgenommen.");
+        this.keep = "Der Server »" + n.name + "« ist aufgenommen. "
+          + (want.rootUsers.length + want.rootRoles.length === 0
+            ? "Auf diesem Server darf noch niemand Apps einrichten."
+            : "Aufgaben mit Systemrechten dürfen dort: "
+              + [...want.rootUsers.map((uid) => userOf(v.list, uid)),
+                ...want.rootRoles.map((r) => "Rolle " + r)].join(", ") + ".");
+        Users.say(box, this.keep);
         from.disabled = true;
       },
       failed: "Der Server konnte nicht aufgenommen werden.",
@@ -945,10 +1631,17 @@ class Users {
         await this.joinNode((next) => {
           next.nodes.push({
             id: n.node, kind: trust.NODE_API, name: n.node, noise: n.noise,
+            // BOTH STAY EMPTY HERE, and not by oversight: an API node may
+            // carry no root lists at all (Go: ValidAPINode asks for
+            // len(RootUsers)+len(RootRoles) == 0), and trust.MayRoot only ever
+            // looks at a node of kind controller. A version that named anybody
+            // here would be refused as invalid - so this must NOT be made to
+            // match askJoin, which asks the person whom to trust.
             sign: n.sign, url: n.url, tls: n.tls, rootUsers: [], rootRoles: [],
           });
         });
-        Users.say(box, "Der Server »" + n.node + "« ist aufgenommen.");
+        this.keep = "Der Server »" + n.node + "« ist aufgenommen.";
+        Users.say(box, this.keep);
         from.disabled = true;
       },
       failed: "Der Server konnte nicht aufgenommen werden.",
@@ -1008,7 +1701,15 @@ class Users {
     clear(p);
     const msg = el("p", "note", "");
     msg.setAttribute("role", "status");
-    const tbl = table(["Zeit", "Benutzer", "Art", "App", "Aktion", "Server", "Ergebnis"]);
+    // "Näheres" and not "Grund": the contract has ONE detail field, and what
+    // it carries depends on the kind. A refused channel puts the reason for
+    // the refusal in it, and that is the line this column was asked for - but
+    // a task puts the base64url of its signature there and a login the method
+    // the person proved themselves with. A heading that said "Grund" would
+    // call an 86-character signature a reason, which is worse than no column:
+    // it would be read as the answer to "why did this not work".
+    const tbl = table(["Zeit", "Benutzer", "Art", "App", "Aktion", "Server", "Ergebnis",
+      "Näheres"]);
     const more = button("go", "Mehr laden", null);
     more.addEventListener("click", () => this.loadLog(tbl, msg, more));
     p.append(el("h3", null, "Protokoll"), msg, tbl.el, more);
@@ -1046,6 +1747,12 @@ class Users {
         cell("action", e.action),
         cell("node", e.node),
         cell("result", e.result),
+        // Text, never markup: the detail comes from the API, so it goes in
+        // through the one helper that cannot take markup - el fills
+        // textContent. A reason out of the API's closed German list reads as
+        // itself; an <img onerror=...> from a compromised API reads as its own
+        // characters and does nothing.
+        cell("detail", e.detail),
       );
       tbl.body.append(r);
     }
@@ -1131,9 +1838,18 @@ class Users {
         return;
       }
       if (e.key !== "Tab") return;
-      // Two stops, and Tab walks between them. Anything outside the question
-      // is behind it and must not be reachable while it stands.
-      const stops = [no, yes].filter((b) => !b.disabled);
+      // EVERY STOP OF THE QUESTION, IN THE ORDER IT STANDS, and Tab walks
+      // between them. Anything outside the question is behind it and must not
+      // be reachable while it stands.
+      //
+      // This used to be [no, yes] and nothing else, which was true as long as
+      // the body of a question was only sentences. It no longer is: the
+      // question that gives root on a server is a list of checkboxes, and
+      // under the old two stops not one of them could be reached with the
+      // keyboard - the trap took Tab away and gave it to a button. A question
+      // that can only be answered with a mouse is a question this file's own
+      // rules refuse. The address field had the same hole and is the same fix.
+      const stops = [...box.querySelectorAll("input,button")].filter((b) => !b.disabled);
       if (stops.length === 0) return;
       const i = stops.indexOf(document.activeElement);
       e.preventDefault();
@@ -1176,7 +1892,14 @@ class Users {
 const REFUSALS = ["core: ", "tunnel: ", "trust: "];
 function reason(e, refused = BAD_LIST) {
   const m = String(e?.message ?? "");
-  return REFUSALS.some((p) => m.startsWith(p)) ? refused : NO_REACH;
+  if (!REFUSALS.some((p) => m.startsWith(p))) return NO_REACH;
+  // Where the contract named the field it fell over, the sentence names it
+  // too. It is a field name out of the contract's own table, not a word off
+  // the wire, and it is the one thing that tells the admin where to look -
+  // the sentence below says only that something was wrong
+  // (docs/vertraege-v1.2.md, point 71).
+  const bad = core.refusedField(e);
+  return bad === "" ? refused : "Eine Angabe dieses Servers ist unlesbar (" + bad + ").";
 }
 
 // chars puts an address on screen character by character, each in its own

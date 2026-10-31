@@ -763,7 +763,7 @@ func TestTransferTheAPIMakesForItself(t *testing.T) {
 	head := core.Transfer{Size: 4, SHA256: bytes.Repeat([]byte{3}, 32)}
 	_, code := rl.Transfer(context.Background(), hop, core.AppStore, core.ServiceController,
 		core.ActStage, json.RawMessage(`{"app":"vendor.app"}`), head,
-		bytes.NewReader([]byte("file")), nil, nil, nil)
+		bytes.NewReader([]byte("file")), nil, nil, nil, nil)
 	if code != "" {
 		t.Fatalf("code %q, want none", code)
 	}

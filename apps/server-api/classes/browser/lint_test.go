@@ -230,13 +230,61 @@ func TestOnlyProtocolErrorHoldsANumber(t *testing.T) {
 	if got := names(fail); len(got) != 1 || got[0] != "protocolError" {
 		t.Fatalf("a number is held in %v, not in protocolError alone", got)
 	}
-	// closeChannel and not Close: Close and CloseWith are the two ways in and
-	// both go through it, so the ONE place that notes a CLOSE of ours is that
+	// closeChannel and not Close: every exported way of ending a channel goes
+	// through it, so the ONE place that notes a CLOSE of ours is that
 	// function. The sentence is "one place", not "a place called Close".
 	sent := p.selectors("SentClose")
 	if got := names(sent); len(got) != 1 || got[0] != "closeChannel" {
 		t.Fatalf("SentClose is noted in %v, not in closeChannel alone", got)
 	}
+}
+
+// TestTheWaysIntoCloseChannelAreTheNamedOnes holds the other half of the same
+// sentence, and it is the half that was missing: that the note sits in
+// closeChannel alone says nothing about WHO reaches it. The doc of
+// closeChannel names its callers, and that list went stale the moment
+// CloseBecause was added (23.10.2026) without being carried into the
+// sentence -- the case above stayed green, because a new caller of
+// closeChannel does not move the place where SentClose is noted.
+//
+// So the SET is measured here. A way in that nobody wrote down is either a
+// path that forgot to note its CLOSE or a doc that no longer describes the
+// package; both are findings, and both now fail here instead of being read by
+// the next person as the truth.
+func TestTheWaysIntoCloseChannelAreTheNamedOnes(t *testing.T) {
+	p := loadPkg(t, ".")
+	in := p.selectors("closeChannel")
+	// A walk that finds nothing is green for ever, which is the one thing a
+	// lint may not be (see the file header).
+	if len(in) == 0 {
+		t.Fatal("no call of closeChannel was found at all -- the walk sees nothing")
+	}
+	// The declaration is no call: selectors matches selector expressions, so
+	// "func (s *Session) closeChannel" never lands here. If it ever did, the
+	// name of the enclosing function would be closeChannel itself.
+	want := []string{"Close", "CloseBecause", "CloseWith"}
+	got := names(in)
+	sort.Strings(got)
+	sorted := append([]string(nil), want...)
+	sort.Strings(sorted)
+	if !equalStrings(got, sorted) {
+		t.Fatalf("closeChannel is reached from %v, and the doc of closeChannel names %v --\n"+
+			"either a way in forgot to be written down or the doc is out of date; both are findings",
+			got, want)
+	}
+}
+
+// equalStrings compares two sorted lists of names.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestTheLintSeesThroughTheSixWaysPastATextSearch(t *testing.T) {

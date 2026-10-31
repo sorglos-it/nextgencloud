@@ -1,0 +1,25 @@
+# Image of the port attempt: one foreign Rust program and one adapter.
+#
+# Built on a build machine, never on the target server - the same rule the
+# terminal app states of itself. NGC's own "ngc-controller image" cannot build
+# this: its paths are constants that name templates/terminal
+# (apps/server-controller/classes/node/image.go:65,70). So this is built with
+# podman directly, which is what any publisher of an app would have to do.
+#
+# The base digest is NOT measured here: it is the one the terminal app already
+# carries and that tools/pin-base.sh measured on 15.10.2026
+# (apps/server-controller/templates/terminal/Containerfile). Reusing a measured
+# number is right; typing a new one would be a number nobody measured.
+FROM docker.io/library/debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+
+RUN mkdir -p /usr/lib/ngc /data
+COPY wordcraft-cli /usr/lib/ngc/wordcraft-cli
+COPY adapter /usr/lib/ngc/adapter
+COPY LICENSE-MIT /usr/lib/ngc/LICENSE-wordcraft-MIT
+COPY LICENSE-APACHE /usr/lib/ngc/LICENSE-wordcraft-APACHE
+
+# The container has to stay up between channels, because the controller runs a
+# service with "podman exec" into a running container. NGC's own apps use
+# "ngc-controller hold" for this; a foreign image has no such program, so it
+# brings its own idle process. That is one more thing a port has to know.
+CMD ["/bin/sleep", "infinity"]

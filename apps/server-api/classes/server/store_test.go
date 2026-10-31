@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/updates"
@@ -501,5 +503,100 @@ func TestTheTrustLineIsSaidOnChangeAndNotEveryMinute(t *testing.T) {
 	again := round()
 	if !strings.Contains(again, errTrustAway.Error()) {
 		t.Fatalf("the fault came back after a good round and was not said again: %q", again)
+	}
+}
+
+// catalogCounter answers every request with 404 and counts the ones that asked
+// for a catalog. 404 is on purpose: appstore refuses it (appstore.ErrStore) and
+// the round writes nothing, so what is measured is THAT the round reached
+// outside and not what it made of the answer.
+type catalogCounter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *catalogCounter) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.HasSuffix(r.URL.Path, "/"+appstore.CatalogFile) {
+		c.mu.Lock()
+		c.n++
+		c.mu.Unlock()
+	}
+	return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody,
+		Header: http.Header{}, Request: r}, nil
+}
+
+func (c *catalogCounter) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+// TestTheFirstCatalogRoundDoesNotWaitAnHour is V1.2 point 66: before this, the
+// hourly ticker was the ONLY thing that fetched a catalog, so a freshly
+// installed plant had no catalog for an hour -- and every restart of ngc-api
+// pushed the first fetch out by another full hour, which means a plant somebody
+// is working on never fetched one at all.
+//
+// Measured against the beat and not with the round called by hand: calling
+// Server.hour here would be green on the stand main was in, because the round
+// itself was never the fault. What was missing is a beat that reaches it early,
+// so the beat is what runs.
+//
+// The control is the SAME wait with FirstCatalog long again: no fetch happens
+// in it. That is what says the fetch above came from this timer and not from
+// the minute round, the hour or anything else the server starts -- both halves
+// in one case, because either alone proves nothing.
+func TestTheFirstCatalogRoundDoesNotWaitAnHour(t *testing.T) {
+	// Long, both of them, for the whole case: a tick of either would fetch
+	// too and the case could not tell which beat did it.
+	oldMinute, oldHour, oldFirst := Minute, Hour, FirstCatalog
+	Minute, Hour = 10*time.Minute, 10*time.Minute
+	t.Cleanup(func() { Minute, Hour, FirstCatalog = oldMinute, oldHour, oldFirst })
+
+	// The SAME window for both halves, so the control is not merely a shorter
+	// wait: three seconds is more than a thousand times the two milliseconds
+	// the timer below is set to, and the loop leaves as soon as a fetch
+	// arrives -- only the control, which expects none, waits it out.
+	const window = 3 * time.Second
+	run := func(first, hour time.Duration, want int) int {
+		srv, db, _ := newServer(t)
+		// A trust list with a store in it, or Refresh walks an empty list and
+		// reaches nothing whatever the beat does.
+		signedIn(t, db)
+		if _, err := srv.State.Refresh(ctx); err != nil {
+			t.Fatalf("the fixture's trust list was not read: %v", err)
+		}
+		c := &catalogCounter{}
+		srv.st.Client = &http.Client{Transport: c}
+		FirstCatalog, Hour = first, hour
+		rctx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); srv.rounds(rctx) }()
+		deadline := time.Now().Add(window)
+		for time.Now().Before(deadline) && c.count() < want {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+		<-done
+		return c.count()
+	}
+	if n := run(2*time.Millisecond, 10*time.Minute, 1); n < 1 {
+		t.Fatalf("the rounds fetched %d catalogs shortly after the start, want at least one -- "+
+			"a fresh plant would have no catalog until the first hour is up", n)
+	}
+	// The control, and it is the stand before this change: nothing fetches
+	// in the same window while every beat is long.
+	if n := run(10*time.Minute, 10*time.Minute, 1); n != 0 {
+		t.Fatalf("%d catalogs were fetched with every beat long -- then the case above "+
+			"measures some other round and not the first-catalog timer", n)
+	}
+	// And the HOURLY beat still reaches the catalog round: the first timer is
+	// long again, the hour is short, and more than one round runs. Without
+	// this half a timer that had quietly taken the hour's place would pass
+	// both halves above (measured: a ticker built from FirstCatalog instead
+	// of Hour survived the whole package before this check existed).
+	if n := run(10*time.Minute, 2*time.Millisecond, 2); n < 2 {
+		t.Fatalf("the hourly beat fetched %d catalogs, want at least two -- "+
+			"the first-catalog timer must not have taken its place", n)
 	}
 }

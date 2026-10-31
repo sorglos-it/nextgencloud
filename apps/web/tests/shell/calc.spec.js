@@ -237,11 +237,18 @@ test("the app is painted in the shell's colours, and follows when they change", 
   // later; afterwards the app follows through ngc.onTheme. Both halves are here,
   // because only the first one is visible in a screenshot.
   const c = await calc(shell);
+  // SINCE docs/gestaltung.md POINT 7 the shell follows the machine until
+  // somebody chooses, and then its own document carries NO design to copy -
+  // the stylesheet answers instead, and this document has no stylesheet of
+  // ours in it. So the frame is handed the design that is actually on the
+  // screen (theme.js effectiveTheme), and the fixture's machine is light
+  // (playwright.config.js). That is the case this file could not have before:
+  // the shell saying nothing and the app still being painted right.
+  await expect(shell.locator("html")).not.toHaveAttribute("data-theme", /.*/);
+  await expect(c.frame.locator("html")).toHaveAttribute("data-theme", "light");
+  await shell.getByRole("button", { name: "Design wechseln" }).click();
   await expect(shell.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(c.frame.locator("html")).toHaveAttribute("data-theme", "dark");
-  await shell.getByRole("button", { name: "Design wechseln" }).click();
-  await expect(shell.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(c.frame.locator("html")).toHaveAttribute("data-theme", "light");
   // And the accent is a colour, which no stylesheet can read out of an
   // attribute: the app writes it into a property of its own.
   const accent = await c.frame.locator("html").evaluate((h) =>

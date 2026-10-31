@@ -11,6 +11,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/controllers"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/rights"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -97,33 +98,110 @@ func TestTheStrictestLevelOfSeveralRolesCounts(t *testing.T) {
 	_ = fx
 }
 
+// TestAppsHidesAnAppWithoutTheRightToUseIt measures the hiding rule on a user
+// who is NO admin, which is everybody it still applies to: an admin holds the
+// right of every installed app without a row (rights.Of, adminApps), so the
+// session of this fixture cannot show the rule any more. The admin's side is
+// TestAppsShowsAnInstalledAppToAnAdminWithoutARight.
 func TestAppsHidesAnAppWithoutTheRightToUseIt(t *testing.T) {
 	fx := newFixture(t)
 	fx.PutApp(t, appY, true)
-	// First the open way: with the right the app is in the menu.
-	fx.Grant(t, appY+"/"+core.RightUse)
-	if _, ok := appEntry(t, fx.call(t, core.ActApps, ""), appY); !ok {
+	bob := nonAdminSession(t, fx)
+	// First the open way: with the right the app is in the menu. Without this
+	// half a menu that is empty for another reason would pass as well.
+	grantRole(t, fx, userRole, appY+"/"+core.RightUse)
+	if _, ok := appEntry(t, bob.call(t, core.ActApps, ""), appY); !ok {
 		t.Fatal("the app is missing although the right is granted")
 	}
-	fx.Grant(t)
-	if e, ok := appEntry(t, fx.call(t, core.ActApps, ""), appY); ok {
+	grantRole(t, fx, userRole)
+	if e, ok := appEntry(t, bob.call(t, core.ActApps, ""), appY); ok {
 		t.Fatalf("the app is in the menu without the right: %+v", e)
 	}
 }
 
+// TestAppsShowsAnInstalledAppToAnAdminWithoutARight is the circle this change
+// broke open. An app only reached the menu with <app>/use, and the page that
+// hands rights out built its list of apps FROM that menu -- so a freshly
+// installed app was in nobody's menu and its right was in nobody's list, and
+// no app could ever be handed to anybody. Measured on the Debian VM on
+// 21.10.2026: org.sorglos.terminal was installed and set up, and the rights
+// page said "Es gibt noch keine App, für die es Rechte gäbe."
+//
+// The admin's rights carry no row here on purpose: Grant is never called, so
+// what shows the app is the admin's role and nothing else.
+func TestAppsShowsAnInstalledAppToAnAdminWithoutARight(t *testing.T) {
+	fx := newFixture(t)
+	fx.PutApp(t, appY, true)
+	e, ok := appEntry(t, fx.call(t, core.ActApps, ""), appY)
+	if !ok {
+		t.Fatal("a freshly installed app is missing from the admin's menu")
+	}
+	// The name comes with it, which is what the rights page shows instead of
+	// the raw id (rightName in apps/web/.../users.js).
+	if e.Name == "" || e.Name == appY {
+		t.Fatalf("no name to show: %+v", e)
+	}
+	// And the actions come with it, so a per-action right can be offered at
+	// all and not just "benutzen".
+	if len(e.Actions) != 1 || e.Actions[0] != appAct {
+		t.Fatalf("actions %+v, want the one of the manifest", e.Actions)
+	}
+}
+
+// TestAnAdminKeepsTheAppRightAfterSavingTheRoleEmpty: the right lives in no
+// row, so saving the role admin with an empty set of rights -- which is what
+// the rights page sends when nothing is ticked -- cannot take it away.
+func TestAnAdminKeepsTheAppRightAfterSavingTheRoleEmpty(t *testing.T) {
+	fx := newFixture(t)
+	fx.PutApp(t, appY, true)
+	fx.Grant(t) // the empty row the page would write
+	if _, ok := appEntry(t, fx.call(t, core.ActApps, ""), appY); !ok {
+		t.Fatal("an empty row for the role admin took the app away")
+	}
+}
+
+// TestAppsHidesAnAppThatIsSwitchedOffFromAnAdmin: the implicit right follows
+// the row the menu would show and not the installation as such, so a row that
+// is deactivated grants an admin nothing either.
+func TestAppsHidesAnAppThatIsSwitchedOffFromAnAdmin(t *testing.T) {
+	fx := newFixture(t)
+	fx.PutApp(t, appY, false)
+	if e, ok := appEntry(t, fx.call(t, core.ActApps, ""), appY); ok {
+		t.Fatalf("a deactivated app is in the admin's menu: %+v", e)
+	}
+	// The way back, so the case is not green because the fixture never shows
+	// this app at all.
+	fx.PutApp(t, appY, true)
+	if _, ok := appEntry(t, fx.call(t, core.ActApps, ""), appY); !ok {
+		t.Fatal("the app stays hidden after it was switched on")
+	}
+}
+
+// grantRole gives any role a set of rights; harness.Grant does it for the role
+// admin, and the cases that measure a non-admin need another one.
+func grantRole(t *testing.T, h *harness, role string, right ...string) {
+	t.Helper()
+	if err := rights.Set(ctx, h.S.DB, core.RoleRights{Role: role, Rights: right}); err != nil {
+		t.Fatalf("rights of %s: %v", role, err)
+	}
+}
+
+// TestAppsNamesTheActionsTheUserMayUse measures the per-action rights on a
+// user who is no admin, for the same reason as the case above.
 func TestAppsNamesTheActionsTheUserMayUse(t *testing.T) {
 	fx := newFixture(t)
 	fx.PutApp(t, appY, true)
-	fx.Grant(t, appY+"/"+core.RightUse)
-	e, ok := appEntry(t, fx.call(t, core.ActApps, ""), appY)
+	bob := nonAdminSession(t, fx)
+	grantRole(t, fx, userRole, appY+"/"+core.RightUse)
+	e, ok := appEntry(t, bob.call(t, core.ActApps, ""), appY)
 	if !ok {
 		t.Fatal("the app is missing")
 	}
 	if len(e.Actions) != 0 {
 		t.Fatalf("actions %+v without the right", e.Actions)
 	}
-	fx.Grant(t, appY+"/"+core.RightUse, appY+"/"+appAct)
-	e, _ = appEntry(t, fx.call(t, core.ActApps, ""), appY)
+	grantRole(t, fx, userRole, appY+"/"+core.RightUse, appY+"/"+appAct)
+	e, _ = appEntry(t, bob.call(t, core.ActApps, ""), appY)
 	if len(e.Actions) != 1 || e.Actions[0] != appAct {
 		t.Fatalf("actions %+v", e.Actions)
 	}
@@ -235,14 +313,17 @@ func TestUIGivesTheBytesOfTheBlobAndWalkUIReadsThem(t *testing.T) {
 	}
 }
 
+// TestUIOfAnAppWithoutTheRightIsNotFound: the UI of an app follows the same
+// right, and is measured on a user who is no admin for the reason above.
 func TestUIOfAnAppWithoutTheRightIsNotFound(t *testing.T) {
 	fx := newFixture(t)
 	fx.PutApp(t, appY, true)
+	bob := nonAdminSession(t, fx)
 	if err := fx.S.DB.BlobPut(ctx, dbapi.Blob{Kind: dbapi.BlobUI, ID: appY + "@1.0.0",
 		Data: uiTar(t, "x"), Updated: testNow}); err != nil {
 		t.Fatalf("ui: %v", err)
 	}
-	c := fx.Open(t, wire.Open{App: core.AppDesktop, Service: core.ServiceAPI, Action: core.ActUI,
+	c := bob.Open(t, wire.Open{App: core.AppDesktop, Service: core.ServiceAPI, Action: core.ActUI,
 		Window: wire.MinWindow, Params: json.RawMessage(`{"app":"` + appY + `"}`)})
 	if cl := c.closed(t); cl.Code != wire.CodeNotFound {
 		t.Fatalf("close %+v", cl)

@@ -144,8 +144,12 @@ func (e *engine) Exec(_ context.Context, _ runtime.Exec) (int, error) { return 0
 type sys struct {
 	calls []string
 	fail  string
-	user  runtime.User
-	data  string
+	// failWith is what the failing call answers, where a case is about the
+	// KIND of the cause and not about the failure (reason_test.go). nil is
+	// errSys, which no reason of the closed list names.
+	failWith error
+	user     runtime.User
+	data     string
 }
 
 var errSys = errors.New("the machine says no")
@@ -153,6 +157,9 @@ var errSys = errors.New("the machine says no")
 func (s *sys) did(call string) error {
 	s.calls = append(s.calls, call)
 	if s.fail == call {
+		if s.failWith != nil {
+			return s.failWith
+		}
 		return errSys
 	}
 	return nil
@@ -257,6 +264,9 @@ type stand struct {
 	// case reads it here.
 	kept    map[string]uint64
 	keptErr error
+	// fileLog is what image.go asked for during this activation
+	// (image_test.go).
+	fileLog *fileLog
 }
 
 // newStand is an activation that has to come off: a store app of the trust
@@ -269,6 +279,10 @@ func newStand(t *testing.T) *stand {
 		sys: &sys{user: runtime.User{Name: "ngc-notes-0123abcd", UID: 4711, GID: 4712},
 			data: "/var/lib/ngc/apps/" + testApp}}
 	s.f = catalogFixture(t)
+	// Every stand records the two file calls of image.go instead of making
+	// them: os.Chown answers "not supported by windows" for every path, and no
+	// case of this package may reach it (image_test.go, bendFiles).
+	s.fileLog = bendFiles(t)
 	s.setPackage()
 	s.deps = Deps{State: s.apps, Engine: s.eng, Sys: s.sys, List: s.f.in.List,
 		Roles: []string{tunnel.RoleServices}, Node: "ctl-1", NGC: testNGC,

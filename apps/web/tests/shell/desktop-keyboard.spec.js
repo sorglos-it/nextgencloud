@@ -106,7 +106,9 @@ test("the list is one tab stop and the arrow keys walk every tile of it", async 
   // And the next Tab is past the list, not one tile further into it.
   await shell.keyboard.press("Tab");
   expect(want).not.toContain(await active(shell));
-  expect(await active(shell)).toBe("Hell");
+  // The first control under "Aussehen", which since docs/gestaltung.md point 7
+  // is the third design choice and the default one.
+  expect(await active(shell)).toBe("Wie das System");
 
   // Exactly one tile is reachable by Tab at any moment; the others are not.
   expect(await shell.locator("#smlist .smitem").evaluateAll((is) =>
@@ -192,9 +194,9 @@ test("every control of the desktop has a name a screen reader can read", async (
 });
 
 test("the glyph beside a name is not read out with it", async ({ shell }) => {
-  // Every badge in the shell carries the first character of the app's name.
-  // Without aria-hidden the Rechner would be announced as "R Rechner", and
-  // an app called "Böse" as "B Böse".
+  // Every badge in the shell carries an icon of the shell's own (icon.js).
+  // Without aria-hidden it would be announced along with the name, and an
+  // app whose icon the shell does not know would read as "App Böse".
   expect(await shell.evaluate(() => [...document.querySelectorAll(".dicon .g, .smitem .g, .win .g")]
     .every((g) => g.getAttribute("aria-hidden") === "true"))).toBe(true);
   await shell.getByRole("button", { name: "Start" }).click();
@@ -325,7 +327,9 @@ test("the arrow keys reach the app list from the search field", async ({ shell }
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.locator("#smsearch").fill("rech");
   await shell.keyboard.press("ArrowDown");
-  expect(await active(shell)).toBe("BBenutzer und Rechte");
+  // The name alone: since the badge carries an icon instead of the first
+  // letter (js/shell/icon.js), there is no "B" in front of it any more.
+  expect(await active(shell)).toBe("Benutzer und Rechte");
   await shell.keyboard.press("Enter");
   await expect(shell.locator(".win", { hasText: "Benutzer und Rechte" })).toBeVisible();
 });

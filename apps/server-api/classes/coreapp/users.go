@@ -43,6 +43,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/rights"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
@@ -73,7 +74,7 @@ func (d *Dispatcher) registerUsers() {
 func (d *Dispatcher) userList(ctx context.Context, rq *Call) ([]byte, error) {
 	v, err := rq.S.Trust(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.Trust)
 	}
 	now := rq.S.Now()
 	out := make([]core.UserInfo, 0, len(v.List.Users))
@@ -83,7 +84,7 @@ func (d *Dispatcher) userList(ctx context.Context, rq *Call) ([]byte, error) {
 		// their zero values.
 		row, err := rq.S.DB.UserGet(ctx, u.ID)
 		if err != nil && !errors.Is(err, dbapi.ErrNotFound) {
-			return nil, fail(wire.CodeUnreachable)
+			return nil, failWhy(wire.CodeUnreachable, reason.DB)
 		}
 		out = append(out, core.UserInfo{ID: u.ID, Name: u.Name, Roles: u.Roles,
 			TOTP: len(row.TOTP) > 0, Locked: row.Locked > now, LastLogin: row.LastLogin})
@@ -96,11 +97,11 @@ func (d *Dispatcher) userList(ctx context.Context, rq *Call) ([]byte, error) {
 func (d *Dispatcher) roleRights(ctx context.Context, rq *Call) ([]byte, error) {
 	v, err := rq.S.Trust(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.Trust)
 	}
 	all, err := rights.All(ctx, rq.S.DB, v.List)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(all)
 }
@@ -117,24 +118,24 @@ func (d *Dispatcher) roleRights(ctx context.Context, rq *Call) ([]byte, error) {
 func (d *Dispatcher) setRights(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.RoleRights)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	v, err := rq.S.Trust(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.Trust)
 	}
 	if _, ok := v.List.Role(p.Role); !ok {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.RoleUnknown)
 	}
 	// The rights of the role as they stand, so a change the licence does not
 	// allow can be put back. rights.All is the only reader of a row this
 	// package has, and it reads the roles of the list.
 	before, err := roleRightsOf(ctx, rq, v.List, p.Role)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	if err := rights.Set(ctx, rq.S.DB, *p); err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	// The seat of a licence: the count is asked AFTER the change, because the
 	// question is whether the installation that comes out of this call is
@@ -147,9 +148,11 @@ func (d *Dispatcher) setRights(ctx context.Context, rq *Call) ([]byte, error) {
 			// The change stands and could not be undone. That is the one
 			// place here where the answer and the database differ, and it
 			// says so rather than claiming the refusal held.
-			return nil, fail(wire.CodeUnreachable)
+			return nil, failWhy(wire.CodeUnreachable, reason.DB)
 		}
-		return nil, fail(code)
+		// The licence said no, and that is the whole of it: how many seats it
+		// covers is in the result of the action that asks, not in this line.
+		return nil, failWhy(code, reason.License)
 	}
 	// The detail is the role, a word of the program. The rights themselves do
 	// not go in: a role may hold up to a thousand of them, far past
@@ -229,11 +232,11 @@ func (d *Dispatcher) trust(ctx context.Context, rq *Call) ([]byte, error) {
 	// for the one limit that keeps a list out of memory.
 	body, err := io.ReadAll(io.LimitReader(rq.In, core.MaxTrustIn+1))
 	if err != nil || int64(len(body)) > core.MaxTrustIn {
-		return nil, fail(wire.CodeTooLarge)
+		return nil, failWhy(wire.CodeTooLarge, reason.TooLarge)
 	}
 	sg, err := trust.ParseSigned(body)
 	if err != nil {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.TrustRefused)
 	}
 	v, err := rq.S.AddVersion(ctx, sg)
 	if err != nil {
@@ -241,7 +244,9 @@ func (d *Dispatcher) trust(ctx context.Context, rq *Call) ([]byte, error) {
 		// version that is not the next one, a fork, another installation. They
 		// are told apart over HTTP (httpapi.Fault), not on a channel, and a
 		// channel that named them would say which of the four a guess hit.
-		return nil, fail(wire.CodeVerify)
+		// One sentence for the four as well, and for the same reason: a line
+		// that named which of them a guess hit would answer the guess.
+		return nil, failWhy(wire.CodeVerify, reason.TrustRefused)
 	}
 	seq := v.List.Seq
 	// A server that now stands in the list waits for nothing any more. Both
@@ -385,11 +390,11 @@ func listedController(l *trust.List, key []byte) bool {
 // panic. It was one nil field away.
 func (d *Dispatcher) pairCode(ctx context.Context, rq *Call) ([]byte, error) {
 	if d.Controllers == nil {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.ActionUnserved)
 	}
 	code, expires, err := d.Controllers.NewPairCode(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(core.PairCodeResult{Code: code.String(), Expires: expires})
 }
@@ -397,11 +402,11 @@ func (d *Dispatcher) pairCode(ctx context.Context, rq *Call) ([]byte, error) {
 // joinCode answers ngc.users/join-code: the same for a new API server.
 func (d *Dispatcher) joinCode(ctx context.Context, rq *Call) ([]byte, error) {
 	if d.Join == nil {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.ActionUnserved)
 	}
 	code, expires, err := d.Join.NewJoinCode(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(core.PairCodeResult{Code: code.String(), Expires: expires})
 }
@@ -413,7 +418,7 @@ func (d *Dispatcher) joinCode(ctx context.Context, rq *Call) ([]byte, error) {
 func (d *Dispatcher) pending(ctx context.Context, rq *Call) ([]byte, error) {
 	list, err := rq.S.DB.PendingList(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	out := make([]core.Pending, 0, len(list))
 	for _, p := range list {
@@ -437,7 +442,7 @@ func (d *Dispatcher) pending(ctx context.Context, rq *Call) ([]byte, error) {
 func (d *Dispatcher) pendingAPI(ctx context.Context, rq *Call) ([]byte, error) {
 	rows, err := rq.S.DB.BlobFrom(ctx, dbapi.BlobJoin, 0)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	out := make([]core.PendingAPI, 0, len(rows))
 	for _, b := range rows {
@@ -462,7 +467,7 @@ func (d *Dispatcher) pendingAPI(ctx context.Context, rq *Call) ([]byte, error) {
 func (d *Dispatcher) nodes(ctx context.Context, rq *Call) ([]byte, error) {
 	v, err := rq.S.Trust(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.Trust)
 	}
 	out := make([]core.NodeInfo, 0, len(v.List.Nodes))
 	for _, n := range v.List.Nodes {
@@ -484,11 +489,11 @@ func (d *Dispatcher) nodes(ctx context.Context, rq *Call) ([]byte, error) {
 func (d *Dispatcher) log(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.LogQuery)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	entries, err := d.Log.Query(ctx, *p)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(entries)
 }

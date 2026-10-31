@@ -495,3 +495,40 @@ test("Enter asks for no login where the password route is shut", async ({ shell 
   expect(asked, "Enter started no login").toBe(0);
   await expect(shell.locator(".note.warn")).toBeVisible();
 });
+
+// docs/gestaltung.md point 6: NGC stands small under the box, and the
+// installation's version is what it says. The version comes out of
+// /config.json, which the test installation sets, and it goes in as text.
+test("NGC stands small under the login box, with the version of the installation", async ({ page }) => {
+  await page.goto("/");
+  await skipWithoutLogin(page);
+  await expect(page.locator(".loginbox")).toBeVisible();
+  const version = await page.evaluate(async () =>
+    (await (await fetch("/config.json")).json()).version);
+  expect(version).not.toBe("");
+  const foot = page.locator(".poweredby");
+  await expect(foot).toHaveText("läuft mit NGC " + version);
+  // Under the box, not over it: that is the whole decision.
+  expect(await page.evaluate(() => {
+    const b = document.querySelector(".loginbox").getBoundingClientRect();
+    const f = document.querySelector(".poweredby").getBoundingClientRect();
+    return f.top >= b.bottom - 1;
+  })).toBe(true);
+  // And it is text. A version off the wire is as foreign as any other value.
+  expect(await foot.evaluate((e) => e.querySelectorAll("*").length)).toBe(0);
+});
+
+test("no version means no line, rather than a line with nothing in it", async ({ page }) => {
+  // index.php leaves the version empty rather than taking the page down over
+  // it, and "läuft mit NGC" with nothing after it says less than no line.
+  await page.route("**/config.json", async (route) => {
+    const r = await route.fetch();
+    const c = await r.json();
+    c.version = "";
+    await route.fulfill({ body: JSON.stringify(c), contentType: "application/json; charset=utf-8" });
+  });
+  await page.goto("/");
+  await skipWithoutLogin(page);
+  await expect(page.locator(".loginbox")).toBeVisible();
+  await expect(page.locator(".poweredby")).toHaveCount(0);
+});

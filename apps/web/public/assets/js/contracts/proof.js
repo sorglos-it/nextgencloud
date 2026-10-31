@@ -23,7 +23,7 @@
 // hands the work to a worker, so this module pulls those 90 KB only when a
 // password is really derived.
 import { b64decode, b64encode, concat, utf8, fromUtf8, equal, viewOf, bytesOf } from "./b64.js";
-import { S, A, P, str, bytes, uint32 } from "./json.js";
+import { Budget, S, A, P, decode, str, bytes, uint32 } from "./json.js";
 import { message, keyIDAsync, verifyRaw, MAX_PAYLOAD } from "./sign.js";
 
 // agrees asks a caller's object whether it owns up to the bytes it handed over,
@@ -308,6 +308,23 @@ function inWorker(password, k) {
 function asBytes(v) {
   if (v === undefined || v === null) return EMPTY;
   return v instanceof Uint8Array ? v : null;
+}
+
+// proofBytes writes a proof the way it travels in an OPEN - at most a
+// passkey's: signature, authenticator data and client data, each in base64url,
+// plus the member names - and reads its own work back before handing it over.
+//
+// It lived in apps/store.js until 23.10.2026; see task.envelopeBytes for why
+// an encoder like this has one home and not two.
+const proofBudget = new Budget({ size: 64 << 10 });
+
+export function proofBytes(p) {
+  const o = { kind: p.kind, kid: p.kid, sig: b64encode(p.sig) };
+  if (p.authData.length > 0) o.authData = b64encode(p.authData);
+  if (p.clientData.length > 0) o.clientData = b64encode(p.clientData);
+  const b = utf8(JSON.stringify(o));
+  if (!validateProof(decode(b, proofBudget, proofShape))) throw new Error("proof: this proof does not hold");
+  return b;
 }
 
 // validateProof checks the structure of p before any cryptography runs: the

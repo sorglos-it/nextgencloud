@@ -9,14 +9,14 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 ---
 
-## Inhaltsverzeichnis (Stand 18.10.2026)
+## Inhaltsverzeichnis (Stand 24.10.2026)
 
 **Achtung, zwei Nummernreihen in einer Datei.** Die Nummern 19 bis 35 sind
 **doppelt vergeben**:
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 62"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 83"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -24,18 +24,73 @@ sofern nicht „dieser Liste" oder „des Vertrags" dabeisteht – dann Reihe A.
 **Darum die Überschrift zitieren, nicht die Nummer** (so steht es auch in
 `STAND.md`).
 
-Lücken gibt es in keiner der beiden Reihen.
+Lücken gibt es in keiner der beiden Reihen. **Nachgemessen am 24.10.2026** und
+seitdem bei jedem `tools/check.sh` wieder: `tools/check-buch.sh` liest diese
+Datei gegen sich selbst – keine Nummer zweimal, keine Lücke, kein Verweis auf
+einen Punkt, den es nicht gibt. **Wer einen Punkt anhängt, trägt ihn in die
+Tabelle der Reihe B ein** – sonst wird die Prüfung rot, und das ist Absicht:
+die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 ### Stand in Zahlen
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 34 | 69 |
-| überholt / erledigt durch einen späteren Punkt | 0 | 6 | 6 |
-| offen, wartet auf Thomas | 1 | 5 | 6 |
-| **Einträge** | **36** | **45** | **81** |
+| gilt | 35 | 49 | 84 |
+| überholt / erledigt durch einen späteren Punkt | 0 | 7 | 7 |
+| offen, wartet auf Thomas | 1 | 11 | 12 |
+| **Einträge** | **36** | **67** | **103** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **105**.
+
+Diese vier Zeilen sind am 24.10.2026 aus den Tabellen selbst **gezählt** und nicht
+weitergeschrieben. Wer anhängt, zählt hier mit — `tools/check-buch.sh` prüft die Nummern,
+diese Zahlen prüft es nicht.
+
+**Und wer anhängt, liest die nächste freie Nummer in der Tafel der Reihe B nach, nicht am
+Dateiende.** Am 24.10.2026 haben sich daran drei Sitzungen gestossen: eine Nummer war in der
+Tafel schon vergeben, während der Abschnitt dazu noch in einem offenen PR lag. Dieser Punkt hier
+hiess deshalb kurz 76, dann 81 und dann 82, bevor er 83 wurde.
+
+**Und eine Nummer vorzuhalten geht nicht**, so verlockend es ist: wer die naechste Nummer
+ueberspringt, um einer fremden offenen Nummer auszuweichen, reisst ein Loch, und
+`tools/check-buch.sh` weist das zu Recht ab („a log has no holes"). Zwei Zweige, die
+gleichzeitig dieselbe naechste freie Nummer nehmen, sind damit unvermeidlich — **wer als
+Zweiter zusammenfuehrt, nummeriert um.** Vorher laesst sich das nicht aufteilen, und die
+Reihenfolge entscheidet nicht die Sitzung, sondern Thomas.
+
+**Am Abend des 24.10.2026 waren es vier**, und das ist der Beleg dafuer, dass die Pruefung diese
+Klasse von Fehler nicht sehen kann. Nachgemessen an den Zweigen selbst, nicht aus zweiter Hand —
+und waehrend diese Aufstellung entstand, kamen die 83 und die 84 auf `main` von **zwei weiteren**
+Sitzungen, die in keiner Zeile davon stehen:
+
+| | Punkt 83 heisst dort |
+|---|---|
+| `origin/main` | es gibt keinen Punkt 83 |
+| Zweig `ausfall` (PR 140) | „Dreimal am selben Tag haelt die Anlage die Auskunft" — **und 84 dazu** |
+| Zweig `sicherung` (PR 142) | „Der Weg zurueck geht — er bleibt an einem Systembenutzer haengen" |
+| Zweig `terminal-fault-race` (PR 144) | „Ein flatternder Pruffall, der an der Vorrichtung lag" |
+
+`check-buch.sh` liest jede Datei nur **gegen sich selbst**, also waren alle Zweige gruen und das
+Zusammenfuehren ergaebe trotzdem mehrere Punkte 83. Daraus der Zusatz zur Regel, und er ist
+nicht beilaeufig: **wer umnummeriert, holt vorher `origin/main` neu, liest die hoechste Nummer in
+dieser Tafel und nimmt die naechste freie — nicht blind die naechste Zahl.** Mit vier Zweigen
+sind 83 und 84 schon vergeben, und wer blind auf die naechste Zahl ausweicht, hat die Kollision
+nur verschoben. Dieser Punkt hier ist genau so von 83 auf 85, dann 86 und dann auf **87**
+gewandert — jedes Mal, weil `main` die Nummer vor ihm bekam, und jedes Mal von Sitzungen,
+mit denen darueber kein Wort gewechselt wurde. Fuenf Umnummerierungen an einem Abend sind
+kein Missgeschick, sondern der Preis dafuer, dass ein Buch nur hinten waechst - und sie
+kosten jedes Mal auch die Durchsicht aller Verweise, nicht nur die Ueberschrift. Daraus zwei Regeln, die beide
+Arbeit sparen: **in der Tafel nachsehen**, und **Nummern anderer Sitzungen erst zitieren, wenn
+sie auf `main` sind** — `check-buch.sh` fängt einen Verweis auf einen Punkt, den es noch nicht
+gibt, aber erst nach dem Schreiben.
+
+> **Diese Aufstellung ist stehengeblieben, und das steht hier, statt sie zu erraten.** Sie zählt
+> die Reihe B bis Punkt 74. Gemessen am 24.10.2026 mit `tools/check-buch.sh`: die Datei trägt
+> **65** Kapitel, Punkt 19 bis 83, ohne Lücke und ohne doppelte Nummer. Die Zeilen 75 bis 83
+> stehen inzwischen alle in der Tabelle unten — 75 bis 82 hat eine andere Sitzung nachgetragen
+> (`10f0105`), 83 diese Prüfrunde. Die Aufteilung in „gilt / überholt / offen" für fremde Punkte
+> nachzutragen hieße dagegen, über deren Stand zu entscheiden. Das gehört dem Koordinator, nicht
+> dieser Prüfrunde.
 
 - **Überholt:** 36, 38, 47 (teilweise), 50, 56 (teilweise), 60.
 - **Offen, wartet auf Thomas:** Reihe A 10 · Reihe B 26, 27, 39, 41, 43.
@@ -139,6 +194,40 @@ Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **83**.
 | 60 | Der Controller lässt sich nicht koppeln | **ÜBERHOLT durch Punkt 61 – in der Kernaussage falsch** | Messung |
 | 61 | Gekoppelt – Punkt 60 war falsch | gilt – **berichtigt Punkt 60** | Messung |
 | 62 | Die Anlage entsteht allein aus den Skripten | gilt – bestätigt **Punkt 61** an frischer Anlage | Umgebung |
+| 63 | Die Oberfläche ist auf `main` – 136 Dateien statt 2 | gilt – der Fund lag außerhalb des Umzugs | Umgebung |
+| 64 | Der erste Release auf einer echten Debian-VM, Terminal-Abbild gebaut | gilt | Umgebung |
+| 65 | „Noch nicht geholt" wird dem Verwalter als „nicht echt" gezeigt | gilt | Messung |
+| 66 | Eine frische Anlage hat eine Stunde lang keinen Laden | gilt – kein Abruf beim Start, keine Handauslösung | Messung |
+| 67 | Rust für NGC – bitgleich nachgebaut, und genau das spricht dagegen | gilt – Entscheidungspapier, Vorschlag ist eine Abwägung | Entscheidung |
+| 68 | Fremde Programme portieren – das Programm ja, die Oberfläche nie | gilt – **nicht** dieselbe Frage wie Punkt 67 | Entscheidung |
+| 69 | Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt | gilt – behoben, die CI sagt jetzt **warum** | Messung |
+| 70 | Ein Paket über eine Fenstergröße kommt unter Last nicht durch | gilt – Befund auf `main`, `E_PROTOCOL` statt `ok` | Messung |
+| 71 | Sechs Wände vom Release bis zur laufenden App | gilt – vier davon in keinem Prüfsatz; Wand 1 offen in `ulh` | Umgebung |
+| 72 | Härtung des App-Containers liegt an – bis auf drei Mengen-Grenzen | gilt – **nur für die Einzel-VM** aus Punkt 64 gemessen | Sicherheit |
+| 73 | Ein zweiter Mensch – der Vertrag konnte es, die Oberfläche hatte keine Tür | gilt – Stationen 3 und 4 **ungemessen**, nur ein Mensch kann sie gehen | Messung |
+| 74 | Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen | gilt – an den Containerspeichern beider Dienstmaschinen gemessen | Messung |
+| 75 | Die Maschine der ersten Messungen ist aus – die Messungen gelten, die Anweisungen nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 76 | diese Nummer ist leer – kein Versehen, sondern eine Spur | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 77 | Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 78 | Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 79 | Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 80 | Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Umgebung |
+| 81 | Gesichert wird der Teil, den die Anlage ohnehin wiederbekäme – und „ngc-db backup“ gibt es nicht | gilt – Zeile nachgetragen, Stand sagt der Punkt selbst | Messung |
+| 82 | Die stehende Zustimmung ist gebaut und wirkungslos – ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen | gilt – Widerspruch im Vertrag, wartet auf Thomas | Messung |
+| 83 | Der kleine Fall hat wieder eine Maschine, und sie ist aus einem Skript entstanden | gilt – `ngc-ein` gemessen bis zur antwortenden Oberfläche, 451 Byte wie am 16.10. | Umgebung |
+| 84 | Eine Prüfrunde über die Nähte vom 19.–24.10. – die Nähte halten, zwei Sätze darüber nicht | gilt – ein Fund behoben, einer zur Entscheidung; was **nicht** gelesen wurde, steht dabei | Messung |
+| 85 | Ein flatternder Prüffall, der an der Vorrichtung lag – und das Flattern stand in der Zahl | gilt | Messung |
+| 86 | Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat – das nächste OPEN darauf verschwindet lautlos | gilt – **Wettrennen im Code, nicht behoben**; der Testfehler daneben ist behoben | Messung |
+| 87 | Der Weg zurück geht – er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt | gilt – auf einer eigenen Wegwerf-Maschine gefahren, eine App lief wieder | Messung |
+| 88 | Der Galera-Verkehr lief ohne Cipher-Beschränkung – die Vorlage war richtig, die Anlage nicht | gilt – an allen drei Knoten behoben, rollend, Verbund durchgehend vollständig | Sicherheit |
+| 89 | Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her | gilt – Muster über 78, 79 und 80; Regel für laute Zustände offen | Entscheidung |
+| 90 | Ein fehlendes Mitglied des Lastverteilers kommt als `HTTP 500` beim Benutzer an | gilt – 31/40 Anmeldungen, kein Wort im Fehlerprotokoll | Entscheidung |
+| 91 | Die fünf Sekunden sind zwei eigene Zahlen derselben Länge | gilt – Anwahlfrist auf 1 s, Stufe **Stabilität**, am laufenden System belegt; Vorlagenteil zu Punkt 90 mitgebaut | Entscheidung |
+| 92 | Bei verlorener Mehrheit ist auch das Lesen zu – und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500` | gilt – **schärft Punkt 90**; die Anlage antwortet ehrlich, zwei eigene Erwartungen widerlegt | Messung |
+| 93 | Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach | gilt – db-1 und db-2 eingeschaltet, **db-3 offen**; enthält einen Befund über zwei Sitzungen an einer Anlage | Sicherheit |
+| 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
+| 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
+| 96 | Eine App auf eine neue Fassung heben geht — aber nicht über den Weg, den die Oberfläche dafür hat | gilt – Hub 1.0.0 → 1.0.1 gemessen, **Daten und Benutzer bleiben**, App 262 ms weg; der stündliche Rundlauf kennt **keine Apps**, darum kommt der Knopf für eine App auf keinem Stand; enthält eine berichtigte Fehlmessung dieser Prüfrunde | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -2454,6 +2543,169 @@ knows 4 of them.` Das Skript sagt es laut und macht weiter — richtig so, aber 
 4. Der **Controller ist nicht gekoppelt** („no app can run"), weil das über die angemeldete
    Oberfläche läuft. Die Kette endet hier also nicht an der Technik, sondern an Punkt 3.
 
+### Nachtrag vom 23.10.2026: PR 71 „ein Schreibkanal je Prozess" — entscheidungsreif, zwei Wege, ein Vorschlag
+
+> **Zur Nummer:** PR 71 trägt den Titel „Point 56", seine Commits sagen „Point 49", und
+> gemessen wurde die Sache in **Punkt 48**. Der Nachtrag steht hier, weil der PR diese
+> Nummer trägt; **der Punkt, den er fortsetzt, ist Punkt 48/49.** Wer dort liest, findet
+> die Vormessung.
+
+**Was der Umbau ändert.** Heute (main) hat eine SQLite-Datei **einen** Pool mit **vier**
+Verbindungen; Lesen und Schreiben teilen ihn, und ein wartender Schreiber **hält** seine
+Verbindung. Der PR macht daraus **zwei** Pools auf derselben Datei: einen Schreibgriff mit
+**einer** Verbindung und einen Lesegriff mit **vier** (`sqlite.OpenRW`, `sqlstore.NewSplit`).
+Dazu eine Schranke, wie lange ein Schreiber **vor** dem Schreibgriff wartet (`takeTurn`),
+mit einem neuen Fehler `ErrTurn`. **Der Titel führt in die Irre:** die Vier ist nicht weg,
+sie ist auf die **Lesevorgänge** gewandert.
+
+**Umfang:** 12 Dateien, +857/−69, **alle unter `apps/server-db/`**.
+**`shared/` ist unberührt** — gegen die heutige Spitze geprüft, nicht angenommen. **Nicht BLOCKIERT.**
+
+#### Gemessen am 23.10.2026 — beide Seiten, derselbe Prüfstand
+
+Debian 13 (WSL2), go1.27.2, ext4, 128 Kerne. **Ein** Messprogramm, das auf **beiden** Bäumen
+unverändert übersetzt (es benutzt nur `Open`, `OpenDB` und `dbapi.Store` — auf beiden Seiten
+gleich), je gegen main `3a9a3e2` und gegen den PR auf main nachgezogen. Die Schreibsperre hält
+ein **echter zweiter Prozess**, denn die SQLite-Sperre ist eine Sperre auf der Datei.
+Jede Messung prüft ihre eigene Voraussetzung und bricht ab, statt eine Zahl zu nennen:
+alle Schreiber müssen in der Luft sein, die Sperre muss beim Messpunkt noch halten,
+der Lesevorgang muss wirklich Daten zurückgegeben haben.
+
+**1. Was die heutige Grenze von vier kostet.** Wartezeit des **ersten Lesens** des Prozesses,
+hinter K blockierten Schreibern desselben Prozesses:
+
+| blockierte Schreiber | main (ein Pool von 4) | PR 71 (geteilt) |
+|---|---|---|
+| 2 | 0,001 s | 0,001 s |
+| **4** | **9,490 s** | **0,001 s** |
+| 8 | 9,491 s | 0,001 s |
+
+Befehl: `NGC_AB=1 go test -count=1 -v -run '^TestABReadBehindBlockedWriters$' ./apps/server-db/classes/sqlite/`
+
+Das ist die Zahl aus Punkt 48, heute unabhängig nachgemessen: **bei vier kippt es**, und zwar
+für **jede** Abfrage des Prozesses, auch jedes Lesen. Der Aufrufer bekommt `E_UNREACHABLE` (503)
+— von „Datenbank weg" nicht zu unterscheiden.
+
+**2. Was ein einziger Kanal kostet — Durchsatz.** 16 Fäden, 10 s, Datei sonst unbenutzt,
+je **drei** Läufe:
+
+| | Lauf 1 | Lauf 2 | Lauf 3 | Fehler |
+|---|---|---|---|---|
+| main | 3045,4/s | 3009,1/s | 3008,7/s | 0 |
+| PR 71 | 3251,2/s | 3291,1/s | 3225,3/s | 0 |
+
+Befehl: `NGC_AB=1 go test -count=1 -v -run '^TestABWriteThroughput$' ./apps/server-db/classes/sqlite/`
+
+**+7 bis +8 %**, die Bänder überschneiden sich nicht, 3 von 3 reproduziert. Der ein Kanal
+kostet hier **keinen** Durchsatz, er bringt welchen. **Achtung, umgebungsabhängig:** der PR
+nennt für Windows 404→625/s (C:) und 241→530/s (Z:, NAS), also +55 bis +120 %. Auf diesem
+Rechner sind es +7–8 %. **Die Richtung ist auf beiden Ständen dieselbe, die Höhe nicht.**
+
+**3. Was passiert, wenn der eine Kanal hängt.** Ein fremder Prozess hält die Sperre die ganze
+Zeit und gibt sie nie zurück; drei Schreiber ohne eigene Frist:
+
+| | main | PR 71 |
+|---|---|---|
+| Schreiber 0 | 80,614 s · `sqlite3: database is locked` | 80,000 s · `sqlstore: no turn at the write handle came free` |
+| Schreiber 1 | 80,600 s · `database is locked` | 80,000 s · `no turn at the write handle came free` |
+| Schreiber 2 | 80,695 s · `database is locked` | 80,537 s · `database is locked` |
+| **gesamt** | **80,696 s** | **80,537 s** |
+| Lesen währenddessen | 0,001 s | 0,001 s |
+
+Befehl: `NGC_AB=1 go test -count=1 -v -timeout 25m -run '^TestABWriteChannelStuck$' ./apps/server-db/classes/sqlite/`
+
+**Die Schranke hält:** die Warterei wächst **nicht** mit der Zahl der Schreiber, der ganze
+Vorgang bleibt bei **einer** Kette (80,6 s), genau wie main. Das Lesen war hier auf **beiden**
+Seiten schnell — bei nur drei Schreibern hatte auch main noch eine vierte Verbindung frei;
+der Unterschied steht in Messung 1, nicht hier.
+
+**4. Wo der neue Fehler landet.** `Fault(sqlstore.ErrTurn, FromRows)` = **`E_UNREACHABLE`**
+(503, „komm wieder"). Gemessen, nicht gelesen. Das ist die richtige Antwort — eine volle
+Warteschlange geht von selbst vorbei — und sie braucht **keine** Änderung in `shared/`
+und **keine** in `fault.go`. Der Text ist dabei **besser** als heute: er nennt die
+Warteschlange dieses Prozesses statt „Dienst nicht erreichbar".
+
+#### Der rote `-race`-Lauf: die Ursache liegt NICHT im Umbau
+
+Der rote Lauf vom 18.10.2026 fiel an
+`TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` in
+`apps/server-controller/classes/link` — ein Paket, das dieser PR **nicht anfasst**
+(alle 12 Dateien liegen unter `apps/server-db/`). Die drei `mariadb`-Namen im Protokoll
+stehen in der Liste der **übersprungenen** Fälle, nicht der gefallenen.
+
+Gegenprobe auf main, **ohne jeden PR-Code** (10 Läufe je Stand, `-race`, `-count=1`):
+
+| Stand | Ergebnis |
+|---|---|
+| main `b853f6e` (= main am 18.10., der Stand, gegen den CI merzte) | **6 von 10 FAIL** |
+| main heute (`3a9a3e2`) | 10 von 10 bestanden |
+| PR 71 auf main heute nachgezogen | 10 von 10 bestanden |
+
+Befehl: `go test -race -count=1 -run 'TestAPingLostToOurOwnWriteDoesNotKillTheTunnel' ./apps/server-controller/classes/link/`
+
+Also: **ein Zeitfehler im Prüffall auf main, schon vorher da**, von main selbst am
+20./21.10.2026 behoben (`e723f0d` „give the tunnel ping timing test a null control",
+`ec27cc5` „the null control had a red branch it could never justify"). Dass der
+`push`-Lauf derselben Kennung grün und der `pull_request`-Lauf rot war, passt dazu:
+`pull_request` prüft den **Merge** mit main.
+
+**Ganzer Satz auf dem nachgezogenen Stand, heute:** `3412 Fälle bestanden, 0 gefallen,
+0 DATA RACE` über 73 Pakete (ohne `shared/trust`, wie die CI).
+*Ein* Fall (`TestRealArchiveIsClosed`) fiel zunächst, weil meine Messkopie ohne `.git`
+lief — der Fall sagt das selbst laut; mit git bestanden, einzeln nachgemessen.
+
+#### Nicht gemessen, abgewogen
+
+- **Speicher der Pools auf dem Höhepunkt einer Sicherung.** Es sind jetzt **vier** Pools statt
+  drei. Der PR nennt das selbst als offen. `maxMemory` ist eine **Decke, keine Reservierung**,
+  und der Lesegriff bindet keinen Blob — aber eine Zahl dafür gibt es nicht, und auf einem Pi
+  ist das der teuerste Posten.
+- **Zwei echte `ngc-api` über die ganze HTTP-Strecke.** Unverändert offen aus Punkt 48.
+- **Auf einem echten Pi und auf dem NAS (Z:).** Meine Zahlen sind ext4 auf 128 Kernen.
+- **Was der Benutzer im Browser bei `E_UNREACHABLE` liest.** Offen aus Punkt 48/49.
+- **Die 190–240 s, die der Umbau vor der Schranke selbst verursacht hat.** Steht so im
+  Kommentar des PR (gemessen 16.10.2026); ich habe sie **nicht** nachgemessen, sondern nur,
+  dass die Schranke heute hält (Messung 3).
+
+#### Zwei Wege, je mit Preis
+
+**Weg A — zusammenführen (den geteilten Griff nehmen).**
+*Preis:* ein Pool mehr je Store, und was die vier auf dem Höhepunkt einer Sicherung halten,
+ist **nicht gemessen**; ein neuer Fehler `ErrTurn`, den kein Aufrufer beim Namen kennt
+(er landet richtig auf 503, aber ein Leser muss ihn lernen); der Schreibweg hat jetzt eine
+eigene Warteschlange, deren Schranke beim Öffnen von der Datenbank abgelesen wird;
++857 Zeilen im empfindlichsten Weg des Programms.
+*Gewinn:* die Klippe bei vier ist weg (0,001 s statt 9,490 s, gemessen); +7–8 % Schreibdurchsatz
+hier, mehr auf Windows; ein hängender Schreiber legt nicht mehr jedes Lesen des Prozesses still;
+der Fehlertext nennt die Ursache statt „Dienst weg".
+
+**Weg B — liegen lassen (bei vier bleiben).**
+*Preis:* vier wartende Schreiber legen **jede** Abfrage des Prozesses lahm, Lesen eingeschlossen
+— **9,49 s, heute auf main nachgemessen**. Das ist nicht „langsam", das ist für den Aufrufer
+nicht von einer toten Datenbank zu unterscheiden. Vier wird erreicht, sobald ein zweiter
+schreibender Prozess da ist: Sicherung, zweites API, `ngc-all.sh`. **Die Grenze ist vier,
+nicht „soundso viele Benutzer".**
+*Gewinn:* nichts Neues zu lernen, kein zweiter Pool, kein neuer Fehler; main bleibt, wie
+Punkt 48/49 es gemessen hat.
+
+#### Vorschlag: Weg A, zusammenführen
+
+Die Messung, die entscheidet, ist Messung 1. **9,49 s bei vier blockierten Schreibern** ist
+keine Durchsatzzahl, sondern ein Stillstand des ganzen Prozesses, den der Aufrufer nicht von
+einer toten Datenbank unterscheiden kann — und vier ist erreicht, sobald eine Sicherung und
+zwei Benutzerschreibvorgänge zusammenkommen. Genau das nimmt der PR weg (0,001 s, mit
+**demselben** Prüfstand auf **beiden** Seiten gemessen). Er nimmt dafür nichts: der Durchsatz
+steigt, er fällt nicht. Er rührt keinen eingefrorenen Vertrag an. Und sein einziges echt neues
+Risiko — die unbegrenzte Warteschlange, die er zuerst selbst erzeugt hat — hat er selbst
+gemessen und beschränkt; dass die Schranke hält, steht in Messung 3.
+
+Offen bleibt der Speicher auf dem Höhepunkt einer Sicherung. Das ist eine Frage an einen Pi,
+nicht an diesen Merge: es ist eine Decke und keine Reservierung, und es ist messbar, sobald
+ein Controller auf dem Tisch liegt. Dagegen steht ein Stillstand, der **heute in main** ist.
+
+**Zustand des PR:** auf main (`3a9a3e2`) nachgezogen, konfliktfrei, `shared/` unberührt,
+ganzer Satz grün, `-race` grün (0 DATA RACE). **Nicht zusammengeführt** — ein Ja genügt.
+
 ## Punkt 57: Der Riegel ist auf — NGC hat einen Release-Schlüssel, und nichts wird mehr ersetzt
 
 > **Stand: gilt.** Art: Umgebung. Das hier noch Ungemessene (Anmeldung im Browser,
@@ -2816,6 +3068,13 @@ abgewartet (der Anker stand bei `seq: 1`, die Minutenwarnung
 
 ## Offene Entscheidungen für Thomas
 
+> **Überholt, Stand 23.10.2026.** Dieser Abschnitt ist eine Momentaufnahme vom 18.10.2026 und
+> kennt die Punkte 63–71 nicht; mehreres darin ist inzwischen gebaut (vierstellige Nummern,
+> Systemrechte beim Aufnehmen, Katalogabruf beim Start). **Das gültige Blatt ist
+> [`thomas-entscheidet.md`](thomas-entscheidet.md)** — dort steht jede offene Entscheidung aus
+> dieser Datei, aus dem v1.3-Vorschlag und aus den offenen PRs, am Quelltext nachgesehen und nach
+> dem geordnet, was am meisten blockiert.
+
 Alles, was in dieser Datei auf eine Entscheidung wartet – an einer Stelle.
 Je Zeile: die Frage, der Punkt, und was passiert, wenn nicht entschieden wird.
 
@@ -2958,3 +3217,4497 @@ TLS-Kette die API annimmt (Punkt 45: sie verlangt sie wirklich). `podman ps` ist
 **Nebenbefund zur Umgebung:** die VM ist über `ssh ngc` erreichbar, `sudo` ohne Passwort, podman
 und PHP schon da, Apache kam mit der Installation. Damit gibt es zum ersten Mal einen Ort, an dem
 die Dinge gemessen werden können, die WSL nicht kann.
+
+## Punkt 65: „Noch nicht geholt" wird dem Verwalter als „nicht echt" gezeigt
+
+Am 19.10.2026, auf der Debian-VM, aus einem veröffentlichten Release installiert: angemeldet,
+Controller gekoppelt, Laden läuft. Im Laden steht dann der Satz
+
+> Der Katalog dieses Stores ist nicht echt.
+
+**Der Katalog ist echt.** Gemessen am selben Stand:
+
+- `catalog.json` von `https://store.ngc.test` → 200, `kid WM0yymuJtd9UxaUONGIXow`.
+- Der Schlüssel in `/etc/ngc/api.json` (`storeKey`) hat **dieselbe** Kennung — nachgerechnet mit
+  `sign.KeyID`.
+- `sign.Verify(env, storeKey, sign.PurposeCatalog)` → `nil`. Kein Fehler.
+
+Die Oberfläche unterscheidet drei Fälle und hat für jeden einen eigenen Satz
+(`apps/web/public/assets/js/apps/store.js`, Zeile 307): nicht vertraut, alter Katalog, nicht echt.
+Der dritte ist der `else`-Zweig — und in ihn fällt **alles andere**, auch der Fall, in dem die API
+den Katalog einfach noch nicht geholt hat: `Stores.Catalog` liest die Zeile aus der Datenbank
+(`BlobGet(BlobCatalog, id)`), und solange es keine gibt, schlägt der Aufruf fehl. Die Oberfläche
+sieht einen Fehler, der weder `Untrusted` noch `Rollback` ist, und sagt „nicht echt".
+
+Das ist dieselbe Klasse wie die Anmeldelüge: ein leerer Zustand wird als Angriff dargestellt. Wer
+das liest, sucht an der falschen Stelle — und zwar lange, denn gegen eine gefälschte Unterschrift
+kann ein Verwalter nichts tun. Der Satz nimmt ihm die Handlung, die es gäbe: warten.
+
+**Zu bauen:** der leere Zustand bekommt einen eigenen Satz („Der Katalog ist noch nicht geholt.")
+und der `else`-Zweig bleibt für das, was er benennt. Prüfbar: ein Stand mit leerer Katalogzeile
+muss den neuen Satz zeigen, und ein Stand mit verbogener Unterschrift den alten — beide in einem
+Lauf, sonst beweist keiner etwas.
+
+## Punkt 66: Eine frische Anlage hat eine Stunde lang keinen Laden
+
+Dieselbe Messung, die Punkt 65 erklärt, legt den zweiten Befund daneben.
+
+Kataloge holt allein die Stundenrunde: `apps/server-api/classes/server/server.go` legt bei Zeile
+386 `time.NewTicker(Hour)` an, und `Server.hour` (Zeile 421) ruft `Stores.Refresh`. Es gibt
+**keinen** Abruf beim Start und **keine** Handauslösung. Der Kommentar bei Zeile 436 sagt das auch
+so: „The first beat is an hour after the start and not at the start".
+
+Für eine laufende Anlage ist das richtig gedacht — eine Anlage, die beim Hochkommen anfängt, ihre
+eigenen Teile zu tauschen, ist schlimmer. Für eine **frische** Anlage heißt es: der Verwalter
+richtet ein, koppelt, öffnet den Laden — und findet eine Stunde lang nichts, mit dem Satz aus
+Punkt 65 darunter. Gemessen: Anlage um 16:45 installiert, API um 17:20 neu gestartet, erster
+Katalogabruf dadurch bei ~18:20.
+
+Der Neustart ist der zweite Teil des Befundes: **jeder** Neustart der API verschiebt den ersten
+Abruf um eine volle Stunde. Eine Anlage, an der gearbeitet wird, holt also nie einen Katalog.
+
+**Zu bauen — eins von beiden, Thomas entscheidet:**
+
+- **Erster Abruf kurz nach dem Start** (z. B. eine Minute), die Stundenrunde danach unverändert.
+  Preis: jede Anlage greift beim Hochkommen einmal nach außen. Das ist kein Tausch von Teilen,
+  nur ein Lesen — die Begründung bei Zeile 436 trifft darauf nicht zu.
+- **Ein Knopf „Jetzt nachsehen"** im Laden, für den Verwalter. Preis: ein Weg mehr, den jemand
+  von außen auslösen kann; braucht also dieselbe Ratenbegrenzung wie jeder andere Aufruf.
+
+**Mein Vorschlag:** beides, und der Knopf zuerst — er ist der kleinere Eingriff und die Antwort
+auf die Frage, die ein Verwalter in diesem Augenblick wirklich hat. **Gemessen ist der Befund,
+nicht der Vorschlag.**
+
+## Punkt 67: Rust für NGC — ein Vertrag ist bitgleich nachgebaut, und genau das ist das Argument dagegen
+
+Thomas hat ein Entscheidungspapier bestellt: kein Umbau, keine Meinung, sondern ein Versuch mit
+Zahlen. Der steht hier. **Alles unter „Gemessen" ist gemessen; alles unter „Abgewogen" ist nicht
+gemessen und als Abwägung gekennzeichnet.** Der Vorschlag am Ende ist eine Abwägung.
+
+### Der Versuch
+
+`shared/sign` ist der kleinste abgeschlossene Vertrag mit echter Krypto: 136 Zeilen Go, Ed25519,
+SHA-256, base64url, strenges JSON — und er hat eine Vektordatei, aus der heute **beide**
+bestehenden Fassungen prüfen (`shared/testdata/sign.json`). Deshalb er und nicht `enc` (zu
+grundlegend, kein eigener Vektor) oder `task` (hängt an `wire`).
+
+Er ist in Rust nachgebaut und gegen dieselbe Datei gerechnet — `versuch-rust/sign/`, Beleg und
+kein Bestandteil. **Gemessen am 20.10.2026, Debian 13 unter WSL, rustc 1.99.1:**
+
+```
+32 OK, 0 FAIL
+```
+
+Darunter die harte Zeile: **die Vektordatei aus Rust neu gebaut ist Byte für Byte die Datei, die
+Gos Golden-Test geschrieben hat.** Schlüssel aus dem Seed, Kennung, Nachrichtenbytes,
+Unterschrift, JSON-Form — alles gleich. Dazu die **vollständige Ablehnungstabelle** aus
+`shared/sign/sign_test.go` (18 Fälle: unbekanntes Mitglied, doppeltes Mitglied, Mitglied in
+anderer Schreibweise, `null`, Daten dahinter, Polsterung im base64, Budget überschritten …) —
+alle 18 lehnt Rust ab wie Go.
+
+**Bitgleichheit ist also kein Problem.** Wer dagegen argumentiert, dass Rust auseinanderläuft,
+argumentiert gegen eine Messung.
+
+### Der Preis, in Zahlen
+
+**Gemessen.** `cargo vendor` für diesen **einen** 136-Zeilen-Vertrag:
+
+| | Kisten | Dateien | Bytes | Rust-Zeilen |
+|---|---|---|---|---|
+| Rust, nur `shared/sign` | **41** | 1 733 | 22 018 383 | **577 163** |
+| Go, ganzes NGC heute | 12 | 692 | 16 616 004 | — |
+
+Die vier größten: `libc` 133 739, `fiat-crypto` 83 364, `syn` 67 002 und ein **zweites** `syn`
+(2.0.119) 65 391 Zeilen — zwei Fassungen desselben Makro-Übersetzers im selben Baum. Go bringt
+Ed25519, SHA-256, base64url und JSON in der Standardbibliothek mit: für `shared/sign` ist die
+Zahl **null**.
+
+Das ist die Stelle, an der die Hausregel bricht. „Fremdcode wird ins Repo kopiert und selbst
+gepflegt" (`CLAUDE.md`, `THIRD-PARTY.md`) ist heute tragbar, weil es 12 Module sind und das
+Aufräumen am 18.10.2026 drei MB herausgeholt hat. 41 Kisten mit 577 000 Zeilen für einen Vertrag
+pflegt niemand selbst. Lizenzen wären kein Hindernis (alles MIT/Apache/BSD, AGPL-verträglich) —
+die Menge ist es.
+
+### Die zweite Umsetzung: wie wird heute gleichgehalten?
+
+**Gemessen.** Der Weg existiert und ist schmal:
+
+- `shared/testdata/` hält die Vektoren, `shared/internal/golden/golden.go` schreibt und prüft sie
+  aus Go, `apps/web/tests/fixtures/vectors.js` liest **dieselben Dateien** aus dem Repo
+  („The shared test data is the common truth for Go and JavaScript").
+- 27 Prüfdateien unter `apps/web/tests/contracts/` stehen gegen die Go-Pakete.
+
+**Und der Weg trägt die Verträge nicht allein.** `apps/web/tests/contracts/sign.spec.js` sagt es
+selbst: `sign.json` *„is the only vector there is for this contract, and it says nothing about
+what has to be refused, so the cases below spell that out from the Go source"*. Die Vektoren
+beweisen, was **angenommen** wird. Was **abgelehnt** wird, ist je Sprache von Hand nachgeschrieben
+— 847 Zeilen in `sign.spec.js` gegen 339 Zeilen `sign_test.go`.
+
+Die zweite Fassung ist auch keine Übersetzung. `sign.js` sind 420 Zeilen gegen 136 in Go, und der
+Überhang ist **kein** Rauschen: er verteidigt gegen ein Bedrohungsmodell, das Go nicht hat (ein
+Aufrufer, dessen `length`-Getter Code ist). Rust hätte dieses Problem so wenig wie Go — eine
+Rust-Fassung wäre also die **dritte** Lesart von `sign`, nicht die zweite Kopie der ersten.
+
+Und eine Lücke ist gemessen, die genau da sitzt, wo die großen Verträge stehen. Gos
+`enc.DecodeStrict` lehnt ein doppeltes Mitglied **in jeder Tiefe** ab, auch innerhalb einer
+`json.RawMessage`. Beide Seiten gemessen, derselbe Eingabestring `{"inner":{"a":1,"a":2}}`:
+
+| | flach | eine Ebene tiefer |
+|---|---|---|
+| Go `enc.DecodeStrict` | abgelehnt | **abgelehnt** (`duplicate object member name "a" within "/inner"`) |
+| Rust `serde_json` | abgelehnt | **genommen**, `inner = {"a":2}` — der letzte gewinnt |
+
+`core`, `store` und `wire` ruhen auf dieser Zusage. Rust bekäme sie nicht aus `serde_json`; sie
+wäre zu bauen. Dazu kommt `wire.ValidText`: `shared/wire/wire.go`, Zeile 282 bindet den Vertrag
+ausdrücklich an *„Go's: Unicode 17.0 with Go 1.27"*. Eine Rust-Fassung bringt ihre eigenen
+Unicode-Tabellen mit — eine **dritte** Tabellenfassung, die gleichzuhalten ist.
+
+### Bauen und Ausliefern
+
+**Gemessen, Go heute** (eigener `GOCACHE`, damit kein fremder Lauf gestört wird; drei
+Binärdateien `cli`, `server-api`, `server-controller`):
+
+| | kalt | warm (3 Läufe) |
+|---|---|---|
+| `linux/amd64` | 17,983 s | 2,143 / 1,796 / 1,699 s |
+| `linux/arm64` | 17,850 s | — |
+| `./shared/...` allein | 8,629 s | — |
+| `go test ./shared/...` | 15,340 s | — |
+
+**Gemessen, Rust:** der erste Bau dieses einen Vertrags mit 41 Kisten: **10,25 s**; `target/`
+danach **682 MB**. Statische Binärdatei `x86_64-unknown-linux-musl`: 834 312 Bytes, auf Anhieb.
+
+**Der arm64-Befund:** `aarch64-unknown-linux-musl` scheitert im Standardfall am Binder
+(`collect2: error: ld returned 1 exit status`). Mit
+`-C linker=rust-lld -C link-self-contained=yes` baut er — 811 040 Bytes, 5,5 s. Also **ein
+Schalter, kein Kreuz-gcc**. Go braucht für dasselbe `GOARCH=arm64` und sonst nichts.
+
+**Der Windows-Befund ist härter:** auf diesem Rechner ist **kein Rust installiert und kein
+C-Übersetzer vorhanden** — kein Visual Studio, kein gcc. Der ganze Versuch läuft deshalb in der
+Debian-WSL. Go baut hier beide Ziele direkt aus PowerShell. Rust auf Windows hieße: MSVC-Build-Tools
+oder MinGW dazu, oder jeder Bau geht durch WSL.
+
+Die Werkzeugkette selbst: 11,4 s Installation, **613 MB**, mit beiden Zielen **1,0 GB**.
+
+**Nicht gemessen, Abwägung:** 90 Fuzz-Ziele laufen heute mit `go test -fuzz` und null
+Zusatzwerkzeug. Rust braucht dafür `cargo-fuzz` (nightly, libFuzzer) oder AFL. Was das an
+CI-Zeit und an Pflege kostet, ist nicht gemessen.
+
+### Welche Teile kämen in Frage?
+
+**Gemessen** (Zeilen ohne Tests): `apps/server-api` 15 435, `apps/server-controller` 15 336,
+`apps/server-db` 7 210, `apps/cli` 2 258, `shared/` 9 468 — zusammen **49 707** Zeilen Go, dazu
+92 640 Zeilen Tests und 1 791 Testfunktionen.
+
+**Abgewogen, Teil für Teil:**
+
+- **`ngc-controller`** — fasst podman an und Dateisysteme. Gemessen: podman läuft über
+  `exec.CommandContext` (`runtime/podman.go:501`), nicht über eine Bibliothek; das Dateisystem über
+  `syscall.Statfs` und zwei ioctls. Beides ist in Rust genauso erreichbar, über `libc` — das schon
+  mitvendort ist. **Gewinn: keiner, der zu benennen wäre.** Wer Prozesse startet und ioctls
+  ausführt, gewinnt an Speichersicherheit nichts, was Go nicht schon gibt. **Preis: 15 336 Zeilen
+  plus 29 143 Zeilen Tests.**
+- **`ngc-api`** — Netz und Krypto. Hier wäre der Gewinn am ehesten zu erwarten, und er ist am
+  teuersten zu holen: Noise (`flynn/noise`) hätte in Rust kein Gegenstück, das dieselben Bytes
+  erzeugt, ohne gegen die Go-Fassung gemessen zu werden; dasselbe für die XTS-verschlüsselte
+  SQLite-Datei. **Preis: 15 435 + 34 700 Zeilen, und zwei Krypto-Verträge, deren Bitgleichheit
+  jeweils ein eigener Versuch wie dieser wäre.**
+- **`ngc-store` (`apps/cli`)** — 2 258 Zeilen, das kleine Werkzeug. **Der einzige Teil, bei dem
+  die Rechnung aufgehen könnte:** es ist klein, es hat keine Noise-Sitzung, und es wäre der
+  natürliche Ort für einen zweiten echten Versuch. **Preis: es müsste trotzdem `sign`, `enc`,
+  `store` und `wire` ein zweites Mal haben — also die 9 468 Zeilen `shared/` zuerst.**
+- **Die Oberfläche** — reines JavaScript ohne Bauschritt, läuft im Browser. Rust käme nur als
+  WebAssembly, das heißt: ein Bauschritt, wo heute keiner ist. Steht gegen `CLAUDE.md`, Zeile 77.
+  **Kommt nicht in Frage.**
+- **`shared/` selbst** — ist **eingefroren**. Nichts daran ist angefasst worden; die Go-Gegenprobe
+  zur Tiefen-Messung lief in einer Testdatei, die danach wieder weg war.
+
+**Hochgerechnet, aus der einen gemessenen Zahl:** `sign.go` 136 Zeilen Go → 192 Zeilen Rust,
+Faktor **1,41**. Auf `shared/` angewandt: etwa **13 300** Zeilen Rust, und das ist die *untere*
+Schranke, denn `sign` ist der leichteste Fall — die strenge JSON-Schicht aus `enc` und die
+Unicode-Tabellen aus `wire` sind im Faktor nicht drin, weil sie in Rust kein Gegenstück haben.
+Die 32 Beweisfälle brauchten 159 Zeilen Prüfprogramm gegen 339 Zeilen `sign_test.go` — die
+Prüfseite wäre also nicht billiger, nur anders geschnitten.
+
+### Was gewinnt der Benutzer?
+
+**Nichts Sichtbares.** Das ist die ehrliche Antwort, und sie ist nicht gemessen worden, weil es
+nichts zu messen gibt: die Binärdateien wandern auf eine Maschine, die ohnehin podman laufen
+lässt; 24,5 MB `server-api` gegen vielleicht 5 MB in Rust entscheidet auf keiner Anlage etwas.
+Kein Benutzer sieht eine Antwortzeit, die von der Sprache kommt.
+
+**Abgewogen, der eine Punkt, der zählen könnte:** Speichersicherheit in dem Teil, der Bytes von
+außen entgegennimmt, bevor eine Unterschrift geprüft ist. Nur: Go ist dort auch speichersicher.
+Was Rust zusätzlich gibt, ist Freiheit von Wettläufen bei geteiltem Zustand — und dafür ist nicht
+gemessen, dass NGC ein Problem hätte. Ein `go test -race`-Befund, der eine Umschreibung
+rechtfertigt, liegt nicht vor.
+
+### Vorschlag
+
+**Nein, und zwar nicht „später nochmal", sondern aus der Rechnung heraus.**
+
+Die Begründung in einem Satz: der Versuch hat bewiesen, dass Rust den Vertrag **bitgleich**
+treffen kann — und dieselbe Messung hat gezeigt, dass dafür 41 fremde Kisten mit 577 163 Zeilen
+in ein Repo müssten, dessen Hausregel lautet, Fremdcode selbst zu pflegen. Das sind nicht zwei
+Argumente, das ist eins: **die Bitgleichheit war nie der Engpass, die Hausregel ist es.** Wer Rust
+in NGC will, muss zuerst die Regel „keine Laufzeitabhängigkeiten" abschaffen. Solange die Regel
+gilt, ist die Antwort schon gegeben.
+
+Dazu drei Dinge, die auch ohne Rust aus diesem Versuch mitzunehmen sind — und die mehr wert sind
+als die Sprachfrage:
+
+1. **Die Ablehnungsseite steht in keinem Vektor.** `sign.json` kennt einen gültigen Umschlag und
+   sonst nichts; die 18 Ablehnungen stehen dreimal von Hand da (Go, JavaScript, und nun Rust).
+   Eine Vektordatei, die auch die **abzulehnenden** Eingaben trägt, würde die zwei bestehenden
+   Fassungen enger halten. Das ist eine Änderung in `shared/testdata` und damit an einem
+   eingefrorenen Ordner — Thomas' Entscheidung, nicht meine.
+2. **Die Tiefen-Lücke ist der Maßstab** für jede künftige Fremdsprache: wer `core`, `store` oder
+   `wire` nachbaut, muss das doppelte Mitglied eine Ebene tiefer ablehnen. `serde_json` tut es
+   nicht. Das gehört in die Vertragsdoku, bevor es jemand bemerkt, indem er es falsch macht.
+3. **`CLAUDE.md` Zeile 74–76 ist überholt.** Dort steht noch, `tools/modules.go` halte die Module
+   fest; `THIRD-PARTY.md` sagt, die Datei ist seit dem 18.10.2026 weg. Eine Zeile, zwei Wahrheiten.
+
+**Gemessen ist der Versuch, nicht der Vorschlag.** Die Zahl, die trägt: 41 Kisten, 577 163 Zeilen,
+für 136 Zeilen Go.
+## Punkt 68: Fremde Programme nach NGC portieren — das Programm ja, die Oberfläche nie
+
+Thomas' Frage, wörtlich: „können wir Rust und solche Programme einfach portieren oder nicht
+oder was müssen wir schaffen dass wir es können". Anlass war Wordcraft, ein Word-Nachbau in
+Rust (272 101 Zeilen, 405 fremde Kisten, MIT/Apache). Die Frage ist nicht die von Punkt 67 —
+dort ging es um NGCs **eigenen** Quelltext, hier um NGCs **Apps**.
+
+Die Antwort steht in zwei Zahlen aus `shared/store`:
+
+> **`MaxPackage` = 4 GiB. `MaxUIFile` = 16 MiB.**
+> (`shared/store/catalog.go:25`, `shared/store/pack.go:22`)
+
+NGC gibt einem fremden **Programm** vier Gigabyte und seiner **Oberfläche** sechzehn Megabyte.
+Genau deshalb portiert das eine und das andere nicht.
+
+### Teil A: gemessen, es trägt — ein 120-MB-Paket aus fremdem Rust
+
+Der Versuch liegt unter `versuch-port/`, Beleg und kein Bestandteil. Gemessen am 20.10.2026,
+Debian 13 unter WSL, rustc 1.99.1, podman 5.4.2:
+
+| Schritt | Ergebnis | Dauer |
+|---|---|---|
+| `wordcraft-cli` statisch, `x86_64-unknown-linux-musl` | 41 986 968 Bytes | 4 min 05 s |
+| Adapter (Go, statisch, linux/amd64), 145 Zeilen | 3 940 512 Bytes | — |
+| `podman build --arch amd64` | Abbild gebaut | 4,0 s |
+| `podman save --format docker-archive` | 127 236 096 Bytes | 7,5 s |
+| `ngc-store pack` | **127 244 288 Bytes**, SHA-256 `9aae8b99…` | 0,99 s |
+| `store.Walk` liest es zurück | `services/amd64.tar` → `Art=image Arch=amd64`; Manifest: 3 Aktionen, 1 Dienst | 0,08 s |
+
+**Kein musl-gcc nötig** — Rust bringt seine eigene musl-libc mit. Das Paket ist von NGCs
+**eigenem Leser** angenommen worden, nicht nur von einem Packer geschrieben.
+
+Der Dienstvertrag (`shared/service/service.go:19-37`) ist vollständig sprachneutral:
+Umgebungsvariablen rein, stdin/stdout/stderr als Kanal, Ausstiegscode als Status. Es gibt
+**keine Bibliothek**, die ein Dienst einbinden müsste — das Terminal liest die Variablen von
+Hand (`terminal/terminal.go:447-477`), ein Rust-Programm kann genau dasselbe.
+
+### Vier Dinge, die ein Port lernen muss — jedes im Versuch bezahlt
+
+1. **Die Aktion kommt als Umgebungsvariable, nicht als Argument.** `NGC_ACTION` und
+   `NGC_PARAMS` (`service.go:19-29`) gegen `wordcraft-cli convert <in> <out>`. **Jeder Port
+   braucht einen Adapter**, und nichts in NGC bringt einen mit. Der hier sind 145 Zeilen Go,
+   davon 61 Kommentar. Er bindet `shared/service` ein, statt die Namen abzuschreiben, und das
+   kostet gemessen **1 093 632 Bytes**: 2 846 880 ohne, 3 940 512 mit — `shared/service` zieht
+   `shared/trust` und `shared/wire` mit. Richtig ist es trotzdem, denn abgeschriebene Namen
+   sind die zweite Stelle, an der ein Vertrag auseinanderläuft.
+2. **Der Adapter darf keine Shell sein.** `NGC_PARAMS` ist JSON von außen; ein Dateiname in
+   einer Shell-Zeile ist der Weg, auf dem ein Dokument zu einem Befehl wird. Gemessen beim
+   Schreiben: die erste Fassung benutzte `path/filepath` und wurde auf Windows gebaut —
+   `filepath.IsAbs("/etc/passwd")` ist dort **false**, und `../etc/passwd` wurde zu
+   `\data\etc\passwd`. Ein Prüfer, dessen Antwort vom Baurechner abhängt, ist kein Prüfer.
+   Richtig ist `path` und **ablehnen statt entschärfen**.
+3. **Der Container muss von selbst oben bleiben.** Der Controller fährt mit `podman exec`
+   hinein; NGCs eigene Apps halten den Container mit `ngc-controller hold`
+   (`node/main.go:161`). Ein fremdes Abbild hat das Programm nicht und muss seinen eigenen
+   Leerlauf mitbringen — hier `/bin/sleep infinity`.
+4. **`ngc-controller image` kann genau eine App bauen: das Terminal.** Die Pfade sind
+   Konstanten (`node/image.go:65` `terminalDir`, `:70` `imageRepo`). Wer eine andere App baut,
+   ruft podman selbst — was dieser Versuch getan hat. **NGC hat kein Werkzeug für fremde
+   App-Abbilder.**
+
+### Zwei Messfehler, beide im Versuch bezahlt
+
+Sie stehen hier, weil beide wie ein Erfolg aussahen.
+
+**`tools/check.sh` war grün, und das war wertlos.** Der Wächter bei `check.sh:121` verlangt,
+dass **jede von git erfasste** `.go`-Datei von mindestens einer der vier Konfigurationen
+übersetzt wird. Der Adapter lag zuerst in einem **eigenen** Go-Modul, damit `./...` des
+Hauptmoduls ihn nicht erreicht — „Beleg, kein Bestandteil". Lokal lief `check.sh` grün, weil
+er **vor** `git add` lief und der Wächter untracked Dateien nicht sieht. Die CI sah sie und
+sagte: `no checked configuration compiles these files`. Der Wächter hat recht: Beleg im Repo,
+den nichts typprüft, ist Beleg, dem niemand trauen kann. Das Muster dafür steht längst da —
+`tools/kaputt-probe/main.go` ist auch Wegwerf-Messcode und liegt im Hauptmodul. Der Adapter
+liegt jetzt dort ebenfalls; ausgeliefert wird er nicht, weil `tools/release-gate.sh` die
+Pakete einzeln benennt, die es baut.
+
+**`podman save` hat eine vorhandene Datei nicht überschrieben.** Nach dem Umbau des Adapters
+meldete derselbe Befehl `SAVE_MS=965` statt 7 500 und `ls` zeigte **dieselbe Größe und
+denselben Zeitstempel** wie vorher. Gemessen wäre dann das alte Abbild gewesen. Erst
+`rm services/amd64.tar` davor gab ein echtes Ergebnis — 127 236 096 statt 126 142 464 Bytes.
+Eine Messung schreibt ihr Ziel vorher weg.
+
+### Teil B: gemessen, es trägt nicht — die Oberfläche, vierfach versperrt
+
+Wordcrafts WebAssembly-Bau ist wirklich gelaufen (`trunk build --release`, 7 min):
+
+| Blocker | Beleg im Quelltext | Messung am Bau |
+|---|---|---|
+| ES-Modul | `appframe.js:731` lehnt `type="module"` ab (`NEEDS_CLASSIC`) | `dist/web/index.html` hat `<script type="module">`, die glue-JS hat `export` |
+| kein Netz | `connect-src 'none'` (`Page.php:54`) | glue-JS benutzt `fetch(` und `instantiateStreaming` |
+| kein WASM | `script-src data:` ohne `'wasm-unsafe-eval'` (`Page.php:52`) | der Browser verweigert `WebAssembly.instantiate` |
+| zu groß | `MaxUIFile` 16 MiB (`pack.go:22`) | **44 027 637 Bytes** = 42 MB; als `data:`-Adresse 56 MB, also auch über `MaxUITotal` 64 MiB |
+
+Die ersten drei wären behebbar. Der vierte nicht, ohne `shared/` anzufassen.
+
+Und das trifft nicht nur WASM. Jede portierte Oberfläche steht vor: kein
+`localStorage`/IndexedDB (opake Herkunft, `frame-boot.js:43`), keine Worker
+(`worker-src 'none'`), kein `eval`, kein Datei-Download (kein `allow-downloads`,
+`appframe.js:244`), `MAX_PARAMS` 8 KiB, `MAX_CALL_RESULT` 8 MiB, 8 Kanäle je Fenster. Die
+ganze App-API sind 117 Zeilen: `ngc.call`, `ngc.open`, `ngc.theme`/`onTheme` — sonst nichts.
+
+**Gesucht und nicht gefunden:** in ganz `apps/web/` gibt es **keinen** Datei-Download und
+**keinen** Upload, auch nicht in der Shell selbst. Eine Dokument-App kann heute nichts vom
+Rechner des Nutzers öffnen und nichts dorthin speichern.
+
+### Die Hausregel steht nicht im Weg — aber sie sagt es nicht
+
+`CLAUDE.md:72` bindet „keine Laufzeitabhängigkeiten" an **`go mod vendor`**, also an NGCs
+eigenen Quelltext. `shared/store/manifest.go:41` hat dagegen ein Feld `Publisher`, und
+`CoreApp` (`wire.go:307`) trennt fremde Apps von Kern-Apps. Eine App ist ein unterschriebenes
+Paket eines Herausgebers, kein Teil von NGCs Quelltext. Die 405 Kisten von Wordcraft fallen
+also **nicht** unter Punkt 67.
+
+**Nur: kein Dokument sagt das.** Das ist eine Regellücke, keine Programmierfrage, und sie
+gehört in `THIRD-PARTY.md` — ein Satz, der entscheidet, ob ein App-Abbild unter die
+Fremdcode-Regel fällt. Vorschlag im Pull Request; geändert ist dort nichts.
+
+### Was wir schaffen müssen
+
+Nach Wirkung geteilt durch Preis, nicht nach Reihenfolge im Quelltext.
+
+1. **`ngc.asset(path)` — eine App liest ihre eigenen geprüften Dateien als Bytes.**
+   Heute bekommt eine App nur, was HTML referenziert; Bytes nie. Das ui-tar liegt schon
+   geprüft im Speicher (`appframe.js:656-668`), also ist es eine kleine Ergänzung in
+   `ngc.js` und `appframe.js`. Schließt auf: WASM ohne `fetch`, große Schriften,
+   Wörterbücher, Vorlagen. **Billigster und wirksamster Einzelschritt, ohne
+   Sicherheitspreis.**
+2. **Datei herein und heraus, über die Shell.** Nicht `allow-downloads` an den Rahmen geben,
+   sondern die Shell besitzt den Dialog und die App bekommt und schickt Bytes über die
+   Brücke — dann bleibt die App eingesperrt. Ohne das hat **keine** Dokument-App Sinn.
+3. **Ein Werkzeug für fremde App-Abbilder.** `ngc-controller image` mit Pfaden als
+   Argumenten statt als Konstanten, oder ein eigener Unterbefehl in `ngc-store`. Heute baut
+   jeder Herausgeber mit podman von Hand, und die Digest-Pflicht (`runtime.CheckBase`) prüft
+   dabei niemand.
+4. **Ein Adapter-Muster, einmal dokumentiert.** Vier Fallen stehen oben; jeder Port tritt
+   sonst in alle vier. Gehört nach `apps/server-controller/templates/` neben das Terminal.
+5. **`'wasm-unsafe-eval'` in `FRAME_CSP`** (`Page.php:52`) — eine Sicherheitsentscheidung.
+   Erst nötig, wenn ein konkretes Programm es braucht. Der ES-Modul-Blocker ist dafür
+   **nicht** zu lösen: `wasm-bindgen --target no-modules` erzeugt ein klassisches Skript,
+   das ist App-Seite.
+6. **Worker im Rahmen** (`worker-src`, `Page.php:54`) — kleiner als Nr. 5, gleiche Art.
+7. **`MaxUIFile`/`MaxUITotal` anheben** — ⚠ `shared/` ist eingefroren, steht als **P14** im
+   v1.3-Vorschlag. Ohne das passt kein WASM dieser Größenklasse je in ein Paket.
+8. **Rahmenprotokoll mit Längenkopf, einmal in `shared/`** — ⚠ ebenfalls eingefroren, **P15**.
+   `serve` gibt Streams ohne Nachrichtengrenzen durch; das Terminal hat sich dafür einen
+   eigenen 3-Byte-Kopf erfunden (`terminal.go:76-96`), und jede weitere App erfindet ihn neu.
+9. **Quote für `/data`.** Heute nur gemessen, nicht begrenzt (`runtime/data.go:223-258`), und
+   die alten App-Abbilder liegen mit drin (`install/update.go:206-218`).
+
+### Vorschlag
+
+**Portieren ja — den Programmteil. Die Oberfläche schreiben wir immer selbst.**
+
+Und das ist keine Schwäche, die zu beheben wäre: es ist der Grund, warum jede NGC-App im
+selben Käfig sitzt und warum eine fremde App keinen eigenen Weg nach draußen hat. Wer die
+Oberfläche portierbar macht, gibt genau diesen Käfig auf. Die vier Blocker aus Teil B sind
+zusammen die Tür, und man öffnet sie nicht aus Bequemlichkeit.
+
+Reihenfolge: **Nr. 1 zuerst** (`ngc.asset`), dann **Nr. 2** (Datei herein/heraus), dann
+**Nr. 3 und 4** (Werkzeug und Adapter-Muster — sie kosten nichts an Sicherheit und nehmen
+jedem künftigen Port die vier Fallen ab). Nr. 5 bis 9 erst, wenn ein benanntes Programm sie
+braucht — und Nr. 7 sagt, dass das für Wordcraft ohnehin nicht reicht.
+
+Zu Wordcraft selbst: was man bekommt, ist `wordcraft-cli` als Dienst — `convert`, `text`,
+`info`, `render` — mit einer Oberfläche, die wir schreiben. Nie Wordcrafts Editor. Wer den
+will, schreibt ihn neu: gemessen sind das für „docx lesen und anzeigen" etwa 22–25k Zeilen,
+für „lesen, bearbeiten, speichern" 75–85k, dazu 8–15k Oberfläche.
+
+**Gemessen ist der Versuch, nicht der Vorschlag.** Die Zahl, die trägt: ein 120-MB-Paket aus
+fremdem Rust, von NGCs eigenem Leser angenommen — und 42 MB Oberfläche, die in 16 MiB nicht
+passen.
+
+## Punkt 69: Die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt
+
+Gefunden beim Grünmachen des Pull Requests zu Punkt 68 — und es war nicht dessen Fehler.
+
+**Gemessen:** die letzten drei Läufe von `Linux-Pruefung` auf `main` sind **rot**, am 18., 19.
+und 20.10.2026. Jedes Mal dieselbe Zeile, und jedes Mal im Schritt `zaehlen`:
+
+```
+ci-count: /home/runner/work/_temp/test.json is empty - nothing ran, and that is not a result
+```
+
+`check.sh` selbst war in allen drei Läufen **grün** (`323 passed, 0 failed`). Rot war nur der
+Zähler — über eine Datei, die niemand schrieb.
+
+### Zwei Hälften, die auseinandergelaufen sind
+
+`.github/workflows/linux.yml` setzt `NGC_CHECK_TEST_JSON` und sagt dazu:
+
+> check.sh writes the JSON stream of its own test run here instead of running the suite a
+> second time just to count it.
+
+`tools/check.sh` sagte an derselben Stelle das Gegenteil, mit Datum:
+
+> NOTE 18.10.2026: … NGC_CHECK_TEST_JSON, a -json stream teed to a file for
+> tools/ci-count.sh. **It is NOT taken here** … Whoever wants the JSON builds it ON this
+> mechanism, not beside it.
+
+Der Satz ist richtig begründet: der Lauf schreibt `-v` in ein Protokoll, **weil** das
+Protokoll zurückgelesen wird — für Tests, die sich still zur Seite stellen. Ein zweiter Lauf
+nur zum Zählen war genau das, was vermieden werden sollte. Nur: der Workflow wurde nicht
+mitgezogen. Seit dem 18.10.2026 lief `ci-count.sh` auf eine leere Datei, und die Meldung war
+beide Male wahr — die Datei *war* leer.
+
+**Das ist die Klasse „zwei Stellen, eine Wahrheit", und hier mit der schlimmsten Folge:** eine
+Prüfung, die immer rot ist, prüft nichts mehr. Wer drei Tage lang rote Läufe sieht, hört auf
+hinzusehen — und der nächste echte Befund geht darin unter. Punkt 68 ist genau so an einem
+Fehler vorbeigelaufen, der gar nicht ihm gehörte.
+
+### Behoben, ohne einen zweiten Testlauf
+
+`go tool test2json` macht aus genau der `-v`-Ausgabe, die `check.sh` schon hat, den
+JSON-Strom, den `ci-count.sh` zählt. Es gehört zur Go-Werkzeugkette, kostet also keine
+Abhängigkeit, und das Textprotokoll bleibt das Erste — es ist weiter das, was zurückgelesen
+wird. Also genau, was die NOTE verlangte: **auf** dem Mechanismus, nicht daneben.
+
+Gemessen am 20.10.2026, beide Pfade:
+
+| | Ergebnis |
+|---|---|
+| grüner Lauf, `NGC_CHECK_TEST_JSON` gesetzt | `check.sh` Ausstieg 0, 3 476 197 Bytes JSON; `ci-count` **3349 passed, 0 FAILED, 87 SKIPPED**, Ausstieg 0 |
+| roter Lauf (ein Test mit `t.Fatal`) | `test2json` wandelt, `ci-count` nennt den Test, `ci-count: red`, Ausstieg 1 |
+
+Zwei Kleinigkeiten, die dabei auffielen und mit im Satz stehen:
+
+- **Der Lauf steht jetzt in einem `if`.** `check.sh` ist `set -euo pipefail`; ein bloßes
+  `go test …` mit `rc=$?` dahinter hätte das Skript bei rotem Lauf sofort beendet, und die
+  Wandlung wäre nie gelaufen — also hätte die CI **gerade dann** nicht gezählt, wenn es
+  darauf ankommt. Der Workflow-Schritt läuft mit `if: always()`; jetzt hält die eine Hälfte
+  das, was die andere verspricht.
+- **`packages: 1 ok` ist kein Befund.** Ein gemischter `-v`-Strom von `go test ./...` sagt
+  `test2json` nicht, zu welchem Paket eine Zeile gehört, also meldet `ci-count` ein Paket,
+  wie viele auch liefen, und ein rotes Paket kommt ohne Namen heraus. Die **Fall**-Zahlen
+  sind richtig, und nur die beurteilt `ci-count`. Steht als Kommentar an der Stelle, damit
+  es niemand als Fund liest.
+
+### Was offen bleibt
+
+**Nicht gemessen:** ob die drei anderen Aufträge (`-race`, `root`, `fuzz`) ihre
+JSON-Ströme richtig schreiben. Sie waren in allen Läufen grün, also schreiben sie etwas —
+aber sie bauen ihren Strom selbst im Workflow, nicht über `check.sh`, und ob ihre Zahlen
+stimmen, hat niemand gegengerechnet. Das ist dieselbe Frage wie hier, nur eine Stelle weiter.
+
+**Und die eigentliche Lücke:** nichts sagt Bescheid, wenn `main` rot ist. Drei Tage lang hat
+das niemand bemerkt, und bemerkt wurde es erst, weil ein Pull Request daneben rot war.
+
+### Nachtrag 20.10.2026: derselbe Commit, einmal grün und einmal rot — und niemand konnte sagen warum
+
+Nach der Behebung oben lief der **push**-Lauf vollständig **grün**, alle drei Aufträge. Der
+**pull_request**-Lauf auf **demselben Commit** war **rot**. `main` hatte sich nicht bewegt —
+`git merge-base` ist weiter `4c08ef7`, der Merge ist also inhaltsgleich mit der Zweigspitze.
+
+Und in jedem Auftrag fiel ein **anderer** Test um:
+
+| Auftrag | umgefallen |
+|---|---|
+| `check.sh + counted test run` | `TestAPackageLargerThanOneWindowGetsThrough` (`apps/server-controller/classes/serve`) |
+| `controller cases that need root` | derselbe |
+| `-race (Linux goroutines)` | `TestAPanicInTheHelloHookKeepsTheTunnel` (`apps/server-api/classes/controllers`) |
+
+**Lokal gemessen, je 20 Läufe: beide 20/20 grün.** Beides sind Tests über Nebenläufigkeit und
+Flusskontrolle — ein Paket, das größer als ein Kreditfenster ist, und ein Panik im Hello-Haken,
+der den Tunnel halten soll. Das Bild passt zu Last, nicht zu einem Defekt in diesem Zweig.
+
+**Nicht gemessen, und deshalb ausdrücklich offen:** ob diese zwei Tests wirklich wackeln. Ein
+grüner und ein roter Lauf sind keine Rate. Dafür bräuchte es dieselben Tests mehrfach unter
+Last auf dem Runner, und das ist hier nicht gelaufen.
+
+#### Was daran wirklich kaputt war: die CI sagte nie, WARUM
+
+Zu jedem dieser Fehlschläge stand in den Protokollen **nur der Name**:
+
+```
+--- FAIL: TestAPackageLargerThanOneWindowGetsThrough (0.01s)
+```
+
+Keine Zeile mehr. `go test -v` schreibt die Ausgabe eines Tests **vor** diese Zeile, und
+`check.sh` grepte nur die Zeile selbst heraus. Bei den Aufträgen `-race` und `root` war es noch
+dichter: sie leiten `go test -json` in eine Datei, die kein Schritt je zeigt, und `ci-count.sh`
+nannte ebenfalls nur Namen. **Eine rote Prüfung, die den Grund verschweigt, lässt sich von einem
+Wackler nicht unterscheiden — und genau das ist die einzige Frage, die ein roter Lauf
+beantworten muss.**
+
+Behoben an beiden Stellen:
+
+- **`tools/check.sh`** druckt jeden umgefallenen Test mit seinem Block, von `=== RUN` bis
+  `--- FAIL` — dort landen `t.Errorf` und `t.Fatal`. Unterfälle kommen mit den Zeilen ihres
+  Elterntests.
+- **`tools/ci-count.sh`** druckt zu jedem roten Fall die `Output`-Sätze aus dem JSON-Strom.
+  Damit sagen auch `-race` und `root` den Grund, ohne dass eine Datei hochgeladen werden muss.
+
+Gemessen am 20.10.2026 gegen ein echtes rotes Protokoll (ein Test mit zwei `t.Errorf`, einer mit
+`t.Fatal` in `t.Run`): beide nennen Test, Datei, Zeile und Text; der grüne Lauf bleibt
+unverändert bei 3349 passed, 0 FAILED, 87 SKIPPED und Ausstieg 0.
+
+#### Zwei Messfallen auf dem Weg dahin, beide bezahlt
+
+1. **Das Heredoc hat `\n` zu einem echten Zeilenumbruch gemacht.** Der erste awk-Block ging
+   über eine Shell-Heredoc ins Skript und trug danach eine Zeichenkette über zwei Zeilen —
+   ein ungültiges awk-Programm. `bash -n tools/check.sh` meldete **ok**, weil der Fehler
+   innerhalb einer einfach zitierten Zeichenkette lag und erst zur Laufzeit zählt, also genau
+   auf einem roten Lauf. Gefunden nur, weil der Block gegen ein echtes Protokoll geprüft wurde.
+   **Ein Syntaxprüfer der Hülle prüft nicht den Inhalt.** Der Block steht jetzt ohne jeden
+   Gegenstrich da und wird über eine Datei geschrieben, nicht über ein Heredoc.
+2. **`substr($0, 10)` griff ein Zeichen zu früh.** `go test` schreibt drei Leerzeichen nach
+   `RUN`, der Name kam mit führendem Leerzeichen heraus und passte auf nichts: der Block
+   druckte **leer**, und das sieht aus wie „es gab nichts zu zeigen". Jetzt `$3`, weil ein
+   Testname kein Leerzeichen trägt.
+
+Beide gehören zusammen mit Punkt 69 selbst in eine Reihe: **eine Prüfung, die schweigt, ist
+schlimmer als eine, die rot ist.**
+
+### Nachtrag 20.10.2026, zweiter Teil: die CI hat sich selbst überfahren
+
+Der Nachtrag oben nannte „Last" als Vermutung. Sie ist jetzt **gemessen**, und die Ursache ist
+ein Fehler im Arbeitsablauf selbst.
+
+`.github/workflows/linux.yml` läuft `on: push` **und** `on: pull_request`. Ein Zweig mit
+offenem Pull Request löst also beides aus. Der Riegel dagegen war:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+```
+
+**`github.ref` ist für die zwei Ereignisse nicht dieselbe Zeichenkette:** `refs/heads/<zweig>`
+beim Push, `refs/pull/<n>/merge` beim Pull Request. Zwei Gruppen, also hat `cancel-in-progress`
+nichts abgebrochen — und **beide Läufe liefen vollständig durch**. Das ist der Beweis, nicht die
+Vermutung: gemessen zweimal, am 20.10.2026 um 09:57 und um 10:43, Start zwei Sekunden
+auseinander, beide bis zum Ende. Zwei komplette Suiten gleichzeitig, darunter zwei `-race`-Läufe
+(der Auftrag mit 40 Minuten Zeitgrenze).
+
+Und beide Male fiel **nur im pull_request-Lauf** ein Zeittest des Tunnels um, während der
+push-Lauf auf **demselben Commit** grün war:
+
+| Lauf | umgefallen |
+|---|---|
+| 09:57 | `TestAPanicInTheHelloHookKeepsTheTunnel` |
+| 10:43 | `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel/one_interval,_in_a_fraction_of_a_second` |
+
+Der zweite nennt sich selbst „in a fraction of a second" und brauchte **2,46 s**, der
+Elterntest **26,45 s**.
+
+**Behoben:** die Gruppe wird auf den **Zweig** geschlüsselt statt auf `github.ref` —
+`github.head_ref || github.ref_name` ergibt bei beiden Ereignissen dieselbe Zeichenkette, also
+bricht der eine Lauf den anderen ab. Jeder Push wird weiter gemessen, wofür der `-race`-Auftrag
+ausdrücklich da ist; was aufhört, ist zweimal zahlen und Zeitverhalten unter doppelter Last
+messen.
+
+**Nicht gemessen:** ob diese Zeittests unter einfacher Last verlässlich sind. Die doppelte Last
+ist weg, die Frage nicht beantwortet.
+
+#### Offen, und es gehört nicht mir
+
+`apps/server-controller/classes/link/link_test.go`, Zeile 1312:
+
+```
+the tunnel counted as gone although the API answers every ping it sees
+```
+
+Die Stelle steht **nach** `close(drain)`: die Drosselung ist gelöst, und der Test wartet bis zu
+30 Sekunden auf einen Ping — bricht aber ab, sobald `tn.dead` gesetzt ist. Auf einem langsamen
+Läufer ist der Tunnel in der Drosselphase (dreimal 300 ms plus Einplanung) schon totgemeldet,
+bevor der erste Ping durchkommt. Der Test setzt voraus, dass das Lösen der Drosselung den Ping
+vor die Todesfrist bringt, und unter Last stimmt das nicht.
+
+**Hier wird daran nichts geändert.** Es ist der Wächter eines anderen Teils, und dieses Projekt
+hat für genau diesen Fall ein eigenes Muster — `tools/check.sh` nennt es im Kommentar: die
+Uhrtests in `apps/server-api/classes/login` stellen sich zur Seite, wenn ihre eigene
+Nullkontrolle sagt, dass die Maschine den Faktor heute nicht auflösen kann, und melden das als
+`UNMEASURABLE`. Ob dieser Test dasselbe bekommen soll oder eine größere Frist, entscheidet, wem
+er gehört. **Ein Wächter, den ein Fremder leise zum Überspringen bringt, ist schlimmer als ein
+roter Lauf** — darum steht er hier als Befund und nicht als Änderungssatz.
+
+### Nachtrag 20.10.2026, dritter Teil: der Zeittest hat eine Nullkontrolle — und was sie NICHT ist
+
+Thomas hat entschieden, den Test zu härten, nach dem Muster der Uhrtests in
+`apps/server-api/classes/login`. Das ist getan, und das Wichtigste daran ist eine
+Einschränkung.
+
+**Erst die Ursache, genau.** `ping()` (`link.go:736`) macht einen Tunnel nur für einen Ping
+tot, der scheiterte, **während kein Schreibvorgang von uns lief**:
+
+```go
+mine := t.writing.Load() > 0
+...
+if mine { continue }
+t.dead.Store(true)
+```
+
+Der Unterfall baut genau diesen Schild: der Stuffer hält einen Schreibvorgang im Steckplatz,
+also überspringt jeder scheiternde Ping sich selbst. Nach `close(drain)` räumt der Drain-Faden
+in `congested` aber **beides** weg — `p.free()` und dann `s.halt()`. Damit fällt der Schild,
+und wenn der erste Ping danach noch im Rückstau scheitert, tut `ping()` genau das, was es
+verspricht: `dead`. Kein Defekt, sondern das Aufräumen des Tests, das mit dem Rückstau um die
+Wette läuft. Auf einem schnellen Rechner gewinnt der Ping, auf einem belasteten Läufer nicht.
+
+**Die Nullkontrolle** liest das am Stuffer selbst ab, nicht per Abtastung: er schließt `done`,
+wenn sein Faden zurückkommt, also beweist ein geschlossenes `done` in diesem Augenblick, dass
+der Schild weg ist (`shieldGone`). Dann:
+
+- Schild **oben** und Tunnel tot → **rot**, das ist der Defekt, für den der Test da ist.
+- Schild **unten** und Tunnel tot → **`UNMEASURABLE`**-Skip, mit Zahlen. Der Lauf hat die
+  Maschine gemessen, nicht `ping()`.
+
+Dasselbe Wort und dieselbe Begründung wie in `login`: `go test` ohne `-v` druckt für einen
+übersprungenen Test **nichts**, und `tools/check.sh` grept danach — ein Test, der sich still
+zur Seite stellt, wäre schlimmer als ein falsches Rot.
+
+#### Was die Kontrolle ausdrücklich nicht ist
+
+**Sie nimmt keinen Wächter weg, und der Skip dort war nie der Wächter.** Gemessen, fünf grüne
+Läufe in Folge: wenn diese Schleife zum ersten Mal hinsieht, ist der Stuffer **jedes Mal**
+„already finished" — der Schild ist dort also immer unten, und der Test besteht, weil der Ping
+nach **fünf bis sechs Millisekunden** da ist. Die `dead`-Prüfung in dieser Schleife war damit
+von Anfang an nur eine Abkürzung, um nicht dreißig Sekunden auf einen längst toten Tunnel zu
+warten.
+
+Der eigentliche Wächter ist die Schleife **vor** dem Drain: dort steht nachweislich ein
+Schreibvorgang von uns im Steckplatz (`waitWriting`), und ein toter Tunnel ist dort rot ohne
+Ausweg. Dazu die eine Zusage, die dem Unterfall den Namen gibt: nach dem Öffnen **muss** ein
+Ping die API erreichen — das ist die Frist von dreißig Sekunden. **Beides ist unverändert.**
+
+#### Welche Stufe von „geprüft" das erreicht
+
+Nach der Vierteilung: geschrieben / übersetzt / enthalten / **ausgeführt**.
+
+- Die Entscheidung selbst ist **ausgeführt**: `TestShieldGoneReadsTheStuffer` hält `shieldGone`
+  und `stufferState` an beide Antworten, absichtlich herbeigeführt.
+- Der **Skip-Zweig selbst ist hier nicht gelaufen.** 25 Läufe des Unterfalls unter 128
+  Lastschleifen auf 64 Kernen: **50 PASS, 0 FAIL, 0 SKIP**, erster Ping nach 5 bis 37 ms. Diese
+  Maschine kommt nicht in die Lage.
+- **Der Auslöser ist aber gemessen — in der CI.** Genau diese Zeile war am 20.10.2026 um 10:43
+  rot (`the tunnel counted as gone although the API answers every ping it sees`), und davor um
+  09:57 der Schwestertest. Dort wird aus dem Rot künftig ein benannter Skip, und `check.sh`
+  nennt ihn Zeile für Zeile.
+
+Nach der Änderung lokal: `check.sh: ok`, **3350 passed, 0 FAILED, 87 SKIPPED**, und
+`0 guard(s) unmeasurable` — es stellt sich also nichts unbemerkt zur Seite.
+
+**Offen bleibt:** ob das Aufräumen in `congested` die bessere Stelle wäre — erst den Rückstau
+durchlassen und den Stuffer **danach** anhalten, dann gäbe es das Rennen gar nicht. Das wäre
+eine Änderung am Helfer, die alle vier Fälle dieses Tests berührt, und sie ist **nicht
+gemessen**. Wer den Teil besitzt, entscheidet das; die Kontrolle hier macht den Lauf
+inzwischen ehrlich, statt ihn zu verdecken.
+
+### Nachtrag 21.10.2026: drei Umbauten am Schild, alle verworfen — das Fazit
+
+Der offene Punkt aus dem dritten Teil lautete: das Rennen nach dem Drain beseitigen, statt es
+nur zu benennen. Dafür sind drei Umbauten gebaut und gemessen worden, alle unter 128
+Lastschleifen auf 64 Kernen, immer derselbe Rechner. „Läufe" zählt Durchgänge des Unterfalls;
+„Schild oben" ist, wie oft der Stuffer beim ersten Hinsehen noch schrieb:
+
+| Umbau | Läufe | **Fehlschläge** | Schild oben |
+|---|---|---|---|
+| **Ausgangsstand**, nur Nullkontrolle | 30 | **0** | 0 von 30 |
+| **1. Rückstau zuerst:** erst auf einen Schreibvorgang warten, dann `s.halt()`, dazu `quietStuffer` | 20 | **2** | 12 von 20 |
+| **2. Byte-Zähler im Rohr:** `pipe.fwd`, `drained()` wartet auf Ruhe (50 **und** 200 ms geprüft) | 16 | **2** | 16 von 16 |
+| **3. Drosselung:** 4 KiB statt `wire.MaxPayload` ab dem Drain | 30 | **3** | 27 von 28 |
+
+Die zwei hinteren erreichen das Ziel — der Schild bleibt bis zum ersten Ping oben, wo er im
+Ausgangsstand **nie** oben war. Nur kostet jeder von ihnen Fehlschläge, wo der Ausgangsstand in
+30 Läufen keinen hat.
+
+**Keiner ist ausgeliefert.** Alle Fehlschläge sind dieselbe Meldung, und sie ist nicht die
+alte:
+
+```
+Run = link: the API cannot be reached, want an orderly end
+```
+
+**Der Satz, der alle drei erklärt:**
+
+> Der Schild **ist** der Verkehr. Mehr Schild heißt mehr in Flug, und der geordnete Abschluss
+> braucht das Gegenteil. Kleinere Frames senken die Menge und machen den Schild dafür lückig.
+
+Die Einzelheiten, soweit sie etwas tragen:
+
+- **Zu 1 und 2:** `ErrAPI` kommt aus der **Leseseite** (`link.go:283`), nicht von einer
+  Schließnachricht, die im Rohr steckt — die API-Seite liest durchgehend (`apiSide.quiet`).
+  Entscheidend ist die **Menge in Flug** beim Abschlussdialog: im roten Lauf 16 Frames à
+  `wire.MaxPayload`, rund ein Megabyte, gegen 5 bis 12 vorher.
+- **Zu 2:** ein Zähler im Rohr kann kein „leer" melden. Was der Controller hinter der Sperre
+  aufstaute, liegt in **seinem** Sendepuffer — Megabytes auf Linux, wie der Kommentar bei
+  `pipe.free` sagt —, und dort sieht kein Rohr hinein. Es bleibt „es kam eine Weile nichts
+  durch", also eine Ruhezeit und kein Beweis; vierfache Ruhezeit änderte das Ergebnis nicht.
+- **Zu 3:** `writing` ist nur oben, **während** `t.c.Write` läuft. Ein 4-KiB-Frame auf offenem
+  Rohr ist in Mikrosekunden durch, der Schild bekommt also Lücken — und `ping()` liest den
+  Zähler in einem einzigen Augenblick. Ein lückiger Schild ist schlechter als keiner, weil er
+  die Lücke zufällig macht.
+- **Und eine Messregel, teuer bezahlt:** Umbau 3 sah in den ersten zwei Stichproben wie die
+  Lösung aus — 8 Läufe mit 16 PASS / 0 FAIL, dann 8 weitere mit 0 FAIL. Erst die dritte, mit
+  14 Läufen des kurzen Unterfalls, brachte die 3 Fehlschläge. Umbau 1 zeigt dasselbe von der
+  anderen Seite: eine Stichprobe davon war 12 von 12 grün. **Eine Stichprobe von acht ist keine
+  Rate** — nach dem ersten Lauf ausgeliefert, wäre zweimal eine Verschlechterung eingezogen,
+  die wie eine Verbesserung aussah.
+
+**Nicht gemessen und offen:** ob der Unterfall überhaupt eine Aussage über `ping()` **nach** dem
+Drain treffen kann, oder ob seine ganze Aussage davor liegt. Das entscheidet, wem der Teil
+gehört.
+
+### Nachtrag 21.10.2026: und dabei kam ein Fehler in meiner eigenen Nullkontrolle heraus
+
+Umbau 3 hat den Test diese Zeile drucken lassen:
+
+```
+the tunnel counted as gone 22ms after the way opened although a write of ours
+still stands in the socket (writing 0)
+```
+
+**Die Meldung widerspricht sich selbst** — „a write still stands" und „writing 0" in einem
+Satz. Die Ursache ist mein `shieldGone`: es fragt, ob der **Stuffer-Faden lebt**, und das ist
+nicht dasselbe wie **ein Schreibvorgang läuft**. Bei Drosselung lebt der Faden und schreibt
+gerade trotzdem nicht.
+
+Dahinter steckt der tiefere Fehler: `ping()` liest `t.writing` in **seinem** Augenblick, direkt
+nachdem der Ping aufgab (`link.go:736`). Ein toter Tunnel heißt also, **dieser** Lesevorgang sah
+Null. Der Augenblick ist vorbei, wenn die Schleife hinsieht, und keine spätere Lesung von
+`writing` und kein Zustand des Stuffers holt ihn zurück. **Ein rotes Urteil in dieser Schleife
+war von Anfang an nicht begründbar** — es hätte eine Maschine für einen Defekt erklärt.
+
+**Behoben:** dort ist ein toter Tunnel jetzt **immer** `UNMEASURABLE`, mit allen Zahlen (Zeit,
+Pings, `writing` jetzt, Zustand des Stuffers) und der Begründung im Code. Der rote Zweig ist
+weg, weil er nie einen hätte geben dürfen.
+
+**Es nimmt keinen Wächter weg**, dieselbe Begründung wie im dritten Teil: der Wächter ist die
+Schleife **vor** dem Drain, wo `waitWriting` beweist, dass ein Schreibvorgang steht, und die
+Frist von dreißig Sekunden, in der ein Ping ankommen muss. Beide sind unverändert rot, wenn sie
+brechen.
+
+**Stand danach:** 22 Läufe unter derselben Last **22 PASS, 0 FAIL, 0 SKIP**; `check.sh: ok`,
+**3350 passed, 0 FAILED, 87 SKIPPED**, `0 guard(s) unmeasurable`.
+
+Und: **der Skip-Zweig ist jetzt wirklich gelaufen.** Im dritten Teil musste er als „nur
+übersetzt" ausgewiesen werden; in Umbau 3 hat er zum ersten Mal gefeuert und seine Zeile
+gedruckt. Er steht damit auf der vierten Stufe — durch einen Versuch, der selbst verworfen
+wurde.
+
+### Nachtrag 23.10.2026: die Behebung war richtig — und lag drei Tage auf einem Zweig
+
+Der Abschnitt „Behoben, ohne einen zweiten Testlauf" oben stimmt in jedem Punkt. Der Haken
+ist, was er nicht sagt: **wo** die Behebung lag.
+
+**Gemessen:**
+
+```
+git rev-list --ancestry-path 92ee9f1..origin/main      -> erster main-Commit: 6e35852
+git log --merges --ancestry-path 92ee9f1..origin/main | tail -3
+   -> 1b9f206  2026-10-23 17:19:05  Merge pull request #91
+      36b3511  2026-10-23 17:19:24  Merge pull request #93
+      bc09575  2026-10-23 17:20:22  Merge pull request #86
+```
+
+`92ee9f1` („fix: write the test JSON stream …") ist vom **20.10.2026 11:57**. In `main` kam er
+am **23.10.2026 17:20** an — **drei Tage und fünf Stunden** später. In dieser Zeit stand die
+Behebung hier als erledigt, und die Prüfung war weiter rot.
+
+**Darum waren auch `pull_request`-Läufe rot, und das ist der Teil, der am meisten täuscht.** Ein
+`pull_request`-Lauf prüft den Merge — aber der Merge entsteht gegen den damaligen Stand von
+`main`, und der hatte den Schreiber nicht:
+
+| | gemessen |
+|---|---|
+| `fix/stille-ablehnung`, Spitze `64e2d52` (23.10. 16:21) | `test2json` **0×** in `tools/check.sh` |
+| `docs/sechs-waende`, Spitze `9eb7be4` | `test2json` **0×** |
+| Basis, gegen die dessen Merge gerechnet wurde (`b782635`) | enthält `92ee9f1` **nicht** |
+
+**Die Größe des Schadens, über alle 182 Läufe von `Linux-Pruefung`:**
+
+| | |
+|---|---|
+| rote Läufe | 93 |
+| davon mit rotem `check.sh + counted test run` | 82 |
+| davon mit **grünem `check.sh`** — rot nur am Zählschritt | **42** |
+
+Die 42 liegen auf 20 Zweigen; 18 hatten einen Pull Request: **3 offene** (#71, #82, #88) und
+**15 gemergte**, 14 davon am 23.10. Von den am 23.10. gemergten Pull Requests waren **14 durch
+dieses eine Loch rot**, während sie zusammengeführt wurden.
+
+Alle Zahlen sind **Stand 23.10.2026 22:00**, und sie laufen weg: `main` nimmt in dieser Phase
+etwa zehn Merges je Stunde. Beim Nachrechnen eine Stunde später waren es schon 21 am 23.10.
+gemergte Pull Requests statt 20 und 6 offene statt 5. Die drei offenen oben waren es zu beiden
+Zeitpunkten.
+
+**Die Klasse ist eine neue, und sie ist schlimmer als „zwei Stellen, eine Wahrheit":** eine
+Behebung, die geschrieben, gemessen und ins Entscheidungsbuch eingetragen ist, aber nicht in
+`main` liegt. Das Buch sagt dann die Unwahrheit, ohne dass jemand gelogen hat — und wer hier
+nachliest, hört auf zu suchen. Die vier Stufen aus `messen.md` (geschrieben · übersetzt · im
+Abbild enthalten · ausgeführt) haben für CI-Werkzeug offenbar eine fünfte: **in `main`.**
+
+**Behoben wird daran hier nichts** — der Schreiber ist seit 17:20 drin. Was dazukommt
+(PR #109): die Zählung ist auf Zusicherungen gestellt (`tools/ci-count-test.sh`, 5 Zusicherungen,
+7 Mutanten tot, 1 Kontrolle lebendig), `ci-count.sh` trennt **fehlende** von **leerer** Datei
+und nennt den Schritt davor als Befund statt die Datei, und die Prüfung hält jetzt fest, dass
+Arbeitsablauf und `check.sh` sich über `NGC_CHECK_TEST_JSON` noch einig sind — genau die
+Prüfung, deren Fehlen die zwei Hälften drei Tage auseinanderlaufen ließ. Beide Riegel bleiben
+rot; ein Zählwerk, das bei leerer Eingabe grün wird, wäre schlimmer als der Zustand davor.
+
+**Offen, und jetzt das größere Loch:** oben stand „nichts sagt Bescheid, wenn `main` rot ist".
+Dazu kommt: **nichts sagt Bescheid, wenn eine als behoben verbuchte Behebung nicht in `main`
+liegt.** Beides ist nicht gebaut.
+
+## Punkt 70: Ein Paket über eine Fenstergröße kommt unter Last nicht durch — `E_PROTOCOL` statt `ok`
+
+Gefunden, weil die CI endlich sagt, **warum** ein Test umfällt (Punkt 69). Der Befund gehört
+nicht zu dem Zweig, auf dem er auftrat: `apps/server-controller/classes/serve/`, `shared/` und
+`apps/server-api/` sind dort **byteweise der Stand von `main`** (`git diff origin/main --stat`
+auf diese Pfade: leer). Also ein Befund auf `main`.
+
+### Was umfällt
+
+`TestAPackageLargerThanOneWindowGetsThrough`
+(`apps/server-controller/classes/serve/activate_test.go:276`). Der Fall schickt **6 Rahmen à
+60 000 Bytes** = 360 000, also mehr als `wire.DefaultWindow` (262 144), und hält damit
+`chanReader.give`: jeder an den Installierer gegebene Rahmen muss den Kredit sofort
+zurückzahlen.
+
+Gemessen am 21.10.2026, derselbe Rechner, `go test -count=20`:
+
+| | Fehlschläge |
+|---|---|
+| ohne Last | **0 von 20** |
+| unter 128 Lastschleifen auf 64 Kernen | **4 von 20** |
+
+Und die Meldungen sind dieselben drei, jedes Mal:
+
+```
+CLOSE = {Status:error Code:E_PROTOCOL Message:Ungültige Nachricht.}, want ok
+result = "", want the empty object
+the installer read 60000 bytes, want 360000
+```
+
+**Die gelesene Menge ist immer ein Vielfaches von 60 000** — gemessen 0, 60 000, 60 000 und
+120 000 Bytes. Der Transfer bricht also an einer **Rahmengrenze** ab, nicht mitten in einem
+Rahmen, und zwar nach null, einem oder zwei von sechs.
+
+Dazu im `-race`-Auftrag derselben CI-Läufe, im gleichen Paket:
+`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel` (`app_test.go:672`) meldet `E_INTERNAL`,
+wo `E_TIMEOUT` erwartet ist. Nicht lokal nachgestellt — hier gibt es kein `-race` (kein
+C-Übersetzer), also **nicht gemessen**, ob es dieselbe Ursache ist.
+
+### Die Ursache — gemessen am 23.10.2026, und es war der Test
+
+**Dieser Abschnitt hieß zuerst „Was ich dazu NICHT sage" und sagte, die Ursache sei nicht
+gemessen. Jetzt ist sie es.** Die zwei Vermutungen, die hier als widerlegt standen, waren
+beide richtig widerlegt — nur war die dritte Stelle die richtige:
+
+```go
+case wire.TypeData:
+    n := uint64(len(f.Payload))
+    if n > ch.in || !ch.room() {        // channel.go:629
+        ch.claimLocked(closeProtocol)
+```
+
+`ch.in` ist der Kredit, den **diese** Seite gewährt hat und der noch nicht verbraucht ist. Der
+erste GRANT gibt `wire.DefaultWindow` = 262 144 Bytes. Der Test schob **sechs** Rahmen à 60 000
+sofort hinaus, ohne auf weitere GRANTs zu warten: vier passen (240 000), beim **fünften** fehlen
+37 856 Bytes, und wenn der GRANT für die schon gelesenen Rahmen noch nicht da ist, lehnt der
+Kanal ab — **völlig zu Recht**. Ein Sender dieses Vertrags darf seinen Kredit nicht überziehen.
+
+**Die Zahl, die es beweist**, kommt aus der Mutationsprobe unten: `22144 bytes of credit left
+and 60000 to send` — und 262 144 − 4 × 60 000 ist genau 22 144.
+
+**Es war also der Test und nicht der Kanal.** Die gute Nachricht steckt darin: an `ActActivate`
+ist nichts zu reparieren, und die Sorge aus dem Absatz weiter unten — ein Verwalter liest
+„Ungültige Nachricht" über ein heiles Paket — trifft nicht zu, solange die API ihren Kredit
+einhält. Die echte API tut das; nur der Test tat es nicht.
+
+### Behoben: die API-Seite des Tests zahlt
+
+Neu ist `apiSide.dataPaid` (`serve_test.go`): wo der Kredit nicht reicht, wartet die Senderseite
+erst auf den GRANT und schreibt dann. Das ist, was jeder echte Gegenpart tut.
+
+| | Fehlschläge |
+|---|---|
+| vorher, Linux unter Last | 5 von 20 |
+| vorher, Windows unter Last | 4 von 20 |
+| **nachher, Linux unter Last** | **0 von 20** |
+
+**Und der Wächter ist nicht weicher geworden, sondern schärfer** — Mutationsprobe: `give` so
+verändert, dass es keinen Kredit mehr zurückgibt. Dann endet der Test nicht grün und nicht mit
+`E_PROTOCOL`, sondern mit
+
+```
+waiting for a GRANT on channel 1, 22144 bytes of credit left and 60000 to send: context dead
+Run did not end
+```
+
+Vorher gaben ein kaputtes `give` und eine belastete Maschine **dasselbe** Rot. Jetzt sind sie zu
+unterscheiden: das eine wartet auf einen GRANT und nennt den Kredit, das andere ist kein Rot
+mehr.
+
+`check.sh: ok`, 3350 passed, 0 FAILED, 87 SKIPPED.
+
+### Die zwei Vermutungen davor, als widerlegt notiert
+
+- *Die API-Seite schickt DATA, bevor der Kanal offen ist.* Nein: `apiSide.open`
+  (`serve_test.go:420`) wartet auf das GRANT, bevor der Test weiterläuft.
+- *`Channel.room()` schlägt zu.* Die Stelle wäre die richtige — ihr Kommentar nennt
+  ausdrücklich `E_PROTOCOL` für einen Gegenpart, der seinen Kredit in Stücke unter
+  `queueCost` (32 Bytes) zerlegt (`channel.go:698`). Nur passt die Rechnung nicht: bei
+  262 144 Bytes Kredit erlaubt `(ch.in+ch.bytes)/32+2` über achttausend wartende Rahmen, und
+  es sind sechs.
+
+Beide waren an der falschen Stelle, und das Raten hat erst aufgehört, als die Linux-Messung
+eine verlässliche Nachstellung gab (5 von 20) — damit ließ sich der Zweig mutieren, statt ihn zu
+erraten.
+
+### Was es für den Nutzer heißt: nichts — und das stand nicht von Anfang an fest
+
+`ActActivate` ist der Weg, auf dem ein **App-Paket** zum Controller geht. Solange die Ursache
+offen war, stand hier die Sorge: sitzt der Abbruch im Kanal, dann scheitert auf einer belasteten
+Maschine die Installation eines Pakets über eine Fenstergröße, und der Verwalter liest
+„Ungültige Nachricht" — die Meldung für ein kaputtes Paket — über ein heiles. Dieselbe Klasse wie
+Punkt 65.
+
+**Die Sorge trifft nicht zu.** Der Kanal hat recht gehandelt, und die echte API hält ihren
+Kredit ein; nur der Test tat es nicht. An `ActActivate` ist nichts zu reparieren.
+
+**Und das ist der Grund, einen solchen Befund nicht als Wackler abzulegen, bevor man ihn
+kennt** — auch wenn er sich dann als einer herausstellt. Er stand als Frage da und nicht als
+Antwort, und die Antwort kam aus einer Messung, nicht aus einer Einschätzung.
+
+### Nachstellen
+
+Der Fall ist behoben, also läuft er jetzt durch. Um die **alte** Erscheinung zu sehen, muss
+`dataPaid` im Test wieder durch `data` ersetzt werden; dann gilt:
+
+```powershell
+go test -count=20 -run TestAPackageLargerThanOneWindowGetsThrough .\apps\server-controller\classes\serve\
+```
+
+Ohne Last läuft das durch. Mit Last — 128 beschäftigte Schleifen neben dem Lauf — fielen vier
+von zwanzig um, auf Linux fünf von zwanzig. Der Lauf braucht etwa zwanzig Sekunden.
+
+**Auf Linux** (wo die CI steht), mit dem für `linux/amd64` übersetzten Testbinär:
+
+```powershell
+go test -c -o D:\claude\rust\serve.test .\apps\server-controller\classes\serve\
+wsl -d Debian -u root -- /mnt/d/claude/rust/serve.test -test.run TestAPackageLargerThanOneWindowGetsThrough -test.count=20
+```
+
+### Was noch zu entscheiden ist
+
+Für diesen Fall nichts mehr. Der zweite
+(`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel`, `E_INTERNAL` statt `E_TIMEOUT` im
+`-race`-Auftrag) stand hier als „nicht gemessen, weil es hier kein `-race` gibt". **Auch der ist
+inzwischen gemessen und behoben** — siehe den letzten Nachtrag. Er hatte eine andere Ursache als
+der Kanal, und anders als dieser war er **kein** Testfehler.
+
+### Nachtrag 22.10.2026: ein dritter Zeittest, und seine Schranke ist eine Haaresbreite
+
+Derselbe Weg wie oben: die CI sagt seit Punkt 69, **warum** ein Test umfällt, und damit fällt
+der dritte auf. Er gehört ebenfalls nicht zum Zweig, auf dem er auftrat — `apps/` und `shared/`
+sind dort byteweise `main` (`git diff origin/main --stat` auf diese Pfade: leer).
+
+`TestAFaultEndsTheTerminalAtOnce` (`apps/server-controller/classes/terminal/terminal_test.go:654`),
+im `root`-Auftrag:
+
+```
+it took 1.002616831s: the fault waited for the shell instead of ending the terminal
+```
+
+**Die Schranke ist `took > time.Second`** (Zeile 653), und überschritten wurde sie um **2,6
+Millisekunden**.
+
+**Hier stand zuerst, die Schranke trenne gegen `time.Minute`, also gegen 60 Sekunden, und fünf
+Sekunden würden dasselbe trennen. Das war falsch**, und der Test sagt es selbst drei Zeilen
+weiter oben (Zeile 619): *„a shell told to `sleep 1` could not have finished in under a second
+either way"*. Die Eingabe ist `sleep 1`, die Schranke ist eine Sekunde — **die zwei Seiten der
+Entscheidung waren dieselbe Zahl.** Eine Schranke von fünf Sekunden allein hätte den Wächter
+abgeschafft: ein Lauf, der das `sleep 1` wirklich abgewartet hätte, wäre durchgegangen.
+
+**Behoben wurde deshalb der Abstand, nicht die Schranke:** die Shell schläft jetzt **30
+Sekunden** — dieselbe Zahl, die der Nachbartest in Zeile 574 schon benutzt — und die Schranke
+heißt `faultWithin` und steht bei **5 Sekunden**. Der Nachbar bindet 10 Sekunden gegen dieselben
+30; 5 gegen 30 ist strenger und hat denselben Abstand im Rücken.
+
+**Und jetzt ist der Fall gemessen, nicht nur aus der CI abgelesen.** Unter Windows stellt er
+sich selbst zur Seite — 20 von 20 Läufen, jedes Mal mit `NICHT GEMESSEN auf windows: /dev/ptmx
+gibt es nur unter Linux`. Also wurde das Testbinär für `linux/amd64` übersetzt und in der
+Debian-WSL gelaufen, wo es `/dev/ptmx` gibt:
+
+| | Ergebnis |
+|---|---|
+| 10 Läufe unter Linux | **10 PASS**, je 0,00–0,01 s |
+| Mutationsprobe, `faultWithin` auf 1 ns | **3 von 3 rot** — die Behauptung greift also |
+| was die Mutation nebenbei misst | das Terminal endet in **1,2 bis 1,9 ms** |
+
+Damit stehen alle drei Zahlen nebeneinander: richtig endet es in **1,5 ms**, die Schranke liegt
+bei **5 s**, und ein Lauf, der auf die Shell wartet, kann nicht vor **30 s** zurückkommen. Das
+ist der Abstand, den die alte Fassung nicht hatte.
+
+### Drei Zeittests, ein Muster
+
+Mit Punkt 70 oben und dem Tunnel-Test aus Punkt 69 sind es drei, alle im Controller, alle nur
+unter Last, alle in anderen Teilen als dem Zweig, auf dem sie auftraten:
+
+| Test | Schranke | gemessen | Alternative, die er trennt |
+|---|---|---|---|
+| `TestAFaultEndsTheTerminalAtOnce` | 1 s → **5 s** | 1,0026 s (CI), 1,5 ms (Linux) | `sleep 1` → **`sleep 30`** |
+| `TestAPackageLargerThanOneWindowGetsThrough` | Kredit 262 144 | **behoben** (`dataPaid`), 0 von 20 | der Test überzog beim 5. Rahmen |
+| `TestAPingLostToOurOwnWriteDoesNotKillTheTunnel` | — | Nullkontrolle, 2 von 14 `UNMEASURABLE` | Wettlauf bleibt, ehrlich benannt |
+
+Der erste ist der einfachste von allen und **ist behoben** (siehe oben): zwei Zahlen, die
+dieselbe waren. Die anderen zwei sind Wettläufe und bleiben offen; sie lassen sich ohne Kenntnis
+des Protokolls nicht entscheiden.
+
+**Was daraus folgt und bisher nirgends stand:** eine Prüfung, die auf einem belasteten Läufer
+drei verschiedene Tests verlieren kann, ist keine Prüfung mehr, die einen echten Befund von
+Rauschen trennt. Das ist die Fortsetzung von Punkt 69 mit anderen Mitteln: dort war sie rot und
+schwieg, hier ist sie rot und meint es verschieden.
+
+### Nachtrag 23.10.2026: die zwei Wettläufe unter Linux — und Windows war das falsche Messgerät
+
+Beide offenen Fälle sind jetzt dort gemessen, wo die CI sie verliert: Testbinäre für
+`linux/amd64` übersetzt und in der Debian-WSL gelaufen, 128 Kerne, 256 Lastschleifen daneben.
+
+#### Der Kanal: bestätigt, und keine Windows-Eigenheit
+
+`TestAPackageLargerThanOneWindowGetsThrough`, 20 Läufe: **5 Fehlschläge**.
+
+| | Fehlschläge |
+|---|---|
+| Windows unter Last | 4 von 20 |
+| **Linux unter Last** | **5 von 20** |
+| Windows ohne Last | 0 von 20 |
+
+Dieselbe Erscheinung, dieselbe Rate, dieselben Zahlen: `CLOSE` mit `E_PROTOCOL`, und der
+Installierer las **60 000 Bytes dreimal und 120 000 Bytes zweimal** — also nach einem oder zwei
+von sechs Rahmen abgebrochen, an der Rahmengrenze. **Der Befund aus Punkt 70 steht damit auf
+zwei Betriebssystemen**, und die Ursache bleibt ungemessen.
+
+#### Der Tunnel: die Nullkontrolle feuert, und sie hat recht
+
+`TestAPingLostToOurOwnWriteDoesNotKillTheTunnel/one_interval`, 14 Läufe:
+**12 PASS, 0 FAIL, 2 `UNMEASURABLE`-Skips.**
+
+Die zwei Skips sind die Kontrolle aus Punkt 69, wörtlich im Protokoll:
+
+```
+UNMEASURABLE: the tunnel counted as gone 1.135s after the way opened - ping() decided
+on a count of running writes that no test can see afterwards
+```
+
+**Und jetzt die Zahl, die alles erklärt.** Wie lange der erste Ping nach dem Öffnen braucht:
+
+| | Ping-Ankunft |
+|---|---|
+| Windows unter Last | 5 bis 37 ms |
+| **Linux unter Last** | **507 ms bis 1,147 s** |
+
+Zwischen zwanzig- und zweihundertfach länger. Das Ping-Intervall des Falls ist **300 ms** —
+auf Linux liegt die Ankunft also regelmäßig **jenseits** eines Intervalls, auf Windows nie in
+seiner Nähe. Darum hat dieser Rechner den Fall in 22 Läufen nie verloren und die CI zweimal.
+
+**Die zwei Skips liegen mitten in derselben Verteilung wie die Durchläufe** — gefeuert bei
+869 ms und 1,135 s, bestanden bei 866 ms, 912 ms und 1,099 bis 1,147 s. Es ist in diesem Fenster
+ein Münzwurf, und genau das heißt „unmeasurable". **Ein rotes Urteil dort wäre Rauschen
+gewesen**, und die Korrektur aus Punkt 69, die den roten Zweig ganz entfernt hat, ist damit
+nicht nur begründet, sondern gemessen.
+
+#### Was daraus für das Messen folgt
+
+**Windows war für diese zwei Fälle das falsche Messgerät**, und das war vorher nicht
+sichtbar — es sagt nicht „übersprungen", es sagt grün. Ein Fall, der auf Zeiten im Netz oder
+auf Scheduling beruht, ist auf dem Betriebssystem zu messen, auf dem er läuft; dafür reicht
+`go test -c -o <datei>` und ein Lauf in der WSL, und das kostet eine Minute. Dieselbe Regel wie
+„ein Testergebnis gilt für das Laufwerk, auf dem es gemessen wurde" — nur eine Ebene höher.
+
+### Nachtrag 23.10.2026: der letzte offene Fall — und er war kein Wackler, sondern eine Lüge im Fehlercode
+
+`TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel` war der Rest: im `-race`-Auftrag kam
+`E_INTERNAL`, wo `E_TIMEOUT` erwartet ist. Oben stand „nicht gemessen, es gibt hier kein
+`-race`". Das gilt nicht mehr: in der Debian-WSL steht Go 1.27.2 und gcc, also läuft `-race`
+jetzt auf diesem Rechner.
+
+**Nachgestellt**, `go test -race` auf Linux, 256 Lastschleifen auf 128 Kernen:
+
+| Läufe | Fehlschläge |
+|---|---|
+| 10, ohne Last | 0 |
+| 40, unter Last | 1 |
+| 150, unter Last | **2** |
+
+#### Die Ursache, mit einer Sonde gemessen
+
+Eine Sonde an `app.go` bei der Zeile, die den Fehlercode setzt, hat den ganzen Unterschied
+gedruckt:
+
+```
+148x  outErr=context deadline exceeded  endStatus="error"  endCode="E_TIMEOUT"
+  2x  outErr=context deadline exceeded  endStatus="ok"     endCode=""
+```
+
+**Beide Male war `inCtx.Err()` die abgelaufene Frist.** Die Uhr war also aus, und der Versuch,
+die schon versiegelte Nachricht hinauszuschicken, starb daran. Nur `RunService` antwortete
+**ok** — weil das Programm zufällig sauber endete, bevor die Frist es erreichte. Und dann greift
+
+```go
+if end.Status == wire.StatusOK {
+    end = wire.Error(wire.CodeInternal)      // app.go
+}
+```
+
+und macht aus einer Zeitüberschreitung einen **internen Fehler**.
+
+**Der Quelltext hatte das vorhergesagt.** Der Kommentar über `inCtx` (Zeile 265–271) beschreibt
+genau dieses Symptom als schon einmal gemessen und nennt als Behebung „eine Uhr für alles". Die
+eine Uhr ist da — und reicht nicht, denn das Rennen ist nicht zwischen zwei Fristen, sondern
+zwischen **zwei Beobachtern derselben Frist**: dem Sender, der an ihr scheitert, und
+`RunService`, das ein sauber beendetes Programm sieht.
+
+#### Behoben, ohne eine dritte Uhr
+
+Der Grund des Sendefehlers entscheidet, nicht mehr der Status von `RunService`:
+
+```go
+if errors.Is(out.err, context.DeadlineExceeded) || errors.Is(inCtx.Err(), context.DeadlineExceeded) {
+    end = wire.Error(wire.CodeTimeout)
+} else {
+    end = wire.Error(wire.CodeInternal)
+}
+```
+
+Die Auskunft lag schon da; sie wurde nur nicht gelesen. Ein Sendefehler aus einem **anderen**
+Grund bleibt der interne Fehler, der er war.
+
+| | Fehlschläge |
+|---|---|
+| vorher, 150 Läufe `-race` unter Last | 2 |
+| **nachher, 150 Läufe `-race` unter Last** | **0** |
+
+Dazu: das **ganze** Paket unter `-race` grün, und die `E_INTERNAL`-Erwartungen der anderen Tests
+liegen alle im Installierer-Pfad (`activate_test.go`), nicht hier.
+
+#### Was der Benutzer davon hat — diesmal etwas
+
+Anders als beim Kanal ist das **kein** Testfehler. Eine Aktion, deren Ausgabe die Uhr
+abgeschnitten hat, meldete dem Browser gelegentlich „Interner Fehler" statt
+„Zeitüberschreitung". Das ist dieselbe Klasse wie Punkt 65: ein Zustand wird als die falsche
+Ursache gezeigt — nur hier mit einer Handlung dahinter, denn auf eine Zeitüberschreitung
+reagiert ein Benutzer anders (länger warten, kleinere Ausgabe) als auf einen internen Fehler
+(melden).
+
+#### Und eine Messregel, die drei Runden gekostet hat
+
+**`/tmp` in der WSL ist zwischen zwei Aufrufen leer.** Der erste Sondenlauf schrieb sein
+Protokoll nach `/tmp`, und beim Auswerten im nächsten Aufruf war die Datei weg — „PROBE-Zeilen:
+(nichts)" sieht aus wie „die Sonde hat nicht gefeuert" und war „das Protokoll ist nicht mehr
+da". Lauf **und** Auswertung gehören in einen Aufruf, und das Protokoll nach `/mnt/d`.
+
+**Und zum dritten Mal in dieser Reihe: ein Heredoc frisst `\n`.** Die Sonde ging als
+`fmt.Fprintf(..., "…%v\n", …)` über ein Shell-Heredoc in den Quelltext und stand dort als echter
+Zeilenumbruch mitten in der Zeichenkette — `string literal not terminated`. Patches mit Escapes
+gehören in eine Datei, nicht in ein Heredoc.
+## Punkt 71: Sechs Wände auf einem Weg — vom Release bis zur laufenden App, und vier standen nicht im geprüften Code
+
+**Gemessen vom 19. bis 21.10.2026** auf der Debian-VM aus Punkt 64, von einem **veröffentlichten
+Release** aus: installieren, einrichten, anmelden, Controller koppeln, Laden öffnen, App
+einrichten. Der Weg bis „die App läuft" ist in diesen drei Tagen **nicht ein einziges Mal**
+durchgelaufen. Nicht an einer großen Stelle, sondern an sechs kleinen hintereinander.
+
+Jede der sechs ist für sich vertretbar begründet. Das ist der Befund, nicht die Zahl.
+
+**1. Die Unit lässt den Ordner nicht schreiben, in dem die Datei liegt.** `ngc-api.service` wird
+mit `ProtectSystem=strict` geschrieben, und die schreibbaren Pfade sind
+`ReadWritePaths=${NGC_DATA} ${NGC_TLS}` — also `/var/lib/ngc` und `/etc/ngc/tls`
+(`ulh`, `apps/cli/assets/scripts/ngc-api.sh:1065`, Zweig `ngc-kette`; `ngc-all.sh:1322` schreibt
+dieselbe Zeile). **`/etc/ngc` selbst steht nicht dabei.** Der Anker dort wird aber **atomar**
+geschrieben: `config.SaveAnchor` (`shared/config/config.go:451`) ruft `writeAtomic`, und das legt
+erst eine Datei `.trust-anchor.json.tmp-*` **im selben Ordner** an (`config.go:464`). Ein Ordner,
+in dem keine Datei entstehen darf, lässt kein atomares Ersetzen zu — auch dann nicht, wenn die
+Zieldatei selbst `0644` trägt. Gemessen im Journal:
+
+> the trust anchor outside the database could not be moved up; this API still pins the older
+> version — `pinned=1 stored=2`
+
+Das ist die einzige der sechs, die den Grund **selbst nennt** (`state/trust.go:249`). Die Folge
+steht in derselben Zeile: die Anlage bleibt auf der alten Vertrauensliste festgenagelt.
+
+**2. Mein eigener Fehler: die Release-Binärdateien hießen `0.0.0-dev`.** Ich habe beim Bauen
+`-ldflags "-X main.Version=…"` vergessen; der Vorgabewert steht im Quelltext und ist genau dafür
+da (`apps/server-api/main.go:43`: „Version is set when building", dann `var Version = "0.0.0-dev"`).
+Kosmetisch — bis der Controller seine Version im Hallo mitschickt. Die Oberfläche prüft jede
+Rechnerzeile mit `checkNodeInfo` (`contracts/core.js:724`), dort `optVersion`, dort
+`validVersion` (`contracts/text.js:84`) gegen `^(0|[1-9][0-9]{0,5})\.…$` — **genau**
+MAJOR.MINOR.PATCH. `0.0.0-dev` fällt durch. Und der Vertrag der Liste ist
+`every(v, checkNodeInfo)` (`core.js:585`): **eine** unpassende Zeile verwirft **die ganze
+Antwort**. Auf dem Schirm stand:
+
+> Die Rechner konnten nicht geladen werden. Bitte das Fenster neu öffnen.
+
+(`apps/web/public/assets/js/apps/store.js:548`) — und das Fenster neu öffnen hilft nicht, denn die
+Version bleibt dieselbe.
+
+**3. Eine Stunde kein Katalog.** Das ist Punkt 65 und 66, hier nur als Glied der Kette:
+`apps/server-api/classes/server/server.go:386` legt den Stundenticker an, `Server.hour` (ab `:421`)
+holt die Kataloge, es gibt keinen Abruf beim Start und keine Handauslösung. Bis dahin steht „Der
+Katalog dieses Stores ist nicht echt." — wo „noch nicht geholt" gemeint ist.
+
+**4. Der frisch aufgenommene Controller darf niemandem etwas erlauben.** Die Oberfläche trägt ihn
+mit `rootUsers: []` und `rootRoles: []` in die Vertrauensliste ein
+(`apps/web/public/assets/js/apps/users.js:941` in `askJoin`, dasselbe bei `:973` in `askJoinAPI`),
+und **keine Seite der Oberfläche konnte diese beiden Listen danach ändern**. `trust.MayRoot`
+(`shared/trust/trust.go:419`) fragt genau sie: der Benutzer steht in `RootUsers`, oder eine seiner
+Rollen in `RootRoles` — sonst `false`. Geprüft wird das an jeder Root-Aufgabe
+(`shared/task/task.go:199`, `shared/core/uiproof.go:132`). Zwei leere Listen, die niemand füllen
+kann, heißen: **auf diesem Controller kann nie eine App eingerichtet werden.**
+
+**Nachtrag zu (4), gemessen am 23.10.2026 an PR #87:** die fehlende Oberfläche ist dort gebaut.
+`rootPicker` zeichnet die Auswahl aus der **geprüften** Vertrauensliste, beim Aufnehmen und
+danach jederzeit änderbar, und `askJoin` schreibt nicht mehr `rootUsers: []`, sondern das
+Angekreuzte. Für `askJoinAPI` bleibt die Liste leer, und das ist richtig: `MayRoot` gibt für
+alles, was kein `NodeController` ist, ohnehin `false`. Die Haken **beginnen leer** — damit kann
+eine Anlage weiterhin mit einem Controller enden, auf dem niemand etwas darf, nur jetzt
+sichtbar und mit einem Weg heraus.
+
+**5. `0700` auf dem Ordner über dem Heimatverzeichnis.** Der Controller legt `/var/lib/ngc/apps`
+mit `0o700` an (`apps/server-controller/classes/runtime/data.go:108`), und der Kommentar darüber
+begründet es richtig: zwischen `mkdir` und `chown` darf niemand anderes hineinsehen. Nur gehört
+der Ordner **root**, und darunter liegt das Heimatverzeichnis des App-Benutzers. Rootloses
+`podman load` dieses Benutzers bekam `EACCES` — **auf sein eigenes Heimatverzeichnis**, weil es
+den Weg dorthin nicht durchlaufen durfte. Gefunden wurde das mit `strace` am laufenden Dienst;
+podman meldete es nicht, das Journal nannte es nicht.
+
+**6. Kein Recht ohne App, keine App ohne Recht.** Der Schreibtisch zeigt eine App nur, wenn der
+Anfragende das Recht `benutzen` hält: `apps()` überspringt jede Zeile ohne
+`rq.Rights[a.ID+"/"+core.RightUse]` (`apps/server-api/classes/coreapp/desktop.go:161`). Die Seite
+„Rollen und Rechte" baut ihre Auswahl aus `this.apps` (`users.js:416`) — und das ist genau diese
+gefilterte Liste, durchgereicht aus `appCtx()` (`shell/desktop.js:579`: `apps: this.appList`).
+Eine neu eingerichtete App, die noch niemand benutzen darf, steht also in keinem Schreibtisch und
+damit in keiner Rechteliste. **Der Haken, der sie sichtbar machen würde, kann nur dort gesetzt
+werden, wo sie schon sichtbar ist.**
+
+### Was das heißt
+
+**Die blinde Zone hat einen Namen: es ist alles, was kein Go und kein JavaScript ist.** Vier der
+sechs lagen nicht im Code, den die Prüfsätze abdecken, sondern in einer **systemd-Unit** (1), einem
+**Bau-Flag** (2), einem **Dateimodus** (5) und einer **Vorgabe in einem Dialog** (4). Die
+Prüfsätze sind gut — sie haben hier nur nichts zu prüfen gehabt. Die Unit entsteht in einem
+anderen Repo, zur Laufzeit, aus Shell-Variablen; das Flag entsteht beim Bauen; der Modus ist eine
+Zahl, die für sich richtig ist; die leeren Listen sind ein gültiger Wert. Jedes Stück für sich
+besteht jede Prüfung, die es gibt.
+
+**Dreimal war der Satz auf dem Schirm nicht die Ursache.** „Der Katalog ist nicht echt" (3) für
+„noch nicht geholt", „Die Rechner konnten nicht geladen werden" (2) für „eine Zeile trug eine
+Version, die ich nicht lesen kann", und das stille Fehlen der App (6) für „dir fehlt ein Recht".
+Das ist dieselbe Klasse wie die Anmeldelüge aus **Punkt 50**, über die **Punkt 52** entscheidet und
+die **Punkt 65** am Katalog wiederfindet: ein **leerer Zustand** wird als **Angriff** oder als
+**Ablehnung** dargestellt. Wer das liest, sucht an der falschen Stelle, und zwar lange.
+
+**Dreimal protokollierte nichts den Grund.** Bei (2) nicht, weil es im Browser keine einzige
+Stelle gibt, die etwas schreibt: `grep -rc 'console\.'` über `apps/web/public/assets/js` ergibt
+**0**. Eine verworfene Antwort hinterlässt nirgends eine Spur. Bei (4) und (6) nicht, weil kein
+Fehler auftrat — die Oberfläche tat genau, was im Code steht. Bei (5) war die Ursache **nur mit
+`strace` am laufenden Dienst** zu finden. Allein (1) sagte selbst, was fehlt.
+
+**Zwei der sechs sind keine Fehler, sondern fehlende Oberflächen.** Systemrechte je Server (4) und
+Rechtevergabe für eine neue App (6) hat niemand gebaut. Nicht aus Nachlässigkeit, sondern weil
+**nie jemand den Weg zu Ende gegangen war**: jede einzelne Teilstrecke war geprüft, und die Lücke
+lag zwischen zwei geprüften Teilstrecken. Das ist der Grund, warum dieser Durchlauf etwas gefunden
+hat, was siebzig Punkte vorher nicht gefunden haben — nicht weil schlechter geprüft wurde, sondern
+weil zum ersten Mal **eine** Person **einen** Weg von Anfang bis Ende gegangen ist.
+
+**Der Schluss daraus, und er ist unbequem:** ein Durchlauf von Anfang bis Ende gehört in die
+Prüfung, nicht in die Woche eines Menschen. Solange er von Hand läuft, läuft er selten, und was
+nur selten läuft, bricht zwischen zwei Läufen an der nächsten kleinen Stelle.
+
+### Offene Entscheidungen — gemessen ist das oben, abgewogen ist das hier
+
+**a) Bekommt die einrichtende Person die Rechte automatisch?** Durch PR #87 ist das nicht mehr
+die ganze Frage, sondern eine kleine: dort wird beim Aufnehmen **gefragt**, und die Haken beginnen
+leer. Offen ist nur noch, ob der Haken **der unterschreibenden Person** auf diesem einen
+Controller **vorgekreuzt** ist.
+
+> **Mein Vorschlag: ja — vorgekreuzt, nicht erzwungen, und nur sie, nur dieser Controller, nur
+> `rootUsers`.** Wer eine Version der Vertrauensliste unterschreiben kann, hat die Anlage ohnehin
+> in der Hand; ihr den Haken anzubieten fügt **keine** Macht hinzu, sondern nimmt den Fall weg, in
+> dem jemand einen Controller aufnimmt und erst beim ersten Einrichten merkt, dass er dort nichts
+> darf. Abwählbar bleibt er, denn es gibt Anlagen, in denen genau diese Person es nicht sein soll.
+> **Nicht** über `rootRoles`: eine Rolle gibt das Recht an alle weiter, die sie heute oder morgen
+> tragen, und das ist eine andere Entscheidung als „ich für diesen Rechner".
+
+**b) Verwirft ein kosmetisch ungültiges Feld weiter die ganze Antwort?** Heute ja (2): eine
+Versionszeichenkette, die niemand anzeigt, nimmt die Liste aller Rechner mit.
+
+> **Mein Vorschlag: nein — aber die Trennlinie ist nicht „kosmetisch", sondern „trägt eine
+> Entscheidung".** `version` und `arch` einer Rechnerzeile werden angezeigt, nicht gerechnet; ist
+> der Wert unlesbar, gehört er **leer** gemacht und die Zeile behalten. Ein Schlüssel, ein
+> Fingerabdruck, eine Kennung, eine Prüfsumme bleiben hart: fällt dort etwas durch, ist die Antwort
+> zu verwerfen, und zwar ganz. Der Vertrag ist dann nicht weicher, er benennt nur, was er wirklich
+> braucht.
+>
+> **Und beide Hälften davon sind nur prüfbar, wenn sie zusammen geprüft werden:** ein Lauf, in dem
+> eine kaputte Version die Liste **nicht** mehr verwirft, und ein Lauf, in dem ein verbogener
+> Schlüssel sie **immer noch** verwirft. Einer allein beweist nichts.
+
+**c) Woher kommt das nächste Mal der Grund?** Offen gelassen, weil es eine eigene Entscheidung ist:
+ohne eine einzige Stelle im Browser, die festhält **was** verworfen wurde, ist (2) bei der nächsten
+Gelegenheit genauso stumm. Dagegen steht, dass ein solcher Platz schnell dorthin schreibt, wo
+jemand mitliest.
+
+> **Mein Vorschlag:** kein Protokoll, aber der **Satz auf dem Schirm nennt das Feld**: „Eine Angabe
+> dieses Servers ist unlesbar (`version`)." Das benennt die Stelle, ohne irgendwo etwas abzulegen.
+
+**Nachtrag vom 23.10.2026: alle drei sind entschieden und gebaut, die Prüfung steht.** Thomas hat
+a) mit „vorgekreuzt, abwählbar, nur `rootUsers`, nur dieser Controller" entschieden — gebaut in
+PR #105, das damit eine Entscheidung von PR #87 umdreht (dessen Begründung, eine Vorgabe entscheide
+in dem Augenblick, in dem niemand hinsieht, steht dort daneben). b) und c) liegen in PR #104: die
+Anzeigefelder `version` und `arch` werden leer gemacht statt die Antwort zu verwerfen, die harten
+Felder fallen weiter ganz, und der Satz nennt das Feld. **Was daran gemessen ist und was nicht,
+steht in den beiden PRs** — in allen drei Motoren laufen nur die Abnahmefälle von b) und c), und
+auf einer echten VM ist keines von beiden geprüft.
+
+**Was damit von den sechs Wänden noch steht,** nachgesehen am 23.10.2026 gegen `main`:
+
+- **(2)** beantwortet in PR #104, **(4)** in PR #87 und #105, **(3)** liegt in PR #86.
+- **(5) ist still behoben:** `main` legt `/var/lib/ngc/apps` mit `0o711` an und setzt den Modus
+  danach noch einmal (`runtime/data.go:122` und `:131`), während das Verzeichnis der App selbst
+  `0o700` bleibt. Damit darf der App-Benutzer den Weg durchlaufen, ohne lesen zu können — genau
+  das, was `podman load` brauchte.
+- **(1) ist offen, und zwar woanders:** die Unit steht nur auf dem Zweig `ngc-kette` von `ulh`,
+  der nicht verschmolzen ist; auf dessen `main` gibt es die NGC-Skripte gar nicht. Dort schreibt
+  `ngc-api.sh` weiter `ReadWritePaths` ohne `/etc/ngc`.
+- **(6) ist behoben, und ich hatte es zuerst falsch abgeschrieben.** `apps()` filtert in `main`
+  tatsächlich unverändert auf `core.RightUse`, und die Rechteseite baut ihre Auswahl unverändert
+  aus dieser Liste — nur ist das nicht mehr der Kreis, weil die Liste für einen Verwalter
+  vollständig ist: `rights.Of` ruft für einen Admin `adminApps`
+  (`apps/server-api/classes/rights/rights.go:56`), und das setzt `<app>/use` **und** jede Aktion
+  jeder eingerichteten App, **ohne Zeile in der Datenbank**. Damit steht die App im Menü, also
+  auch in der Rechteliste. Behoben am **21.10.2026** mit `c0f0022` — am letzten Tag der Messung,
+  weshalb der Befund oben gilt und dieser Nachtrag ihn nicht aufhebt.
+  Dass das Recht in **keiner** Zeile liegt, ist dabei der Kern: ein Recht, das in einer Zeile
+  läge, könnte man dem Verwalter wegnehmen, indem man die Seite ohne den Haken speichert.
+  **Was davon bleibt,** klein, aber echt: `adminApps` und das Menü lassen eine **abgeschaltete**
+  App beide aus (`!a.Active`). Deren Rechte lassen sich also nicht vorbereiten, solange sie aus
+  ist — das ist so gewollt und hier nur vermerkt, nicht als Befund.
+
+## Punkt 72: Die Härtung des App-Containers liegt an — bis auf die drei Mengen-Grenzen, die der Kern nicht durchsetzt
+
+Punkt 36 hat die Hälfte offen gelassen, die ohne Linux-Server nicht zu haben ist: **ob podman die
+Schalter einhält.** Hier ist sie gemessen, am laufenden Terminal-Container der Debian-VM
+(24.10.2026, Kern 6.12.113+deb13-amd64, podman 5.4.2, Container `ngc-terminal-439982dd`,
+`dc15f0724b9f`, zu diesem Zeitpunkt 7 Stunden auf).
+
+**Welche Maschine.** Die **Einzel-VM aus Punkt 64** (`ssh ngc`, 10.2.3.208), auf der die
+eingerichtete Terminal-App steht — **nicht** die verteilte Anlage unter `ngc.mein.lan`, deren Apps
+seit dem 24.10.2026 auf `svc-1` und `svc-2` laufen. Jede Zahl dieses Punktes gilt für diese eine
+Maschine. Das ist nicht Vorsicht um ihrer selbst willen: Befund 1 ist eine Aussage über **eine
+systemd-Einheit und ihre cgroup**, und ob `Delegate=` auf `svc-1` und `svc-2` genauso steht, ist
+hier **nicht gemessen** und darf aus diesen Zahlen nicht geschlossen werden. Zwei Maschinen mit
+demselben Dienst sind genau die Falle, in der eine Zählung über den falschen Baum entsteht.
+
+**Wie gemessen wurde.** podman läuft dort rootlos als der App-Benutzer, also wurde jeder Aufruf
+aus `/tmp` heraus mit `setpriv --reuid=997 --regid=985 --clear-groups` und mit
+`HOME=/var/lib/ngc/apps/org.sorglos.terminal`, `XDG_RUNTIME_DIR=/run/ngc/ngc-terminal-439982dd`,
+`PATH=/usr/bin:/bin` gestartet — genau die vier, die `Podman.run` mitgibt. Das Werkzeug wurde vor
+der ersten Zählung geprüft (`podman --version` antwortet 5.4.2), und die entscheidende Probe (das
+Netz) trägt eine Gegenprobe, die *gelingt*. Gelesen wurden `podman inspect` **samt
+`.Config.CreateCommand`**, `/proc/946/status`, `/proc/946/uid_map`, `/proc/946/mountinfo`,
+`/proc/946/cgroup` und die cgroup-Dateien selbst.
+
+### Was der Controller mitgibt, und was anliegt
+
+Die Liste steht in `apps/server-controller/classes/runtime/podman.go`, in `createArgs`
+(Zeilen 247–298); die Begründung je Schalter steht dort im Quelltext und ist hier verkürzt.
+
+| Schalter | wozu laut Quelltext | gemessen |
+|---|---|---|
+| `--network none` (ohne `NeedNetwork`) | ohne Gewährung kein Netz; wie ein Netz entsteht sagt der Code bewusst nicht | **liegt an** — im Container nur `lo`, `/proc/net/route` leer |
+| `--read-only` | das Abbild bleibt unschreibbar, geschrieben wird nur unter `/data` | **liegt an** — `/` ist `ro`, Schreiben auf `/` und `/usr` fällt mit *Read-only file system* |
+| `--cap-drop ALL` (ohne `NeedRoot`) | wer ausbricht, soll nichts mitbringen | **nicht gesetzt** — Terminal hat `needs:["root"]`, also greift der `if !c.Root`-Zweig nicht (siehe unten) |
+| `--security-opt no-new-privileges` | zweite Lage gegen Rechtegewinn | **liegt an** — `NoNewPrivs: 1` in `/proc/946/status` |
+| `--volume …:/data:rw,nosuid,nodev` | set-user-id-Bit und Gerätedateien in den eigenen Daten zählen nicht | **liegt an** — `/data rw,nosuid,nodev` in `mountinfo` |
+| `--volume …/ngc-hold:ro,nosuid,nodev` | der Haltevorgang kommt nur aus `config.BinDir` und nur lesbar | **liegt an** — `ro,nosuid,nodev`, Quelle `/usr/lib/ngc/ngc-controller` |
+| `--user 0:0` | 0 im Container ist draußen der App-Benutzer | **liegt an** — `uid_map` ist `0 997 1`, der Prozess ist draußen `997:985` |
+| rootlos als System-Benutzer der App (`credential`) | wer ausbricht, landet auf einem Benutzer ohne eigene Rechte | **liegt an** — `/proc/946/status` `Uid: 997 997 997 997` |
+| `--cpus 1.000` | guter Nachbar sein | **kommt nicht an** (siehe Befund 1) |
+| `--memory 256m` | dito | **kommt nicht an** (siehe Befund 1) |
+| `--pids-limit 512` | die ganze Antwort auf eine Fork-Bombe (`PIDsLimit`) | **kommt nicht an** (siehe Befund 1) |
+
+Dazu die Härtung, die nicht in `createArgs` steht, aber dieselbe Trennung tragen soll:
+`/var/lib/ngc/apps` ist `0711 root`, der Datenordner der App `0700 997:985` und laut `lsattr`
+verschlüsselt (Merker `E`); `/run/ngc` ist `0711 root`, `/run/ngc/ngc-terminal-439982dd` ist
+`0700 997:985`. Alles vier wie in `data.go` und `run.go` beschrieben. Der App-Benutzer hat
+`/usr/sbin/nologin`.
+
+### Befund 1 — die drei Mengen-Grenzen stehen im Aufruf und wirken nicht
+
+`podman inspect` meldet `PidsLimit 512`, `Memory 268435456`, `NanoCpus 1000000000`, und
+`.Config.CreateCommand` zeigt, dass alle drei wirklich mitgegeben wurden. Durchsetzen muss sie die
+cgroup — und der Containerprozess hat keine eigene:
+
+```
+/proc/946/cgroup                 ->  0::/system.slice/ngc-controller.service
+cgroup.procs dieser cgroup       ->  690 (ngc-controller, uid 0), 894 catatonit, 944 conmon, 946 ngc-hold
+pids.max                         ->  9409      (nicht 512)
+memory.max                       ->  max       (nicht 256M)
+cpu.max                          ->  Datei gibt es nicht
+cgroup.controllers               ->  memory pids
+```
+
+Der Containerprozess sitzt also **in der cgroup des Controllers, zusammen mit dem Controller
+selbst.** Keine der drei Grenzen ist im Kern hinterlegt; die 9409 sind `TasksMax` der
+systemd-Einheit und werden mit dem Controller **geteilt**.
+
+Das ist die Art Abweichung, die Punkt 36 gesucht hat: der Schalter wird gesetzt, podman nimmt ihn
+an und schreibt ihn in seine eigenen Angaben — und verwirft ihn still. Die Ursache ist gemessen und
+liegt nicht in podman:
+
+```
+systemctl show ngc-controller.service -p Delegate   ->  Delegate=no
+/sys/fs/cgroup/system.slice/ngc-controller.service  ->  drwxr-xr-x root root
+   Schreibprobe als 997                             ->  Keine Berechtigung
+loginctl show-user 997                              ->  User ID 997 is not logged in or lingering
+podman-Warnung bei jedem Aufruf                     ->  "no systemd user session available …
+                                                        Falling back to --cgroup-manager=cgroupfs"
+podman inspect .HostConfig.CgroupManager            ->  cgroupfs
+podman inspect .State.CgroupPath                    ->  /system.slice/ngc-controller.service
+```
+
+Ohne `Delegate=` an der Einheit bekommt der App-Benutzer keinen eigenen Zweig im cgroup-Baum, darf
+in den vorhandenen nicht schreiben, und rootloses podman legt dann keine an — es sagt das nur als
+Warnung über den Kanal, den der Controller nicht liest (`p.run` gibt `errOut` für `create` als
+`nil` mit).
+
+**Was das praktisch heißt.** Der lange Kommentar an `PIDsLimit` nennt die Zahl „die ganze Antwort
+auf eine Fork-Bombe in einer App". Diese Antwort liegt auf dieser Maschine nicht an. Schlimmer als
+die fehlende Grenze ist das geteilte Fach: die Aufgaben einer App zählen gegen `TasksMax` des
+Controllers, eine App am Anschlag nimmt also dem Controller den Platz, Aufgaben zu starten. Das ist
+**abgewogen, nicht gemessen** — eine Fork-Bombe wäre auf dieser Maschine zerstörerisch, weil die
+anderen Sitzungen am laufenden Dienst arbeiten, und wurde darum nicht gefahren.
+
+### Befund 2 — `--cap-drop ALL` ist auf dieser Maschine überhaupt nicht zu messen
+
+Der Container hat 11 Fähigkeiten: `CapEff: 00000000800405fb` in `/proc/946/status`, dieselben 11 in
+`EffectiveCaps` und `BoundingCaps` — podmans Vorgabesatz, darunter `CAP_DAC_OVERRIDE`,
+`CAP_SETUID` und `CAP_SETFCAP`. Kein Fehler des Codes: Terminal trägt `needs:["root"]`
+(`apps/server-controller/templates/terminal/manifest.json`), `activate.go:467` setzt daraus
+`Root: true`, und `createArgs` lässt den `--cap-drop ALL`-Zweig dann aus. `.Config.CreateCommand`
+bestätigt es: der Schalter steht nicht im Aufruf.
+
+Der Befund ist die Lücke, nicht der Fehler: **Terminal ist die einzige App dieser Anlage, und sie
+ist genau die, an der dieser Schalter nicht anliegt.** Der am häufigsten genannte Härtungsschalter
+ist damit weiter ungemessen — gebaut, im Fall-Satz grün, auf keiner laufenden App der Welt je
+nachgesehen. Dazu passt eine Lesart, die der Quelltext selbst nicht ausspricht: der Kommentar sagt,
+die Fähigkeiten „kommen zurück", nennt aber nicht, welche. Gemessen sind es die 11 von podman —
+eine Vorgabe, die wie die 2048 aus Punkt 36 **nicht im Repo steht** und sich mit einer
+podman-Fassung ändern kann.
+
+### Befund 3 — ein Riegel liegt an, den niemand gesetzt hat
+
+`/proc/946/status` meldet `Seccomp: 2` und `Seccomp_filters: 1`: der Container läuft hinter einem
+seccomp-Filter. Im Repo steht davon nichts — kein `--seccomp-profile`, kein
+`--security-opt seccomp=…`. Es ist podmans eingebautes Profil. Das ist kein Mangel, aber dieselbe
+Art Abhängigkeit wie die 11 Fähigkeiten: eine Wand, die trägt, solange podman sie stellt, und die
+kein Fall dieses Repos halten würde, wenn sie wegfiele.
+
+### Befund 4 — ein App-Benutzer ohne App
+
+`getent passwd` nennt neben `ngc-terminal-439982dd` einen zweiten:
+`ngc-all-73e95399:x:999:987::/var/lib/ngc/apps/no.app.at.all:/usr/sbin/nologin`. Das zugehörige
+Heimverzeichnis gibt es nicht, jeder podman-Aufruf unter ihm scheitert mit
+`cannot resolve /var/lib/ngc/apps/no.app.at.all`. Ein Überrest einer früheren Messung, der kein
+Loch aufmacht (nologin, kein Ordner, keine Gruppe mit Rechten) — aber `DropUser` hat ihn
+offensichtlich nicht geholt, und ein Benutzer, der nach seiner App übrig bleibt, gehört in den
+Fall-Satz des Aufräumens.
+
+### Die drei Proben: trägt die Härtung?
+
+Gewählt wurden die drei Wände, die die Trennung wirklich tragen muss. Vorher angekündigt und
+danach entfernt wurde ein **Attrappen-Ordner** `/var/lib/ngc/apps/zz.probe.other`
+(`0700`, Benutzer `999:987`, eine Geheimdatei `0600`) — die Gestalt einer zweiten App, weil es
+auf dieser Anlage keine zweite gibt. Sonst wurde nichts verändert; der Terminal-Container war
+nach allen Proben unverändert auf.
+
+**Probe 1 — kommt die App an die Daten einer anderen App? Nein, zweifach.**
+Im Container existiert der Pfad nicht einmal: nur `/data` ist eingehängt, `ls /var/lib/ngc/apps`
+antwortet *No such file or directory*. Und in der Stellung, auf die es ankommt — nach einem
+Ausbruch, als `997` auf dem Wirt:
+
+```
+ls /var/lib/ngc/apps                                 ->  Keine Berechtigung   (0711 root)
+cat /var/lib/ngc/apps/zz.probe.other/secret.txt      ->  Keine Berechtigung
+cat /var/lib/ngc/controller/state.db                 ->  Keine Berechtigung
+ls /var/lib/ngc/apps/org.sorglos.terminal            ->  lesbar  (die eigenen)
+```
+
+Die Zeile aus `podman_linux.go` — „wer aus dem Container ausbricht, landet auf einem Benutzer ohne
+eigene Rechte" — trägt. Dass `CAP_DAC_OVERRIDE` im Container liegt, ändert daran nichts: die
+Fähigkeit gilt nur im Benutzer-Namensraum, und der kennt `999` nicht.
+
+**Probe 2 — kann der Container neue Rechte erlangen? Nein, aber eine Lage ist nicht trennbar
+gemessen.**
+
+```
+Schreiben auf /  und /usr          ->  Read-only file system
+mount -t proc  /  mount /dev/sda2  ->  permission denied   (CAP_SYS_ADMIN nicht im Satz)
+mount -o remount,rw /              ->  permission denied
+mount -o remount,suid /data        ->  permission denied
+dd if=/dev/sda2                    ->  No such file or directory  (kein Gerät im Container)
+NoNewPrivs                         ->  1
+```
+
+Kein Weg heraus gefunden — und die vier abgewiesenen `mount`-Aufrufe sind der schärfste Teil davon,
+weil `--read-only` und die `nosuid`-Optionen ohne sie zurückdrehbar wären.
+
+**Die Lage, die nicht trennbar ist, und das gehört dazu:** ob `nosuid` auf `/data` wirkt, ließ sich
+an *diesem* Container nicht einzeln zeigen. Eine set-user-id-Datei nützt nur einem Benutzer, der
+nicht schon 0 ist, und `/data` ist `0700` — der einzige Benutzer im Container, der hineinkommt, ist
+die 0, für die das Bit nichts ändert. Eine erste Zählung hat genau das als Beweis gelesen
+(`euid=0` vor **und** nach dem Aufruf) und war keiner. Als Gegenprobe wurde dieselbe Datei auf
+`/tmp` gelegt und als `1000` gestartet: `euid` blieb `1000`, der Kern lässt das Bit auf einer
+`nosuid`-Einhängung in diesem Container also fallen. Dass `/data` dieselbe Option trägt, ist aus
+`mountinfo` gemessen — die Wirkung auf `/data` selbst ist daraus **geschlossen, nicht gemessen**.
+Nebenbei aufgefallen: die Wurzel-Einhängung selbst trägt `ro,relatime` und **kein** `nosuid`. Sie
+ist unschreibbar, eine set-user-id-Datei könnte also nur aus dem Abbild der App kommen — und wäre
+drinnen die 0, draußen `997`. Kein Loch, aber die einzige Einhängung des Containers ohne diese
+Option.
+
+**Probe 3 — erreicht der Container das Netz der Anlage? Nein, und die Gegenprobe gelingt.**
+Dieselbe Perl-Probe, zweimal gefahren — im Container und als `997` auf dem Wirt:
+
+| Ziel | im Container | als `997` auf dem Wirt |
+|---|---|---|
+| `127.0.0.1:7443` (ngc-api) | Connection refused (eigenes `lo`) | **erreicht** |
+| `10.2.3.208:7443` (die VM selbst) | Network is unreachable | **erreicht** |
+| `10.2.3.208:443` (apache) | Network is unreachable | **erreicht** |
+| `10.2.3.208:22` | Network is unreachable | **erreicht** |
+| `10.2.3.1:22` (Tor der Anlage) | Network is unreachable | **erreicht** |
+| `8.8.8.8:53` | Network is unreachable | **erreicht** |
+
+`--network none` trägt vollständig, und die rechte Spalte ist der Grund, warum man das glauben
+darf: dieselbe Probe, dasselbe Perl, nur eine andere Stellung — und sie erreicht alles. Eine Null
+ohne diese Spalte wäre keine Messung gewesen. Die rechte Spalte sagt aber auch, wie weit der
+Schalter reicht: **er trennt den Container, nicht den App-Benutzer.** Wer wirklich ausbricht, hat
+das ganze Netz der Anlage, einschließlich `ngc-api`.
+
+### Was daraus zu bauen wäre
+
+1. **`Delegate=yes` an `ngc-controller.service`**, damit die drei Grenzen überhaupt eine cgroup
+   haben, in der sie stehen können — oder, wenn das nicht geht, `loginctl enable-linger` für den
+   App-Benutzer und ein `XDG_RUNTIME_DIR`, das zur Sitzung passt. Welcher der beiden Wege richtig
+   ist, ist eine Entscheidung und steht hier nicht.
+2. **Der Controller muss das Verwerfen bemerken.** Heute gibt `p.run` für `create` kein `errOut`
+   mit, und podmans Warnung über die fehlende Sitzung fällt auf den Boden. Ein Schalter, der still
+   verworfen wird, ist schlimmer als einer, der fehlt: der Fall-Satz bleibt grün, und `inspect`
+   bestätigt ihn. Ein Fall nach der Aktivierung, der `/proc/<pid>/cgroup` gegen die drei Grenzen
+   liest, wäre die einzige Messung, die das fängt.
+3. **Eine App ohne `needs:["root"]` auf diese Maschine**, allein damit `--cap-drop ALL` ein
+   einziges Mal an einer laufenden App gemessen ist. Solange Terminal die einzige App ist, ist
+   dieser Schalter ungeprüft.
+4. **`nosuid` auf die Wurzel-Einhängung**, oder eine Zeile im Quelltext, die sagt, warum sie dort
+   nicht nötig ist.
+5. **Den Überrest `ngc-all-73e95399` aufräumen** und einen Fall, der einen App-Benutzer ohne
+   Datenordner als Fehler zählt.
+6. Was der Quelltext über `NeedRoot` sagt, um die **11** ergänzen — oder die Fähigkeiten selbst
+   nennen, statt podmans Vorgabe zu erben.
+7. **Dieselbe Messung auf `svc-1` und `svc-2`**, den App-Knoten der verteilten Anlage. Befund 1
+   hängt an `Delegate=` einer systemd-Einheit, also an der Einrichtung der jeweiligen Maschine —
+   er könnte dort anliegen oder fehlen, und keine Zahl von hier sagt, welches. Dabei gilt die
+   Warnung aus der Anlage selbst: die Rolle am laufenden Dienst prüfen, nicht am Namen der
+   Maschine.
+
+**Getrennt gehalten:** gemessen sind die Tabelle der Schalter, die vier Befunde, die cgroup-Dateien
+und die drei Proben samt Gegenproben. Abgewogen sind die Folge des geteilten `TasksMax`, die
+Wirkung von `nosuid` auf `/data` und jeder der sechs Punkte dieser letzten Liste.
+
+## Punkt 73: Ein zweiter Mensch — der Vertrag konnte es die ganze Zeit, die Oberfläche hatte keine Tür
+
+**Gemessen am 24.10.2026** gegen `origin/main` (`9753a8c`) und gegen die laufende Anlage
+(`ssh ngc`, Vertrauensliste in Fassung 6).
+
+Jede Messung der letzten Wochen lief mit **einem** Menschen, dem Verwalter aus der
+Ersteinrichtung. Dieser Punkt sagt, was einen zweiten aufgehalten hat, was davon jetzt gebaut
+ist, und was nur ein Mensch tun kann.
+
+### Die vier Stationen, einzeln gemessen
+
+| Station | Stand vor dem 24.10.2026 | Beleg |
+|---|---|---|
+| Ein Verwalter legt einen zweiten Benutzer an | **gibt es gar nicht** | Im ganzen Webinterface fasst **keine** Zeile `users` oder `roles` einer neuen Fassung an. `buildNextVersion` (`apps/web/public/assets/js/apps/users.js:188`) ist allgemein, hat aber genau **einen** Aufrufer (`:1349`, in `joinNode`), und jeder `change`-Rumpf, der dort hineingeht, schreibt nur `next.nodes`. |
+| Der zweite Benutzer bekommt eine **Rolle**, die nicht `admin` ist | **gibt es gar nicht, und das ist die zweite Lücke** | Eine Anlage verlässt die Ersteinrichtung mit **genau einer** Rolle: `admin` (`apps/web/public/assets/js/auth/setup.js:178`–`:181`, „One role"). Gegengeprobt an den Testdaten: `shared/testdata/trust.json`, Fassung 1, `roles` = `[{"name":"admin","level":"critical"}]`. Und `trust.List.Validate` weist einen Benutzer ab, dessen Rolle nicht in derselben Liste steht (`shared/trust/trust.go:581`, `l.Role(name)` → `ErrInvalid`). **Ein zweiter Benutzer ohne neue Rolle ist also zwangsläufig ein zweiter Verwalter.** |
+| Der zweite Benutzer meldet sich an | **nicht messbar** | Es gab keinen zweiten Benutzer. Die Station liegt hinter der ersten und wurde deshalb nicht behauptet, weder so noch so. |
+| Er sieht die Apps, für die seine Rolle `benutzen` hat | **nicht messbar, aus demselben Grund** | Der Weg ist gebaut und gelesen (`rights.Of` über die Rollen des Benutzers, `apps/server-api/classes/rights/rights.go:31`–`:54`), aber ohne zweiten Benutzer läuft er nie durch. |
+
+### Was `shared/` dafür gebraucht hat: **keine Zeile**
+
+Das ist das Ergebnis, und es ist eine Antwort auf die Anfrage aus
+`docs/superpowers/specs/2026-10-23-zweiter-benutzer.md`, Abschnitt 3.1. Nachgemessen, Zeile für
+Zeile, und jede davon steht unverändert:
+
+- Die Aktion, eine neue Fassung einzuliefern: `shared/core/core.go:142` (`ActTrust`, `FlowIn`,
+  `MaxTrustIn`).
+- Ein Verwalter darf in einer neuen Fassung **jede** Änderung unterschreiben, nicht nur die an
+  Knoten: `shared/trust/trust.go:303` — `onlyOwnKeys` greift nur, wenn der Unterzeichner
+  **kein** Admin ist.
+- Form eines Benutzers und seines Schlüssels: `shared/trust/trust.go:117`,
+  `shared/proof/proof.go:123`.
+- Bis zu 10 000 Benutzer und 256 Rollen: `shared/trust/trust.go:26`.
+- Der Datenbankteil muss nichts tun: die Zeile in `ngc_user` entsteht bei der **ersten
+  Anmeldung** (`apps/server-api/classes/login/finish.go:285`), und sie trägt keinen Schlüssel.
+
+**Damit ist Abschnitt 3.1 beantwortet: ja, eine Shell darf eine Fassung mit einem neuen Benutzer
+bauen, ohne dass `shared/core` eine eigene Aktion dafür bekommt.** Gebaut wurde genau so, und
+nichts unter `shared/` ist angefasst. Der Einladungsablauf (Abschnitt 3.2, Weg (a)) bleibt die
+offene Anfrage; er ist hier **nicht** beantragt und **nicht** gebaut.
+
+### Was gebaut ist
+
+Zwei Formulare in `apps/web/public/assets/js/apps/users.js`, beide über den schon vorhandenen
+`joinNode` — dieselbe Maschinerie, die einen Server aufnimmt:
+
+1. **Neue Rolle** (Reiter „Rollen und Rechte"). Sie darf zunächst nichts; was sie darf, wird
+   über die Haken derselben Seite vergeben. `level: critical`, wie die Rolle `admin` — nicht
+   `off`.
+2. **Neuer Benutzer** (Reiter „Benutzer"). Anmeldename, Rollen, ein erstes Passwort. Der
+   Schlüssel wird im Browser des Verwalters gerechnet (Argon2id → Ed25519); der Startwert wird
+   in einem `finally` überschrieben, und auf die Leitung geht **nur** der öffentliche Schlüssel.
+
+Das ist **Weg (b)** des Entwurfspapiers, und sein Preis steht im Fenster, bevor unterschrieben
+wird: „Bis »<Name>« es ändert, kennen Sie seinen Schlüssel und könnten in seinem Namen
+unterschreiben." Weg (a) löst ihn später ab, ohne ihn umzubauen.
+
+### Zwei Regeln dieser Woche, hier eingehalten
+
+- **Rechte sind kein Beiwerk.** Unter den Rollenhaken des Benutzerformulars steht der Satz, der
+  das sagt: eine App sieht nur, wessen Rolle das Recht `benutzen` dafür hat. Er steht dort, wo
+  der Haken gesetzt wird, nicht erst, wenn jemand über einen leeren Schreibtisch klagt.
+- **Ein leerer Zustand sieht nicht wie ein Angriff aus.** Ohne Sitzung oder ohne geprüfte
+  Vertrauensliste zeichnen beide Formulare **keinen** Knopf, sondern einen Satz, der das
+  **fehlende Ding** nennt: „Dafür ist eine Anmeldung nötig. Es kann gerade kein Benutzer
+  angelegt werden." Kein `role="alert"`, kein Wort über einen Fehler. Ein Fall prüft genau das
+  und prüft zusätzlich, dass die beiden Worte dieser Oberfläche für einen Defekt
+  („nicht in Ordnung", „antwortet gerade nicht") **nicht** darin stehen.
+
+### Wie es gemessen ist
+
+Neun Fälle in `apps/web/tests/shell/users.spec.js`, chromium, und je Zusicherung **ein
+sterbender Mutant und eine lebende Kontrollmutation** (`Z:\GitHub\claude-md\messen.md`).
+Mutiert wurde in einer **Kopie** des Baums, nie im Arbeitsbaum; der Treiber bricht ab, wenn eine
+Ersetzung nicht genau einmal greift.
+
+| Zusicherung | Mutant, der stirbt | Kontrolle, die lebt |
+|---|---|---|
+| Eine neue Rolle geht als Fassung N+1 hinaus, und sonst bewegt sich nichts | `LEVEL_CRITICAL` → `LEVEL_OFF` | Lokale Variable im Formular umbenannt |
+| Der neue Benutzer trägt **einen** Passwortschlüssel in der Form, die `proof.UserKey.Validate` nimmt | `credId` von 0 auf 1 Byte | Das Benutzerobjekt umbenannt |
+| Das erste Passwort verlässt den Browser nie | Das Passwort reitet im Salz des Schlüssels mit | Die Ableitung umbenannt |
+| Ein Benutzer ohne Rolle wird abgewiesen, bevor irgendwer unterschreibt | Die Rollenprüfung abgeschaltet | Die Sperrliste umbenannt |
+| Der leere Zustand nennt das fehlende Ding, nicht einen Defekt | Der Satz durch „nicht in Ordnung" ersetzt | Die Wache umbenannt |
+
+**Und eine Messung hat sich selbst berichtigt:** die erste Fassung des Passwort-Falls durchsuchte
+nur den **Umschlag** (`{"payload": "<base64url>", …}`). Der Mutant „Passwort im Salz" **lebte**
+dadurch, weil ein Passwort *innerhalb* der Fassung in diesem base64url verschwindet. Der Fall
+dekodiert jetzt jede gesendete Fassung und durchsucht beide Schichten; danach ist der Mutant
+gestorben, und zwar an der Nadel, die die Passwortbytes nennt — nicht an einem Bauabbruch.
+
+`tools/check.sh` druckt `check: ok`, Ausstiegscode 0, ohne Pipe gelesen. Alle 62 Fälle von
+`users.spec.js` sind grün.
+
+### Am laufenden System
+
+**Gebaut ist nicht gelaufen**, also auf `ngc.test` nachgesehen. Die Anlage läuft auf `0.2.0`,
+also **älter als `main`**; darum wurde nicht `main` darübergelegt, sondern **nur dieser eine
+Unterschied** auf die dortigen Dateien gesetzt (`users.js`, `shell.css`), mit Sicherung unter
+`/root/zweiter-benutzer-backup-20261024/`. Beide Dateien sind über HTTPS ausgeliefert, und in
+einem echten Browser lädt das Modul samt seinem ganzen Importbaum ohne einen einzigen
+`pageerror`.
+
+**Was damit noch nicht gemessen ist, und das ist die Wahrheit über diesen Punkt:** dass ein
+zweiter Mensch wirklich angelegt wird, sich anmeldet und sein Startmenü sieht. Dafür wird eine
+neue Fassung der Vertrauensliste **im Browser mit dem Schlüssel der Person** unterschrieben, und
+dieser Schlüssel ist ihr Passwort. Kein Agent darf es tippen. Die Stationen 3 und 4 oben bleiben
+deshalb **ungemessen**, bis Thomas die Schritte gegangen ist; sie werden danach hier nachgetragen.
+
+### Nachtrag vom 24.10.2026, nachmittags: **welche** Anlage gemessen wurde
+
+Seit heute gibt es **zwei** Anlagen, und eine Zahl ohne ihren Namen ist hinterher wertlos.
+
+| | Einzel-VM | Verteilte Anlage |
+|---|---|---|
+| Name | `ngc.test` (10.2.3.208) | `ngc.mein.lan` → api-1 (10.2.3.210) |
+| Fassung von NGC | `0.2.0` | `0.2.1` |
+| Vertrauensliste | Fassung 6, `RB1CPN7b…` | Fassung 6, `JtyqTFme…` — **dieselbe Nummer, andere Anlage** |
+| `rp` | leer | `ngc.mein.lan`, Origin `https://ngc.mein.lan` |
+| Dieser Zweig eingespielt? | **ja**, die zwei Dateien | **nein** |
+
+**Alles oben in diesem Punkt ist an der Einzel-VM gemessen** — Einspielen, Auslieferung,
+Browserprobe. **Die Stationstabelle gilt trotzdem für beide**, und das ist jetzt stärker belegt
+als heute Vormittag: die verteilte Anlage läuft **exakt `origin/main`**. Gemessen, nicht
+geschlossen: ihre `users.js`, über HTTPS geholt, hat den git-Hash `83344ee` — Byte für Byte die
+Datei aus `origin/main`. Sie hat also ebenfalls **keine Tür** für einen zweiten Benutzer.
+
+**Die Namen lügen teilweise, am laufenden Dienst nachgesehen** (eine Warnung der
+Koordinationssitzung, hier nicht geglaubt, sondern geprüft):
+
+- **api-1** und **api-2** tragen wirklich eine NGC-API: beide antworten auf
+  `GET /api/v1/trust` mit `E_LOGIN` und auf `GET /api/v1/setup` mit `E_NOTFOUND` — also hat
+  jede von beiden schon einen Verwalter. api-1 liefert zusätzlich das Webinterface.
+- **db-1**, **svc-1**, **svc-2** haben von 22, 80, 443, 5432, 7443, 7444, 8443, 9443, 7000, 7001
+  **nur 22** offen. Für zwei Controller ist das richtig — „nobody dials a controller" —, für
+  die Datenbank sagt es nur, dass sie nach außen nichts anbietet.
+- **store** nimmt auf 443 eine Verbindung an, bricht aber im TLS-Handschlag ab
+  (`SEC_E_ILLEGAL_MESSAGE`). **Dort läuft kein brauchbares HTTPS.**
+
+### Zwei API-Server — was das für einen zweiten Benutzer heißt
+
+Die verteilte Anlage hat **zwei** APIs, und ihr Webinterface weiß das:
+`/config.json` nennt `https://api-1.ngc.mein.lan:7443` **und**
+`https://api-2.ngc.mein.lan:7443`. Ein zweiter Benutzer kann also an einem anderen API-Server
+landen als dem, an dem er angelegt wurde.
+
+**Gelesen, nicht gemessen:** das soll der Vertrag schon tragen. `ngc.users/api/trust` nimmt die
+Fassung nicht nur an, sondern verteilt sie — `AddVersion`, `settle`, **`pushTrust`**
+(`apps/server-api/classes/coreapp/users.go:250`, `:257`). Der zweite API-Server bekäme die
+Fassung damit, ohne dass die Oberfläche etwas dazutut.
+
+**Nicht gemessen, und es soll niemand glauben, es sei geprüft:** dass ein an api-1 angelegter
+Mensch sich an api-2 anmelden kann. Dafür müsste dieser Zweig auf der verteilten Anlage liegen,
+und dafür fehlt der Zugang (die sechs VMs stehen in keiner SSH-Konfiguration, und der
+NGC-Schlüssel öffnet sie nicht). **Das ist die nächste Messung, nicht ein Ergebnis dieser.**
+
+### Und ein Befund, der nicht zu dieser Arbeit gehört, aber gemessen ist
+
+**Die Einzel-VM `ngc.test` ist seit etwa 12:40 nicht mehr erreichbar**: 1 von 3 Ping-Antworten,
+kein SSH, kein HTTPS. Um 12:0x lief sie noch — da wurden die zwei Dateien eingespielt und die
+Browserprobe lief grün gegen sie. Was sie umgeworfen hat, ist **nicht gemessen**, und zwei
+statische Dateien einer Oberfläche sind keine plausible Ursache. Solange sie unten ist, kann
+niemand die Schritte aus `docs/zweiter-benutzer-schritte.md` gehen.
+
+## Punkt 74: Eine App auf einer anderen Maschine einrichten lässt sie auf der alten weiterlaufen
+
+Gemessen am 24.10.2026 auf der verteilten Anlage, an den App-eigenen Containerspeichern der
+beiden Dienstmaschinen — nicht an den Namen der Maschinen und nicht an der Datenbank allein.
+
+Das Terminal läuft auf **beiden** Dienstmaschinen:
+
+```
+svc-1:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up About an hour
+svc-2:  ngc-terminal-439982dd | localhost/ngc-terminal:1.0.0 | Up 39 minutes
+ngc_app.node: svc-2        (eine Zeile, eine Maschine)
+```
+
+Der Verlauf aus den Protokollen der beiden Controller:
+
+```
+svc-1  10:56:53  container create / init / start      erste Einrichtung
+svc-1  11:05:40  Controller neu gestartet -> container init / start
+svc-2  11:28:10  useradd ngc-terminal-439982dd
+svc-2  11:28:14  container create / init / start      zweite Einrichtung
+ngc_app.updated  etwa 11:28
+```
+
+**Was gemessen ist:** das Terminal wurde zuerst auf `svc-1` eingerichtet, später auf `svc-2`.
+Der Container auf `svc-1` wurde nie entfernt. Mehr noch: der Controller auf `svc-1` hat ihn nach
+seinem eigenen Neustart um 11:05 **wieder angeworfen** — die alte Einrichtung ist also nicht nur
+ein vergessener Prozess, sie ist dauerhaft und übersteht einen Neustart. `ngc_app` trägt nur die
+neueste Maschine, also weiß die Oberfläche von `svc-1` nichts und kann dort auch nichts
+abräumen.
+
+**Was das kostet, soweit es hier zu sehen ist:** CPU und Speicher einer App, die niemand zählt;
+ein Container mit den Rechten der App (beim Terminal: `root` in seinem Container) auf einer
+Maschine, auf der die Anlage ihn nicht mehr verzeichnet; und bei einer App mit eigenen Daten
+zwei Datenstände, von denen die Oberfläche einen nicht kennt.
+
+**Was nicht gemessen ist, und was darum zu entscheiden wäre:**
+
+- Ob das so **gemeint** ist. Dass eine App absichtlich auf mehreren Maschinen laufen soll, ist
+  möglich — dann fehlt aber die Stelle, die das verzeichnet, denn `ngc_app.node` ist ein
+  einzelnes Feld. Im Vertrag ist dazu nichts nachgelesen worden.
+- Ob eine Einrichtung auf einer neuen Maschine die alte **abräumen** soll (dann fehlt der
+  Schritt), oder ob die Anlage **beide** verzeichnen soll (dann fehlt die Spalte).
+
+Beides ist eine Entscheidung und keine Messung. Die Messung ist: es läuft zweimal, und die
+Anlage sagt einmal.
+
+**Unabhängig bestätigt:** die Erstlauf-Sitzung sieht dasselbe von ihrer Seite und ohne von
+diesem Punkt zu wissen — ihre Station D4 zählt **zwei** vollständig eingerichtete Apps auf
+`svc-1` und eine auf `svc-2`, gemessen an `useradd`, `image loadfromarchive` und
+`container start` im Journal sowie am laufenden `conmon` des jeweiligen App-Benutzers. Zwei
+Messwege, dasselbe Ergebnis.
+
+**Eine Folge, die über die Buchhaltung hinausgeht** und die beim Abschalten einer Maschine
+auffallen wird: wer `svc-2` ausschaltet und feststellt, dass das Terminal weiter antwortet,
+hat **keinen** Ausfallschutz gemessen, sondern diesen Befund. Die Anlage nennt `svc-2`, laufen
+tut es auch auf `svc-1`.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 8.
+---
+
+## Punkt 75: Die Maschine, auf der die ersten Messungen entstanden, ist aus — die Messungen gelten, die Anweisungen nicht
+
+> **Stand: gilt.** Art: Umgebung. Nummer 74 war beim Anhängen schon von einem anderen Zweig
+> belegt (PR 124); darum 75, damit nicht zwei Punkte dieselbe Nummer tragen.
+
+**Gemessen am 24.10.2026.** Die Einzel-VM (`ssh ngc`, 10.2.3.208, Name `ngc.test`), auf der die
+erste wirklich laufende Anlage stand, ist **abgeschaltet**:
+
+| Was | Ergebnis |
+|---|---|
+| `ssh ngc` | `connect to host 10.2.3.208 port 22: Connection timed out` |
+| TCP 10.2.3.208:22 | zu |
+| VM 208 auf dem Proxmox-Wirt | `stopped` |
+
+Sie antwortet nicht langsam und sie ist nicht gestört. Sie läuft nicht.
+
+**Was weiter läuft**, Rolle am laufenden Dienst abgefragt statt aus dem Namen geschlossen — denn
+die Namen lügen: 10.2.3.210 `api-1` trägt `ngc-api` **und** `ngc-controller`, 10.2.3.211
+`api-2` nur `ngc-api`, 10.2.3.212 `db-1` nur `ngc-controller` (**keine Datenbank**), 10.2.3.213
+`svc-1` und 10.2.3.214 `svc-2` `ngc-controller` + podman, 10.2.3.215 `store` kein NGC, nur
+nginx. `https://ngc.mein.lan` zeigt auf api-1.
+
+**Warum das ein eigener Punkt ist, und nicht nur eine Notiz.** 64 Zeilen in 9 Dateien zeigen auf
+diese Maschine, 30 davon in diesem Papier. Wer ihnen heute folgt, misst ins Leere — und schreibt
+dann „nicht erreichbar" als Befund über NGC auf, obwohl der Befund über eine ausgeschaltete
+Maschine lautet. Ein falscher Befund ist teurer als eine fehlende Messung.
+
+**Die Trennung, die hier gilt:**
+
+- **Die Messungen dieses Papiers bleiben unangetastet.** Keine der 30 Zeilen ist geändert. Sie
+  wurden gemacht, als die Maschine lief; ein ausgeschalteter Rechner macht eine richtige Messung
+  nicht falsch. Eine Messung umzuschreiben, weil die Maschine weg ist, wäre Geschichtsfälschung.
+  Betroffen sind die Punkte **56 bis 59, 64, 71, 72, 73** und die Nachträge dazu: sie gelten
+  weiter, sind aber **an dieser Maschine nicht mehr nachprüfbar**.
+- **Anweisungen, die dorthin zeigen, sind umgeschrieben** — in
+  `docs/zweiter-benutzer-schritte.md`, `docs/installation-kleines-system.md`, `docs/erstlauf.md`
+  und `README.md`. Die gefährlichste Stelle war eine `hosts`-Zeile zum Abtippen
+  (`10.2.3.208   ngc.test`); sie ist jetzt ein Platzhalter mit der alten Zeile als
+  gekennzeichnetes Muster darunter.
+- **`ngc.test` bleibt in der Anleitung ein Beispielname** und ist jetzt ausdrücklich als solcher
+  benannt: `.test` ist dafür reserviert (RFC 2606), der ganze Prüfsatz benutzt ihn, und ein
+  echter Name wäre ein fremdes Heimnetz. Die rund 250 Vorkommen in `shared/` und `apps/` sind
+  Prüfdaten und **nicht** diese Maschine.
+
+**Befund, der bleibt: vier Dinge lagen nur auf ihrem Datenträger** — die zwei Skripte des
+Prüfladens in `/home/berry/ngcapp/` (nicht im Repo, Punkt 71 / `app-weg.md` Befund 3), der
+Ladeninhalt unter `/srv/ngc-store` samt Katalog in Folge 1, ein von Hand übersetztes `ngc-store`
+in `~/uhr-bau/`, und die Sicherung `/root/zweiter-benutzer-backup-20261024/` zu Punkt 73. Nichts
+davon ist herübergeholt worden; das braucht eine laufende Maschine und eine Entscheidung. **Der
+eigentliche Befund ist nicht der Dateiverlust, sondern die Arbeitsweise: was nur auf einer
+Maschine liegt, ist nicht gesichert.**
+
+**Was damit ungemessen wird.** Der kleine Fall (alles auf einer Maschine) ist ein ausdrücklich
+unterstützter Fall mit eigener Anleitung und eigenem Vertragspunkt (47), und er hat die ersten
+sechs Hürden ans Licht gebracht (Punkt 71). Die verteilte Anlage kann ihn nicht ersetzen: sie
+unterscheidet sich genau dort, wo der kleine Fall seine eigenen Fehler hat — SQLite statt eigener
+Datenbankmaschine, ein Skript statt vier, ein Name statt mehrerer. **Ab heute ist der kleine Fall
+ohne Maschine und damit ungemessen.**
+
+**Zu entscheiden (Thomas).** Vorgelegt in `docs/alte-vm-verweise.md`, Abschnitt 5: (a) soll der
+kleine Fall weiter geprüft werden — Vorschlag **ja**; (b) alte Maschine zurück oder neue dazu —
+Vorschlag **neue dazu**, weil die alte ein über Monate gewachsener Handbau ist und niemand sie
+ein zweites Mal aufbauen kann, eine neue aus Release und Anleitung dagegen den kleinen Fall
+**und** die Anleitung zugleich prüft; (c) was mit der alten — Vorschlag **einmal starten**, die
+vier Dinge bergen, dann weg. **Nicht vorher löschen.**
+
+## Punkt 76: diese Nummer ist leer — und das ist kein Versehen, sondern eine Spur
+
+Am 24.10.2026 haengten mehrere Sitzungen gleichzeitig Punkte hinten an. Zweimal trugen
+zwei verschiedene Punkte dieselbe Nummer; beim Zusammenfuehren habe ich (die
+Koordinationssitzung) den jeweils zweiten weitergezaehlt. Dabei ist die 76 uebersprungen
+worden.
+
+Sie bleibt leer. Umnummerieren waere der schlechtere Weg: auf die 77 bis 80 wird in
+anderen Dateien und in den Berichten der Sitzungen bereits verwiesen, und eine Nummer,
+die ihre Bedeutung wechselt, ist schlimmer als eine, die fehlt.
+
+Was daraus zu lernen ist, steht schon im Buch: **ein Buch, das nur hinten waechst,
+braucht einen Riegel gegen doppelte Nummern.** Daran arbeitet ein eigener Strang.
+## Punkt 77: Eine fehlgeschlagene Einrichtung reißt eine fremde, laufende App aus der Leitung
+
+Gemessen am 24.10.2026 um 12:14:38 im Protokoll des Controllers auf `svc-1`. Drei Zeilen
+hintereinander:
+
+```
+WARN  tunnel failed err="link: the API broke the contract of the tunnel"
+WARN  Die Verbindung einer App wurde abgebrochen. app=org.sorglos.terminal code=E_PROTOCOL
+      grund="Der Dienst der App endete mit einem Fehler."
+INFO  tunnel up                                            (eine Sekunde später)
+```
+
+Gearbeitet wurde in diesem Moment an einer **Einrichtung** — und abgebrochen wurde
+`org.sorglos.terminal`, also eine **andere, bereits laufende** App. Die Oberfläche sagte dazu
+„Das hat der Rechner nicht angenommen. Bitte es noch einmal versuchen." Im Protokoll der API
+steht dazu nichts.
+
+**Das ist von der Ursache des Abbruchs unabhängig, und darum steht es als eigener Punkt.** Ob
+der Tunnel wegen der API-Fassung brach (dazu unten), wegen Last oder aus einem dritten Grund:
+dass die Arbeit an App A eine laufende App B aus der Leitung wirft, ist für sich ein Fehler. Wer
+im Terminal gerade etwas tippte, hat seine Sitzung verloren, weil jemand anders eine App
+einrichtete. Die Trennung, die ein Container leistet, endet offenbar am gemeinsamen Tunnel.
+
+**Was die Fassung damit zu tun hat — gemessen und abgewogen getrennt:**
+
+- **Gemessen:** vor dem Tausch (API bis 12:20) scheiterte das Aktivieren mit `E_PROTOCOL`; nach
+  dem Tausch auf 0.2.2 ist eine Einrichtung auf derselben Maschine `svc-1` **durchgelaufen**
+  (12:25:37 bis 12:28:04, `ngc_app` mit `active 1`, Behälter läuft). In den Protokollen aller
+  fünf NGC-Maschinen gibt es in diesen Stunden **genau einen** Treffer auf `E_PROTOCOL`, und das
+  ist der um 12:14:38. Nach 12:21 keinen.
+- **Abgewogen, nicht bewiesen:** dass die API-Fassung die Ursache war. Sie ist die einfachere
+  Erklärung, weil sie genau zwischen den beiden Versuchen gewechselt hat. Dagegen steht, dass
+  zur selben Zeit eine andere Sitzung Last auf `svc-1` und `svc-2` fuhr — dann wäre es
+  **Punkt 70** unter anderem Namen (ein Paket über eine Fenstergröße kommt unter Last nicht
+  durch, `E_PROTOCOL` statt `ok`). Ob um 12:14 schon Last lief, ist nicht gemessen.
+- **Was den Beweis brächte:** eine Einrichtung gegen 0.2.2 unter **angesagter** Last. Das ist ein
+  eigener Auftrag und nicht Teil dieser Messreihe.
+
+**Zu entscheiden ist zweierlei, und beides ist keine Messung:**
+
+1. Ob ein Fehler auf dem Tunnel überhaupt eine fremde App treffen darf — und wenn nicht, wo die
+   Trennung hingehört.
+2. Ob die Oberfläche beim Abbruch sagen muss, **welche** App es getroffen hat. „Das hat der
+   Rechner nicht angenommen" stand bei der Einrichtung; dass daneben eine Terminal-Sitzung
+   starb, hat niemand erfahren.
+
+Der Abbruch selbst ist von der Koordinationssitzung gemessen worden; die Zeile im Protokoll von
+`svc-1`, die fehlende Wiederholung nach 12:21 und die durchgelaufene Einrichtung um 12:25 sind
+hier nachgemessen. Herkunft: `docs/uhr-in-den-laden.md`, Abschnitt 12.
+
+## Punkt 78: Das Protokoll schreibt einer App 477 Byte stderr zu, die sie nicht geschrieben hat
+
+Gemessen am 24.10.2026 an `org.sorglos.uhr` auf `svc-1`. Die App ist dafür nur der Anlass: sie
+schreibt absichtlich **eine** Zeile in jede Richtung, und darum fällt an ihr auf, was bei einer
+größeren App niemandem auffiele.
+
+**Was der Controller protokolliert**, bei vier Aufrufen der Aktion `zeit`:
+
+```
+12:25:44  a service wrote to stderr  app=org.sorglos.uhr action=zeit bytes=510
+12:25:59  ... bytes=510
+12:26:00  ... bytes=510
+12:29:55  ... bytes=510      <- dieser Lauf zeigte im Fenster die Uhrzeit
+```
+
+**Was der Dienst wirklich schreibt**, im selben Behälter direkt gemessen, beide Ströme getrennt:
+
+```
+Rückgabewert 0
+STDOUT 21 Byte:  2026-10-24T12:31:52Z
+STDERR 33 Byte:  ngc-uhr 1.0.0 beantwortet "zeit"
+```
+
+**33 geschrieben, 510 protokolliert: 477 Byte Fremdtext, der der App zugeschrieben wird.** Bei
+allen vier Aufrufen gleich groß, also deterministisch und keine zufällige Störung.
+
+**Was ausgeschlossen ist, damit das keine Vermutung bleibt:**
+
+- **Keine Obergrenze.** `service.MaxStderr = 64 << 10` (64 KiB). 510 ist kein Anschlag.
+- **Kein falscher Zähler.** `ring.Write` hängt mit `append` an, `ring.bytes` gibt `r.b` zurück,
+  `logStderr` schreibt `len(b)` (`apps/server-controller/classes/serve/call.go`). Die Zahl ist
+  eine echte Byte-Zahl und kein Puffermaß.
+- **Nicht die `sudo`-Warnung des Messwegs.** Derselbe Aufruf ohne `cd /tmp` schreibt
+  `cannot chdir to /root: Permission denied` — 41 Byte — und scheitert dabei ganz. Das erklärt
+  die 477 nicht.
+- **Kein Anzeichen für einen Fehlschlag.** Der erfolgreiche Lauf um 12:29:55 schreibt dieselben
+  510 Byte wie die drei davor. (Hier stand zuerst das Gegenteil: dass 510 auf fehlgeschlagene
+  Läufe deute. Das war falsch und ist durch die vierte Zeile widerlegt.)
+
+**Nicht gemessen: was die 477 Byte sind.** Und das ist der zweite Teil des Befundes, denn es
+lässt sich **nicht nachlesen**: den Text gibt es nur mit `serve.CallInput.LogStderr`, der von
+Haus aus aus ist, und `/etc/ngc/controller.json` hat dafür **keinen Schlüssel** (`anchor`,
+`apis`, `db`, `dbKey`, `name`, `noiseKey`, `podman`, `releaseKey`, `roles` — und keinen
+weiteren). Ein Betreiber kann also die Zahl sehen und den Text nicht, ohne neu zu bauen.
+
+**Zu entscheiden ist dreierlei:**
+
+1. Wo die 477 Byte entstehen, und ob sie überhaupt in den Ring der App gehören. Was nicht die
+   App geschrieben hat, sollte ihr das Protokoll nicht zuschreiben.
+2. Ob der Schalter für den Text in die Konfiguration gehört. Solange er nur im Quelltext steht,
+   ist die eine Zeile, für die ein Protokoll da ist, im Ernstfall nicht lesbar.
+3. Ob die Zahl ohne den Text überhaupt etwas wert ist. Sie sollte „die App hat geredet" sagen;
+   gemessen sagt sie „die App und 477 Byte von irgendwem".
+
+Für eine Uhr ist das Kosmetik. Für eine App, die erklären soll, warum sie nicht konnte, ist es
+der Unterschied zwischen einem Protokoll und einem Rätsel.
+
+Herkunft und die ganze Messreihe: `docs/uhr-in-den-laden.md`, Abschnitt 16.
+## Punkt 79: Die Anlage fragt stündlich nach ihrem Laden, bekommt keine Antwort und sagt es niemandem
+
+Der Laden (`store`, eine eigene Maschine, die ausdrücklich **nicht** zur Anlage gehört) wurde am
+24.10.2026 um 14:42 auf dem Proxmox-Wirt mit `qm stop 306` abgeschaltet und nach rund 40 Sekunden
+wieder angefahren. Die Anlage hat das vollständig weggesteckt: die Oberfläche antwortete
+unverändert (10 von 10 Anfragen `200`, 19–28 ms wie vorher), und `nginx` auf dem Laden lief nach
+`qm start` von selbst wieder. **Das ist das gute Ergebnis** und der befürchtete schwere Befund —
+eine Anlage, die ohne ihren Laden nicht mehr arbeitet — ist nicht eingetreten.
+
+**Was gemessen ist, und was nur gelesen:** im Journal von api-1 und api-2 steht über den ganzen
+Ausfall `-- No entries --`. Diese Messung **beweist nichts**: das Fenster war 40 Sekunden lang,
+und in dieser Zeit war kein Takt fällig. Der Beleg steht im Code, nicht im Journal.
+
+`apps/server-api/classes/server/server.go`, `Server.rounds`, hat `hour := time.NewTicker(Hour)`
+(`Hour = time.Hour`) und daneben `first := time.NewTimer(FirstCatalog)` mit
+`FirstCatalog = time.Minute`. Die Katalogrunde läuft also eine Minute nach dem Start und danach
+stündlich. Dass `systemctl list-timers` auf api-1 keinen NGC-Timer zeigt, ist darum der erwartete
+Zustand und kein Befund.
+
+Die Runde selbst **hat** eine Meldung:
+
+```go
+func (s *Server) hour(ctx context.Context) {
+	if err := s.st.Refresh(ctx); err != nil {
+		slog.Warn("catalogs could not be fetched", "error", err)
+	}
+}
+```
+
+Erreichbar ist sie für diesen Fall nicht. `Stores.Refresh` (`fetch.go:175`) gibt einen Fehler nur
+zurück, wenn die **Vertrauensliste** nicht zu lesen war; der Fehler des einzelnen Ladens geht in
+`_ = st.note(ctx, s.ID, err)` und wird verworfen, am Ende steht `return nil`. Ein unerreichbarer
+Laden liefert also `nil`, und `slog.Warn` darüber feuert nie. Der Grund landet still in der Zeile
+des Ladens und ist nur in `ngc.store/sources` zu sehen — für den, der sich anmeldet und dorthin
+klickt. Über die Befehlszeile gibt es gar kein Nachsehen: `ngc-store --help` kennt nur Packen,
+Unterschreiben und Prüfen, `ngc-api --help` und `ngc-controller --help` keinen Katalogbefehl.
+
+Ein Laden, der eine Woche weg ist, hat damit **168 Mal erfolglos geklopft**, ohne eine Zeile zu
+hinterlassen, die ein Mensch findet, ohne sie zu suchen.
+
+**Nachgemessen am 24.10.2026, 13:01-13:05 UTC, mit einer Runde, die wirklich auf den toten Laden
+trifft** (Laden aus, `ngc-api` auf api-2 neu gestartet, Runde erzwungen - `FirstCatalog` erlaubt
+das in einer Minute statt in einer Stunde). Damit ist auch die gute Haelfte belegt, die der erste
+Lauf nicht zeigen konnte: die Runde kostet genau sich selbst. Der Katalog bleibt Byte fuer Byte
+auf Folge 7 (1116 B), die Vertrauensliste auf Folge 6, beide Apps aktiv. Und die Anlage faengt
+sich von selbst: Laden wieder an, naechste Runde, Fehlertext weg und `checked` neu, ohne eine
+Hand. Im Journal von api-2 stehen dazu **null Zeilen**, die Katalog, Store oder Laden erwaehnen -
+das ist jetzt gemessen und nicht mehr nur aus dem Code geschlossen.
+
+Dazu eine Einzelheit, die beim Lesen der Zeile wichtig ist: **`checked` rueckt beim Fehlschlag
+nicht vor.** Die Zeile ging von `{"checked":1792845105}` auf
+`{"checked":1792845105,"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` - der
+Wert bleibt auf dem letzten *erfolgreichen* Blick stehen, der Fehler wird nur angehaengt. Die
+Zeile traegt damit das Alter des letzten guten Blicks, und wer hinsieht, kann erkennen, dass der
+Laden seit einer Woche nicht geantwortet hat. Es fehlt nicht die Auskunft, sondern der Anlass,
+sie zu holen. Das `_ =` ist kein Versehen: der
+Kommentar darüber sagt, dass das Aufschreiben den nächsten Laden nicht verschlucken darf. Die
+Absicht ist richtig, die Folge ist Stille.
+
+**Was zu entscheiden wäre:**
+
+- Ob eine Katalogrunde, die einen Laden nicht erreicht, **ins Journal** gehört. Vorschlag:
+  ja, aber nicht jede Stunde dieselbe Zeile — beim ersten Fehlschlag eine `WARN`, danach erst
+  wieder, wenn sich etwas ändert (wieder erreichbar, oder ein anderer Grund). Sonst tauscht man
+  Stille gegen Rauschen, und 168 gleiche Zeilen findet auch niemand.
+- Ob `Stores.Refresh` den Fehler **zurückgeben** soll, statt ihn nur in die Zeile zu schreiben.
+  Die heutige Form verschluckt ihn zweimal: `_ =` am `note`, und `return nil` am Ende. Ein
+  gesammelter Fehler („k von n Läden nicht erreicht") würde die Warnzeile erreichbar machen, ohne
+  dass ein kaputter Laden den nächsten kostet.
+- Ob es einen Weg über die **Befehlszeile** geben soll, nach dem Laden zu sehen. Heute kann man
+  den Zustand der Läden nur über eine Anmeldung in der Oberfläche erfahren. Für jeden, der eine
+  Anlage aus der Ferne betreut, ist das eine Tür, die fehlt.
+
+Alle drei sind Entscheidungen und keine Messungen. Die Messung ist: sie fragt, sie scheitert, und
+es steht nirgends, wo man es sieht.
+
+Herkunft und die ganze Messreihe, samt zweier Messfallen, die den Lauf fast entwertet haben:
+`docs/ausfall-je-maschine.md`.
+
+## Punkt 80: Der DNS dieses Netzes beantwortet jede Frage nach einer Maschine mit der eigenen
+
+Gemessen am 24.10.2026. Der DNS des Netzes (10.2.3.102) liefert für **jeden** Namen
+`*.ngc.mein.lan` neben dem richtigen A-Satz auch einen AAAA-Satz `::`. Alles, was über NSS
+geht — `getent`, `curl`, `ping`, jedes Werkzeug, zu dem ein Mensch greift — nimmt das `::`
+zuerst und landet damit auf der **eigenen** Maschine, wo auf 443 der Apache von api-1 antwortet.
+
+Was das kostet, ist an zwei Zeilen zu sehen, beide von api-1 aus, bei **laufendem** und bei
+**abgeschaltetem** Laden:
+
+```
+curl -sk https://store.ngc.mein.lan/catalog.json                       Laden an  -> 404 von=::
+dieselbe Zeile                                                         Laden aus -> 404 von=::
+curl --resolve store.ngc.mein.lan:443:10.2.3.215 … /catalog.json       Laden an  -> 200 von=10.2.3.215
+dieselbe Zeile                                                         Laden aus -> 000
+```
+
+**Die naive Frage kann einen toten Laden nicht von einem lebenden unterscheiden.** Sie gibt beide
+Mal dieselbe Zahl, und die kommt von der falschen Maschine. `getent ahosts store.ngc.mein.lan`
+auf api-1 zeigt es direkt: erst `10.2.3.215`, dann `::`.
+
+Dass NGC selbst davon nicht stirbt, liegt daran, dass Go die Adressen einer Antwort der Reihe
+nach durchgeht und am `::` vorbeifällt. Die Anlage läuft also, **weil die Software die kaputte
+Adresse überspringt** — und der Mensch, der danach mit einem Werkzeug nachsieht, bekommt ein
+anderes Ergebnis als die Software und glaubt dem Werkzeug. Von einem Windows-PC aus beißt die
+Falle nicht: dessen `curl` überspringt das `::` ebenfalls und landet auf 10.2.3.210. Das ist der
+Grund, warum sie so lange unentdeckt blieb — sie zeigt sich nur dort, wo gemessen wird, nämlich
+auf den Knoten.
+
+Dazu eine zweite, kleinere Falle derselben Messung: `store.crt` ist mit **ED25519**
+unterschrieben. Beide `curl` unter Windows (`/mingw64/bin/curl` und `C:\WINDOWS\system32\curl`)
+brechen den Handshake mit `schannel: SEC_E_ILLEGAL_MESSAGE` ab, und `-k` hilft nicht, weil nicht
+die Prüfung scheitert, sondern der Handshake. Der Laden ist von einem Windows-PC aus gar nicht
+erreichbar.
+
+**Was zu entscheiden wäre:**
+
+- Ob der AAAA-Satz `::` aus dem DNS **weg** soll. Das ist keine Frage an NGC, sondern an das
+  Netz — aber solange er dort steht, ist jede Messung auf einem Knoten, die einen Namen auflöst,
+  verdächtig, und das betrifft jede Sitzung, die an dieser Anlage misst.
+- Ob NGC sich darauf **verlassen** darf, dass Go am `::` vorbeifällt. Heute hängt die
+  Erreichbarkeit der Läden daran. Ein Client, der anders auswählt, trifft den eigenen Apache.
+
+Die Messregel, die daraus folgt und die in jedem Blatt dieser Anlage gelten sollte: **auf einem
+Knoten keine Sonde ohne `--resolve`, und zu jeder Zahl die Maschine, von der gemessen wurde.**
+
+Herkunft: `docs/ausfall-je-maschine.md`, Abschnitt „Wie hier gemessen wird".
+
+---
+
+## Punkt 81: Gesichert wird genau der Teil, den die Anlage ohnehin wiederbekäme — und „ngc-db backup" gibt es nicht
+
+Gemessen am 24.10.2026 an der verteilten Anlage, Stand `17b9895`.
+
+**Was gemessen ist.** Die Anlage hat genau ein Sicherungskommando: `ngc-controller backup
+<Datei>`. Es schreibt die eigene SQLite-Datei des Controllers — Zeilen der Apps mit ihren
+Manifesten, Lizenzen, Vertrauenslisten-Versionen, gelegte Aktualisierungen. Das läuft, der
+Controller läuft dabei und danach weiter (auf api-1, db-1 und svc-1 je `active` vor und nach dem
+Lauf, Ausstiegscode 0).
+
+Zwei Stellen im Code schicken einen Admin für die Benutzerdaten an ein zweites Programm:
+`state/backup.go:60` und `register/register.go:127` nennen beide `"ngc-db backup"`. **Dieses
+Programm existiert nicht.** `apps/server-db/` hat kein `main.go`, und auf keiner der fünf
+Maschinen liegt ein `ngc-db` (`ls /usr/lib/ngc/`: `ngc-api`, `ngc-controller`, `ngc-store` und
+Vorgängerstände). Für `ngc_user` (1 Zeile), `ngc_blob` (15), `ngc_session` (27) und `ngc_log`
+(470) auf db-1 gibt es damit heute kein Sicherungskommando — nur `mariabackup` 11.8.6 aus der
+Distribution, das zur Probe in 1 s eine 49-MB-Sicherung schrieb, bei weiterlaufender Datenbank.
+
+**Und die Sicherung hängt allein am Schlüssel, nicht an der Maschine.** Die Kopie von svc-1 auf
+einem fremden Rechner geöffnet (Windows, nie gekoppelt): mit dem dbKey aus `controller.json`
+**offen**, zwei App-Zeilen. Ein Bit des Schlüssels gekippt: `sqlite3: file is not a database`.
+Mit dem dbKey von api-1: dasselbe. Jeder Rechner hat seinen eigenen dbKey, vier verschiedene auf
+dieser Anlage. Dasselbe gilt für die App-Datenordner: die fscrypt-Schlüsselkennung, die der Kern
+von svc-1 für `org.sorglos.terminal` und `org.sorglos.uhr` hält, ist bitgleich mit der, die HKDF
+über den dbKey dieses Rechners liefert. Und für die MariaDB ein drittes Mal: die Tabellen sind
+`FORCE`-verschlüsselt, der Schlüssel liegt in `/etc/ngc/db-keys/` und nicht in der Sicherung —
+der Benutzername `weiricth` steht in keiner der neun `.ibd` der Probe-Sicherung.
+
+**Was nicht gemessen ist.** Zurückgespielt wurde nichts, auf keiner Maschine: weder `state.db`
+noch die MariaDB noch ein App-Datenordner, und kein neuer Rechner wurde mit einem alten
+`controller.json` gekoppelt. Dafür fehlt eine Wegwerf-Maschine; an der laufenden Anlage wird es
+nicht geübt.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob die dbKeys bei einer Neuinstallation **vorgegeben** werden dürfen. Ohne das kann „dieselbe
+  Maschine wiederherstellen" nicht funktionieren — der neue Rechner bekommt einen neuen
+  Schlüssel und öffnet die alte Sicherung nicht. Wer sie vorgeben darf, kann sie falsch vorgeben.
+- Ob die beiden Code-Stellen auf `ngc-db backup` zeigen dürfen, solange es das nicht gibt. Eine
+  Fehlermeldung, die einen Admin an ein Programm schickt, das nicht existiert, kostet ihn den
+  Abend, an dem er sie braucht.
+- Ob `apps/server-db` ein Programm werden soll oder ob `tools/sicherung.sh` die Antwort bleibt.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`.
+
+## Punkt 82: Die stehende Zustimmung ist gebaut und wirkungslos — ein unbeaufsichtigter Lauf darf kein NGC-Teil einsetzen
+
+**Gemessen am 24.10.2026** an der Sechs-Maschinen-Anlage (`api-1`, `api-2`, `db-1`, `svc-1`,
+`svc-2`, `store`; alle Zeiten UTC, die Maschinen laufen auf UTC). Nicht an der Einzel-VM `ngc`.
+
+Der stündliche Update-Lauf (`Server.rollouts`, „the beat of the update rounds") holt das
+veröffentlichte Release, prüft es gegen den Release-Schlüssel der Anlage, lädt ein Archiv
+herunter — und bleibt seit jeher am **ersten** Knoten stehen. Vier Läufe in Folge dieselbe Zeile:
+
+```
+00:50 / 01:50 / 09:44 / 10:44   ngc-api 0.2.2   db-1   E_INTERNAL
+```
+
+Im Journal von `ngc-api` steht dazu nur `WARN the update round stopped error="updates: the round
+stopped at a node"` — **ohne Knoten und ohne Grund**. Der Grund steht im Protokoll der Anlage,
+nicht im Journal: `Updates.abort` schreibt `target version node cause` über `audit.Log`. Er ist
+also da, nur an der Stelle, an der ihn beim Suchen niemand vermutet.
+
+### Die erste Wand, behoben
+
+`ActStage` hatte im Controller **gar keinen Behandler**. Der Kanal fiel durch `Server.core` bis
+zur `acts`-Suche und endete dort `E_INTERNAL`, ohne dass vom Paket `update` je etwas gefragt
+wurde — der Quelltext sagte das an genau der Zeile selbst. Daneben war `serve.Deps.Updater` auf
+`nil` gesetzt, mit einer Begründung im Code: `update.Deps` nimmt die Vertrauensliste als **Wert**,
+während der Controller seine Liste Fassung für Fassung unter sich austauscht
+(`chain.Keeper.Current`), und ein einmal beim Verdrahten gebauter Manager arbeitete gegen die
+Liste jenes Augenblicks.
+
+Geschlossen wie beim `Installer`: die Liste wird **je Aufruf** nach unten gereicht, und der
+Manager entsteht je Kanal. Gebaut in PR 121.
+
+**Am Gerät nachgewiesen, nicht nur übersetzt.** Mit dem Probebau auf den vier Controllern kommt
+der Lauf zum ersten Mal über die Migrationsstufe hinweg und holt ein **zweites** Archiv:
+
+```
+13:21:04  /ngc-api-amd64.tar          200     <- die Stufe, die vorher E_INTERNAL war
+13:21:06  /ngc-controller-amd64.tar   200     <- hat die Anlage nie zuvor geholt
+db-1:/var/lib/ngc/staged/ngc-controller   26 736 640 Byte   0600 root   13:21
+```
+
+Die Datei auf der Platte ist der Beleg: `update.Manager.Stage` ist gelaufen, hat Unterschrift,
+Größe und Prüfsumme gehalten und unter dem Namen abgelegt, den ein Installierer sucht.
+
+### Die zweite Wand, und sie ist die eigentliche
+
+Eine Sekunde später:
+
+```
+13:21:07  ngc-controller 0.2.2   db-1   E_FORBIDDEN
+```
+
+**Meine erste Erklärung war falsch, und die Messung hat sie widerlegt.** Ich hielt die
+Fassungsgleichheit für die Ursache — db-1 trug selbst 0.2.2. Auf 0.2.1 gesetzt, also echt älter,
+kam **dieselbe** Absage.
+
+Der Grund steht in `core.All`:
+
+```
+ActStage    Admin=true  Root=false  Changes=false   <- darum geht der stage-Schritt jetzt
+ActInstall  Admin=true  Root=true   Changes=true    <- "signed task required"
+```
+
+und `task.Check` (`shared/task/task.go:174`):
+
+```go
+if in.Task == nil {
+	if in.Rule.Root {
+		return nil, ErrNoTask
+	}
+```
+
+Der Rollout ruft aber
+
+```go
+u.Send.Call(ctx, node, core.ActInstall, params, nil, nil, nil, nil)   // keine Aufgabe
+```
+
+Der Kanal stirbt damit **am Zugangstor**, bevor `update.Manager` überhaupt gefragt wird — weshalb
+der Controller zu diesem Vorgang **nichts** protokolliert. Wer dort nach der Ursache sucht, findet
+eine stumme Maschine.
+
+### Der Widerspruch
+
+`core.Unattended` und `store.Approved` gibt es **genau** für den Fall „Kanal ohne Benutzer",
+`install.go` hält dafür einen eigenen Zweig (`d.User == ""`), und die stehende Zustimmung steht in
+der Vertrauensliste der Anlage auch wirklich drin:
+
+```
+auto: [{ngc-api, <Release-Schlüssel>}, {ngc-controller, …}, {ngc-web, …}, {system}]
+```
+
+**Nur erreicht dieser Zweig nie die Ausführung**, weil dieselbe Vertragstabelle `install` als Root
+führt. Die stehende Zustimmung ist gebaut, eingetragen, geprüft — und wirkungslos. Ein
+unbeaufsichtigter Lauf kann damit **kein** NGC-Teil einsetzen, auf keinem Knoten.
+
+Dieselbe Klasse wie die sechs Wände aus **Punkt 71**: jedes Stück für sich ist vertretbar
+begründet, und die Lücke liegt zwischen zwei geprüften Teilstrecken. Der Unterschied ist, dass
+diese hier nicht in einer systemd-Unit oder einem Dateimodus liegt, sondern **im Vertrag selbst**,
+und dass zwei seiner Teile einander widersprechen.
+
+### Was ausgeschlossen ist
+
+Damit niemand dort noch einmal sucht, jedes Stück gemessen:
+
+| Verdacht | Befund |
+|---|---|
+| die Rollen des Knotens | `tunnel.Components` enthält `ngc-controller` **immer**, auch bei Rolle `db`. `runs()` ist es nicht |
+| verschiedene Schlüssel | der `releaseKey` der vier Controller und der Schlüssel der `auto`-Einträge sind derselbe (`pN6Z6a9NR0aG6aEJIJ5EHg`) |
+| die gemeldeten Fassungen | `PutComponents` schreibt **nur** ein geglückter Install (`install.go:735`). Da nie einer glückte, sind sie leer — und `store.Newer` nimmt jede Fassung als neuer als `""`. Beide Seiten lassen das durch |
+| `db-1` als Maschine | db-1 ist nur der **erste berührte** Knoten: der Rollout legt vor allem anderen dem Migrationsknoten (Rolle `db`, kein API-Knoten) die `ngc-api`-Datei bereit. Ob svc-1 und svc-2 es könnten, ist **nicht gemessen** — der Lauf stirbt vorher |
+
+### Die Entscheidung für Thomas
+
+Sie liegt in `shared/` und ist damit eine Vertragsfassung, kein Zweig.
+
+**a) `install` eines NGC-Teils darf ohne Root-Aufgabe laufen, wenn eine stehende Zustimmung dafür
+steht.** Das ist das, wofür `core.Unattended` gebaut wurde; der Zweig in `install.go` bekäme eine
+Ausführung. Der Preis: die Zustimmung in der Vertrauensliste wird zur alleinigen Schranke vor dem
+Austausch eines Programms, das als root läuft. Sie ist unterschrieben und versioniert, also keine
+schwache Schranke — aber sie ist eine *stehende*, und niemand sieht in dem Augenblick hin.
+
+**b) Der Rollout führt eine unterschriebene Aufgabe mit.** Dann bleibt die Schranke je Vorgang.
+Zu sagen ist, **wer sie wann unterschreibt**: in einer stündlichen Runde sitzt kein Mensch. Eine
+vorrätig unterschriebene Aufgabe wäre eine stehende Zustimmung unter anderem Namen, nur ohne deren
+Versionierung — also (a) mit mehr Teilen. Dazu kommt `l.MayRoot(cert.User, in.Node)`: selbst **mit**
+Aufgabe braucht der Unterzeichner Systemrechte auf **jedem** Knoten, den der Lauf anfasst — Wand
+(4) aus Punkt 71, noch einmal und diesmal für alle Knoten gleichzeitig.
+
+**c) Es bleibt, wie es ist, und das Einsetzen ist Handarbeit.** Dann gehört es gesagt: der
+stündliche Lauf lädt jede Stunde dieselben 31 MB und wirft sie weg, die Updates-Seite bietet an,
+was nie eingesetzt wird, und der Satz „die Anlage aktualisiert sich selbst" gilt für den Katalog
+und die Apps, aber nicht für NGC.
+
+> **Mein Vorschlag: (a)**, und zwar nicht aus Bequemlichkeit, sondern weil (b) dieselbe Schranke
+> aufbaut und dabei einen Menschen erfindet, den es in einer stündlichen Runde nicht gibt. Wer
+> (a) nicht will, will in Wahrheit (c) — und dann sollte die Oberfläche aufhören, ein Update
+> anzubieten, das sie nicht einsetzen kann.
+
+**Was dieser Punkt NICHT sagt:** dass ein Lauf nach der Entscheidung durchliefe. Gemessen ist der
+Weg bis zum bereitgelegten File. Was hinter dem Zugangstor steht — `installPart`, der Tausch, der
+Dienstneustart, der Gesundheitstest — ist auf dieser Anlage **nie gelaufen** und bleibt
+unvermessen, bis es das ist.
+
+Verwandt: **Punkt 79** misst denselben stündlichen Takt von der anderen Seite (der Laden ist weg);
+hier geht es nicht um die Erreichbarkeit des Ladens, sondern um den Kanal, der danach kommt.
+---
+
+## Punkt 83: Der kleine Fall hat wieder eine Maschine — und sie ist aus einem Skript entstanden, nicht von Hand
+
+> **Stand: gilt.** Art: Umgebung und Messung. Schließt an Punkt 75 an.
+
+**Entschieden am 24.10.2026** (Thomas): der kleine Fall wird weiter geprüft, auf einer
+**neuen** Maschine, und die alte wird **einmal** angeworfen, um zu bergen, was nur auf ihr
+liegt. Beides ist am selben Tag gemacht und gemessen.
+
+### Es war kein Absturz: ein `qmstop` vom Wirt
+
+Punkt 75 und der Nachtrag zu Punkt 74 ließen offen, was die Einzel-VM umgeworfen hat. Das ist
+jetzt gemessen, und zwar nicht in der VM, sondern im **Aufgabenbuch des Proxmox-Wirts**:
+
+```
+UPID:…:qmstop:208:root@pam:   ->  24.10.2026 12:37:27   OK
+```
+
+Die letzte Journalzeile des vorigen Laufs ist **12:36:19**, eine Minute davor. Also: **kein
+Absturz, kein Kernel, kein Fehler von NGC** — die Maschine wurde vom Wirt aus hart
+angehalten. Am selben Tag gab es zwei weitere solche Eingriffe (`qmstop` 01:11:14,
+`qmshutdown` 04:41:40). **Wer das Aus als Befund über NGC aufgeschrieben hätte, hätte etwas
+Falsches aufgeschrieben.** Wer sie angehalten hat und warum, ist nicht gemessen.
+
+**Nebenbefund:** bis zuletzt kam alle **63 Sekunden** ein `TLS handshake error … tls: bad
+certificate` von `10.111.111.111`. Regelmäßig, also etwas, das fragt und nicht aufgibt. Was
+dort fragt, ist nicht gemessen.
+
+### Geborgen: drei Skripte, die es im Repo nicht gab
+
+Vor dem Start ein Schnappschuss (`vor-bergung-20261024`), damit ein Start, der das
+Dateisystem beschädigt, nichts mitnimmt. Danach war Port 22 nach 16 Sekunden offen.
+
+Im Repo liegen jetzt `tools/pruefladen-tls.sh` (Test-CA und Ladenzertifikat),
+`tools/pruefladen-stellen.sh` (Laden hinter Apache über HTTPS) und
+`tools/haertung-nachsehen.sh` (liest die Härtung am **laufenden** Behälter plus cgroup und
+`/proc` — der Unterschied, auf dem die Punkte 51 und 72 beruhen). Pfade und Name sind
+Angaben geworden, die Schritte und Selbstprüfungen unverändert.
+
+**Die geheimen Schlüssel der alten Test-CA sind absichtlich nicht geborgen:** das Skript baut
+die CA selbst neu, nachgewiesen auf der neuen Maschine. Einen geheimen Schlüssel zu kopieren,
+den man nicht braucht, ist ein Risiko ohne Gegenwert. Die gebauten Pakete (103 MB und
+190 MB) sind ebenfalls nicht geborgen — `ngc-store pack` stellt sie aus dem Repo her. Der
+Katalog ist geborgen; `/srv/ngc-store/catalog.json` und `ngcapp/store/catalog.json` sind
+bytegleich (`5464c828…dbf1`), es gab also nur eine Fassung.
+
+**Der Befund ist größer als die vier Dinge aus Punkt 75:** in `/home/berry` liegen **22
+eigene Skripte** (2,0 MB) in acht Ordnern. Drei hatten allgemeinen Wert und sind jetzt im
+Repo; die anderen 19 gehören zu je einer Messung, die schon aufgeschrieben ist, und sind
+nicht geborgen. Sie liegen auf der Platte und im Schnappschuss. **Zu entscheiden (Thomas):**
+ob sie vor dem Löschen der Platte jemand durchsieht. Die Maschine ist danach sauber
+heruntergefahren, **nicht gelöscht**, Schnappschuss bleibt.
+
+### Zwei Befunde aus `app-weg.md` sind jetzt gemessen
+
+Jenes Papier ist eingefroren, darum hier:
+
+1. **Das Release bringt `ngc-store` mit.** Befund 4 ließ offen, ob das Release es nicht
+   mitliefert oder die Maschine von Hand bestückt war. Aus `ngc-api-amd64.tar` von **v0.2.2**
+   fielen genau `ngc-api` und `ngc-store`, und das herausgefallene `ngc-store` meldet
+   `0.2.2`. **Das Release liefert es — die alte Maschine war von Hand bestückt.**
+2. `/usr/lib/ngc/ngc-store` lag auf der alten Maschine mit Datum 19.10. vor; Befund 4 hatte
+   „heute ist es nicht da" gemessen, was damals richtig war. Daneben lagen **zehn** Programme
+   wie `ngc-api.vor-0.2.2` und `ngc-controller.vor-terminalkanal`. Keines kommt aus einem
+   Release.
+
+### Die neue Maschine, und warum eine neue
+
+Die alte war über Monate von Hand gewachsen. **Eine Messung auf einer Maschine, die niemand
+nachbauen kann, sagt wenig darüber, was ein Nutzer erlebt.** Darum ist der Ersatz ein
+**Skript**: `tools/einzelmaschine.sh` klont die Debian-13-Vorlage, aus der auch die sechs
+verteilten Knoten kommen, und gibt dem Klon alle Rollen zugleich.
+
+`ngc-ein`, VMID 307, 10.2.3.216, Name wieder `ngc.test`. Debian 13 (trixie), Kernel
+6.12.113+deb13-cloud-amd64, 2 Kerne, 3922 MiB, 32 GB + 16 GB. `ngc-api` und `ngc-controller`
+**0.2.2**, Oberfläche **0.2.1**, Datenbank SQLite in `/var/lib/ngc/api/ngc.db`.
+
+Der Weg: Pakete, `ulh` (`ngc-kette`), Release v0.2.2 nach `/var/lib/ngc/staged`, Prüfladen
+mit den **geborgenen** Skripten, dann `ngc-all.sh install`, dann `ngc-web.sh install`. Beide
+mit **Ausstiegscode 0**.
+
+**Der Laden muss vor der Installation stehen**, und das ist kein Umweg: ohne eigenen Laden
+bricht `ngc-all.sh` mit eigener Meldung ab, weil der Schlüssel des offiziellen Ladens ein
+Platzhalter ist (Punkte 56, 57). Genau dafür sind die geborgenen Skripte da — und auf der
+frischen Maschine fiel dabei eine Lücke auf, die auf der alten nicht auffallen **konnte**:
+`mod_ssl` war dort längst von NGCs Web eingeschaltet, auf einer frischen Debian nicht, und
+Apache stirbt mit `Invalid command 'SSLEngine'`. Das Skript schaltet es jetzt selbst ein.
+
+### Der kleine Fall, durchgemessen — und 451 Byte zum zweiten Mal
+
+Von außen über den **Namen** gemessen, nicht über die Adresse (`curl --resolve`):
+
+| Was | Ergebnis |
+|---|---|
+| `https://ngc.test/` | **`http=200`, 451 Byte**, `<title>NGC</title>` |
+| `/config.json` | `rp.id` = `ngc.test`, `apis` = `https://ngc.test:7443` |
+| `GET /api/v1/setup` über 443 (Apache) | 200 |
+| `GET /api/v1/setup` auf 7443 (API selbst) | 200 |
+| Zertifikat | `CN=ngc.test`, `SAN: DNS:ngc.test` — **keine IP** |
+| Dienst `ngc-api` | `active`, `NRestarts=0` |
+| `grep -c REPLACE-THIS-LINE /etc/ngc/api.json` | **0** |
+
+**451 Byte ist genau die Zahl aus Punkt 56 vom 16.10.2026**, damals auf der alten Maschine.
+Dieselbe Seite, dieselbe Größe, auf einer Maschine aus Skript und Release. Damit ist die
+Messung des kleinen Falls nicht nur wieder möglich, sie ist **nachbaubar**. Und Schritt 0 der
+Anleitung — im Zertifikat steht ein Name und keine Adresse — ist jetzt an einer **zweiten**
+Anlage gemessen.
+
+### Was auf der neuen Maschine NICHT gemessen ist
+
+- **Die Ersteinrichtung im Browser.** Der Einmal-Code steht auf dem Schirm, und den ersten
+  Verwalter legt ein **Mensch** an. Kein Agent tippt ihn.
+- Darum auch nichts dahinter: Controller koppeln, Systemrechte, eine App einrichten, der
+  ganze Weg der Punkte 71 und 72. **Der Controller ist nicht gekoppelt, also läuft keine
+  App.**
+- Die Oberflächenfassung zu Punkt 73 ist hier nicht eingespielt (die Maschine läuft
+  `origin/main`).
+- Die 16-GB-Platte ist leer; `fscrypt` ist auf ihr nicht gemessen.
+- Der Prüfladen trägt einen Katalog in Folge 1, aber **keine App darin**.
+
+### Ein Fehler beim Bauen, der hierher gehört
+
+Die Bereitschaftsprüfung von `einzelmaschine.sh` meldete zuerst „kernel 7.0.6-2-pve, 20
+cores" und nannte die VM bereit. **Das sind die Zahlen des Proxmox-Wirts.** Ein Befehl auf der
+VM über den Wirt sind zwei ssh-Sprünge, und was auf der Befehlszeile steht, nimmt jede Schale
+auseinander, durch die es geht: Zitieren von Hand verlor eine Ebene (leeres `$PRETTY_NAME`
+neben funktionierendem `$(uname -r)`), und base64 auf der Befehlszeile ließ die Pipe **auf dem
+Wirt** laufen. Jetzt reist der Befehl als base64 über die **Eingabe**, während die ferne
+Befehlszeile ein fester Text bleibt — und die Prüfung lehnt zusätzlich jede Antwort ab, deren
+`hostname` nicht der erwartete ist. **Eine erreichbare Maschine mit dem falschen Namen ist
+schlimmer als Stille.** Gegenprobe im Protokoll: Wirt 20 Kerne, VM 2 Kerne.
+
+Das ist derselbe Fehler, um den dieser ganze Zweig geht, nur eine Ebene tiefer: **die falsche
+Maschine messen und das Ergebnis für einen Befund halten.**
+
+### Nachtrag: vier der Messskripte sind geborgen — und das Bergen hat einen Scheinbeweis aufgedeckt
+
+**Entschieden (Thomas, 24.10.2026):** vier der 16 eigenen Skripte kommen ins Repo. VM 208 dafür
+ein zweites Mal angeworfen, gelesen, wieder sauber heruntergefahren.
+
+Es sind **16**, nicht 19: die beiden `messen-boot.sh` sind bytegleich, und zwei Dateien
+(`ulhrepo/install.sh`, `ulhrepo/ulh.sh`) gehören dem **ulh**-Repo und nicht NGC.
+
+| jetzt im Repo | war | misst |
+|---|---|---|
+| `tools/siegel-tpm.sh` | `~/smoke/run.sh` | versiegeln, mit Signatur über die **eigene Nonce des TPM** öffnen, und ein Wiedereinspielen muss scheitern |
+| `tools/siegel-stick.sh` | `~/smoke/stick.sh` | derselbe Weg mit dem Schlüssel in einem PKCS#11-Stick: Hash außen, der Stick unterschreibt nur den Abdruck |
+| `tools/env-werkzeug-weg.sh` | `~/task6fix1/n9.sh` | ein Werkzeug aus dem `PATH` genommen muss von `recovery-env.sh` **benannt** werden; liest die `need=`-Liste aus dem Skript selbst |
+| `tools/release-mutanten.sh` | `~/relbuild/mutanten.sh` | sieben Mutanten an `tools/build-release.sh` plus fünf Eingabefälle |
+
+**Verdeckte Abhängigkeiten, die niemand aufgeschrieben hatte.** Beide Siegel-Skripte starten den
+TPM-Simulator **nicht** (die Instanz `main` teilen sie mit `recovery-test.sh`, und eine zweite
+dahinter würde genau die PCRs verschieben, gegen die versiegelt wird), und `siegel-stick.sh`
+braucht den dauerhaften Primary an `0x81000001`, den `siegel-tpm.sh` anlegt. Vorher fiel beides
+als nackter TPM-Fehler auf. Jetzt wird es geprüft und benannt.
+
+**Gemessen** auf einer Wegwerf-VM, mit `tools/einzelmaschine.sh` gebaut:
+
+| Lauf | Ergebnis |
+|---|---|
+| `siegel-tpm.sh` | Ausstiegscode 0, `ALLES GRUEN`, Replay „abgelehnt, wie es sein muss" |
+| `siegel-stick.sh` | Ausstiegscode 0, `STICK-WEG GRUEN`, P-384 aus dem Stick, Replay abgelehnt |
+| `env-werkzeug-weg.sh` | Ausstiegscode 0; mit allem `Umgebung: vollständig`, dann `Es fehlt: grep`, `grep sed`, `grep sed tpm2_readpublic` |
+| `release-mutanten.sh` | Ausstiegscode 0, `mutanten: ok` — K0/L1/L2 grün, M1–M4 rot, fünf Versionen abgewiesen |
+
+**Gegenproben, damit die Riegel nicht nur dastehen:** ohne Simulator endet `siegel-tpm.sh` mit 2
+und nennt den Startbefehl; nach `recovery-swtpm.sh reset main` endet `siegel-stick.sh` mit 2 und
+nennt `siegel-tpm.sh`; und bevor `recovery-tools.sh` gelaufen war, hielt `env-werkzeug-weg.sh`
+sich selbst an: „mit allen Werkzeugen schon rot — hier ist nichts zu messen".
+
+### Der Scheinbeweis, und warum er hierher gehört
+
+Der **erste** Mutantenlauf meldete K0, L1 und L2 rot und M1 bis M4 „rot, wie erwartet". Das sah
+nach vier sterbenden Mutanten aus. Es war keiner.
+
+Auf der Maschine fehlte `qemu-user-static`, und `build-release.sh` weist dann **jeden** Lauf
+schon am ersten Schritt ab — alle mit derselben Meldung. Die lebenden Kontrollen fielen auf,
+weil sie grün sein müssten. Die sterbenden Mutanten fielen **nicht** auf: sie waren rot, nur
+nicht an ihrer Mutation. Keiner von ihnen hat seine eigene Mutation je erreicht.
+
+Besonders tückisch ist M4: seine Mutation („kein Läufer für arm64") erzeugt **genau dieselbe
+Meldung** wie die fehlende Umgebung. An der Ausgabe ist M4 in diesem Fall nicht
+unterscheidbar.
+
+**Der Riegel dagegen:** ist die Kontrolle K0 rot, bricht der Lauf **dort** ab. Jeder Mutant wäre
+aus demselben Grund rot, und das beweist nichts. Nachgemessen: mit fehlendem `qemu-user-static`
+endet der Lauf jetzt nach K0 mit Ausstiegscode 1 und nennt das fehlende Paket. Danach
+installiert und wiederholt, stirbt jeder Mutant an **seiner eigenen** Ursache:
+
+| Mutant | woran er stirbt |
+|---|---|
+| M1, M2 | `ngc-api ANSWERS "0.0.0-dev", which validVersion refuses` — **Wand 2 aus Punkt 71** |
+| M3 | das `ngc-controller`-Archiv trägt etwas, das keine gewöhnliche Datei ist (der Eintrag `./`) |
+| M4 | kein Läufer für arm64 — jetzt aus der Mutation, nicht aus der Umgebung |
+
+Zusätzlich prüft der Lauf jetzt **je Fall die Erwartung** (grün oder rot) statt nur den
+Ausstiegscode zu drucken, und ein angenommener Versionsstring ist ein Befund statt einer Zeile.
+
+**Was daraus allgemein folgt, und es ist derselbe Satz wie im ganzen Punkt:** rot ist kein
+Beweis, solange nicht gemessen ist, **woran** es rot wurde. Ein Prüfsatz braucht neben den
+sterbenden Fällen lebende Kontrollen — und er muss anhalten, wenn die Kontrolle fällt.
+
+### Nicht geborgen, mit Grund
+
+Die zwölf übrigen eigenen Skripte hängen alle am Arbeitsbaum `dist/recovery/`, den es im Repo
+nicht gibt, und jedes gehört zu einer Messrunde, die schon aufgeschrieben ist. In ihren Ordnern
+liegen außerdem ganze Arbeitsbäume mit SoftHSM-Token, TPM-Zustand und **drei PIN-Dateien**. Die
+Stick-Schlüssel darin sind öffentliche Schlüssel; die PINs sind Geheimnisse und gehören in kein
+Repo. Nichts davon ist übernommen.
+
+### Zur Nummer dieses Punktes
+
+Er hieß beim Schreiben 82, dann 85, jetzt 83. Grund: main bekam inzwischen einen eigenen Punkt
+82, und `tools/check-buch.sh` — den es heute Morgen noch nicht gab — weist **Lücken**
+mechanisch ab. 85 hätte die Löcher 83 und 84 gerissen und den Riegel rot gemacht, obwohl main
+grün ist (`buch: ok, 64 points, 19-82`). Darum die lückenlose 83, obwohl ein offener Zweig sie
+ebenfalls beansprucht: eine Doppelung wird beim Zusammenführen umnummeriert, ein Loch nicht.
+
+### Nachtrag: die alte Maschine ist gelöscht
+
+**Entschieden (Thomas, 24.10.2026):** VM 208 samt Platte und Schnappschuss kann weg.
+
+**Vorher geprüft, weil ein Löschen nicht zurückgeht.** Die Bergung hatte Dateien in einem
+sitzungsflüchtigen Ordner liegen lassen; was davon nirgends sonst existierte, musste erst
+dauerhaft liegen:
+
+| geborgen | Lage vor dem Löschen |
+|---|---|
+| die drei Prüfladen- und vier Messskripte | in `tools/`, auf `origin` |
+| die zwei Oberflächendateien von vor Punkt 73 | liegen als Blobs im Repo, Commit `1c8b695` — **nichts verloren** |
+| das Terminal-Manifest | bytegleich mit `apps/server-controller/templates/terminal/manifest.json` |
+| `terminal-1.0.0.ngc` und die zwei Pakete in `~/uhr-bau/` | gebaut, aus dem Repo neu baubar |
+| **`catalog.json` und `store-key.pem`** | **nur im Kratzordner** — jetzt in `docs/belege/einzel-vm-laden/` |
+
+Die zwei letzten sind der einzige erhaltene Katalog, den eine NGC-API wirklich geholt und
+dessen Unterschrift sie wirklich geprüft hat: Folge 1, eine App, Kennung
+`WM0yymuJtd9UxaUONGIXow`, 692 Byte, dazu der **öffentliche** Teil des Ladenschlüssels,
+113 Byte. Beides öffentlich, kein Geheimnis. Der geheime Teil war schon vor dem Abschalten
+nicht zu finden (`app-weg.md`, Befund 2) — diesem Laden kann also nie wieder jemand eine App
+hinzufügen, und als Vorlage ist er nichts: er zeigt auf eine Adresse, die es nicht mehr gibt.
+
+**Dann gelöscht**, mit Namensprüfung vor dem Befehl (VMID 208, Name `NGC`, `stopped`):
+
+```
+qm destroy 208 --purge 1 --destroy-unreferenced-disks 1   ->  Ausstiegscode 0
+```
+
+Weg sind: die 80-GB-Platte (`ssd_2TB:208/vm-208-disk-0.qcow2`), der EFI- und der TPM-Zustand
+(`local-lvm`), und beide Schnappschuss-Datenträger `snap_vm-208-disk-*_vor-bergung-20261024`.
+
+**Nachgeprüft, nicht angenommen:**
+
+| Probe | Ergebnis |
+|---|---|
+| `qm status 208` | `Configuration file 'nodes/pve/qemu-server/208.conf' does not exist` |
+| `/mnt/ssd_2TB/images/208` | `No such file or directory` |
+| `qm list` | nur noch `307 ngc-ein running` — der kleine Fall ist unberührt |
+| `ping 10.2.3.208` | keine Antwort |
+
+**Was damit endgültig fort ist:** die 19 nicht geborgenen Messskripte aus `/home/berry`
+(2,0 MB in acht Ordnern), die Arbeitsbäume `dist/recovery/` samt SoftHSM-Token, TPM-Zustand
+und den drei PIN-Dateien, die zehn handgelegten Programmfassungen in `/usr/lib/ngc/`
+(`ngc-api.vor-0.2.2`, `ngc-controller.vor-terminalkanal` und so weiter) und die gebauten
+Pakete. Das war die Entscheidung, nicht ein Versehen: jedes dieser Skripte gehört zu einer
+Messung, die schon aufgeschrieben ist, und keines ließ sich ohne jenen Arbeitsbaum aufrufen.
+
+**Der Satz, der bleibt**, und er ist der eigentliche Ertrag dieses Punktes: die erste wirklich
+laufende Anlage war ein Handbau, und als sie wegging, hing an ihr mehr, als irgendwo
+aufgeschrieben stand. Was nur auf einer Maschine liegt, ist nicht gesichert. Der kleine Fall
+läuft jetzt auf `ngc-ein`, und `ngc-ein` kommt aus einem Skript.
+## Punkt 84: Eine Prüfrunde über die Nähte von zwei Tagen — die Nähte halten, der Satz darüber nicht
+
+Zwischen dem 19. und 24.10.2026 sind rund dreißig Pull Requests auf `main` gelandet, viele davon
+in Stunden, aus Sitzungen, die nebeneinander liefen. In genau diesem Zeitraum war der CI-Schritt
+„check.sh + counted test run" bei praktisch jedem Pull Request rot, weil die Zählung ihre Datei
+nie bekam (behoben mit PR 109). Rot war also kein Signal, und Grün gab es nicht. Jede Sitzung hat
+ihren Teil gemessen; **den entstandenen Stand im Zusammenhang hatte niemand gelesen.**
+
+Diese Runde liest ihn — Fenster `6cf5cef..17b9895`, 30 zusammengeführte Pull Requests.
+
+### Was gehalten hat, und wie es gemessen ist
+
+| Zusicherung | Wie gemessen | Ergebnis |
+|---|---|---|
+| `shared/` ist eingefroren | `git diff --numstat 6cf5cef..HEAD -- shared/` | **0 Zeilen**, kein Commit |
+| Kein Konfliktmarker steht noch im Baum | Suche nach den drei Markerzeilen über Go, JS, CSS, MD, SH, HTML | 0 Treffer |
+| Keine Hälfte fehlt in den Oberflächen | 41 ESM-Module einzeln in Node geladen (die Link-Zeit findet jeden fehlenden Export) | **0 Link- oder Parse-Fehler** |
+| Kein Fall ist beim Auflösen verlorengegangen | je Merge mit Konflikthunks: Fallnamen **beider** Eltern gegen das Ergebnis | **0 verlorene Fälle** in allen 24 geprüften Merges |
+| Die Oberfläche schreibt nichts | `grep -rc 'console\.'` über `apps/web/public/assets/js` | **0** |
+| Kein Fremdtext als Markup | jede Senke (`innerHTML`, `document.write`, `outerHTML`, …) einzeln gelesen | nur die eine gezäunte Ausnahme `shell/frame-boot.js` |
+| Kein Geheimnis in Protokollen oder Prozesslisten | jeder Log-Aufruf der geänderten Go-Dateien mit geheimnisverdächtigem Feld; jede `exec.Command` | 4 Treffer, alle Längen oder IDs; kein Geheimnis auf `argv` |
+| Punktnummern und CHANGELOG | Nummernfolge, doppelte Überschriften | keine Lücke, keine echte Dublette |
+
+Die von Hand aufgelösten Nähte sind einzeln gegen **beide** Eltern gelesen (`git show --cc`):
+`docs/vertraege-v1.2.md`, `apps/web/public/assets/css/shell.css`,
+`apps/web/public/assets/js/apps/users.js` und `store.js`, dazu `CHANGELOG.md` und
+`apps/server-controller/classes/serve/app.go`. Drei Ketten, bei denen zwei Sitzungen aufeinander
+angewiesen waren, sind **durchgegangen** statt nur angesehen:
+
+- `users.js` `appsNow()` → `this.ctx` → `desktop.js appCtx()` — dort steht ein echter Getter auf
+  `this.appList`, das `load()` ersetzt. Der Kommentar verspricht einen frischen Lesevorgang, und
+  es gibt einen.
+- `rights.Of` (ein Verwalter hält jedes App-Recht ohne Zeile) → `rights.Check` →
+  `Dispatcher.apps` — dieselbe Bedingung an allen drei Stellen, auch im Fehlerfall des Manifests.
+- `dispatch.go` `CloseBecause` → `reason.Screen` — die eine Zusicherung, die ein Leck wäre, wenn
+  sie fehlte: `AppUnknown` darf nicht auf den Schirm. `browser.go:409` filtert.
+
+### Der Fund: der Satz über dem Code sagt „zwei", der Code sagt „drei"
+
+`apps/server-api/classes/browser/browser.go:426`, vor dieser Änderung:
+
+> `closeChannel` … **and Close and CloseWith are the two ways in.**
+
+`CloseBecause` kam am 23.10.2026 mit „api: every refused channel names the check that said no"
+und ruft `closeChannel` ebenfalls (`browser.go:412`). Es sind **drei** Wege hinein, nicht zwei.
+Derselbe falsche Satz stand in `lint_test.go:233` — also in dem Fall, der die Aussage messen soll.
+
+**Was dabei schiefgeht:** der nächste Mensch liest einen Satz über eine Sicherheitszusicherung
+(„genau eine Stelle vermerkt einen CLOSE von uns"), der die Lage nicht mehr beschreibt, und
+schließt daraus entweder, ein neuer `Close*`-Weg sei nicht vorgesehen, oder er übersieht, dass ein
+neuer Weg durch `closeChannel` gehen **muss**. Der Prüfsatz konnte das nicht sehen: er zählt nur,
+**wo** `SentClose` steht, nicht **wer** `closeChannel` erreicht — und ein neuer Aufrufer
+verschiebt die Stelle des Vermerks nicht.
+
+**Gemessen, dass die Lücke echt war:** derselbe Mutant — ein vierter, nirgends aufgeschriebener
+Aufrufer von `closeChannel` — läuft am alten Fall `TestOnlyProtocolErrorHoldsANumber` grün durch
+(`ok`, Ausstiegscode 0) und tötet den neuen.
+
+**Behoben, und zwar als Messung statt als Prosa:** der Satz ist richtiggestellt, und
+`TestTheWaysIntoCloseChannelAreTheNamedOnes` misst jetzt die **Menge** der Aufrufer gegen die
+Liste, die im Kommentar steht. Nach `Z:\GitHub\claude-md\messen.md`: in einer **Kopie** des Baums,
+nie im Arbeitsbaum, jeder Lauf mit `-count=1`, und das Messskript bricht ab, statt eine Zahl zu
+nennen, wenn seine eigene Vorbereitung nicht genau einmal gegriffen hat.
+
+| | Mutation | Ergebnis |
+|---|---|---|
+| Dichtheitsprobe | keine | grün — sonst wäre die Kopie der Fund |
+| Sterbender Mutant | vierter Aufrufer `closeSneaky` von `closeChannel` | **gestorben**: „closeChannel is reached from [Close CloseBecause CloseWith closeSneaky]" |
+| Lebende Kontrolle | lokaler Parameter `cl` → `clo` in `closeChannel`, übersetzt | **gelebt** |
+
+### Der zweite Fund, und er stand quer im Weg: das Buch war rot auf seiner eigenen Prüfung
+
+`tools/check-buch.sh` ist in diesem Fenster entstanden, genau gegen den Fehler, den ich beim
+Anhängen dieses Punktes selbst getroffen habe: eine andere Sitzung hatte die **81** schon
+vergeben, während dieser Zweig geschrieben wurde. Der Prüfer hat die Dublette gefangen, der Punkt
+ist auf 82 weitergezählt — das Werkzeug tut, was es soll.
+
+**Nur war es selbst eine stehengebliebene Hälfte.** Das Buch verlangt in seinem eigenen Kopf: „Wer
+einen Punkt anhängt, trägt ihn in die Tabelle der Reihe B ein — sonst wird die Prüfung rot, und
+das ist Absicht." Gemessen am Buch von `origin/main`, ohne eine Zeile von mir:
+
+```
+buch: these points have a chapter but no row in the Reihe-B table of contents:
+      75 76 77 78 79 80 81
+buch: NOT ok
+```
+
+**Sieben** Kapitel ohne Zeile — und `check.sh` ruft `tools/check-buch.sh` auf. `main` war damit
+**rot auf seiner eigenen Prüfung**, und zwar an der Stelle, die laut Kommentar „die Stelle ist, an
+der die nächste freie Nummer abgelesen wird". Die Prüfung kam, die Zeilen kamen nicht mit: der
+Prüfer landete am 24.10., die sieben Punkte entstanden am selben Tag aus anderen Sitzungen, und
+niemand hat beides zusammen gesehen. Genau der Grund, warum es diese Runde gibt.
+
+**Was dabei schiefgeht:** solange `check.sh` rot ist, weil das Buch rot ist, liest niemand mehr
+hin — und ein echter Fund in derselben Prüfung geht im Dauer-Rot unter. Das ist dieselbe Klasse
+wie das kaputte CI-Zählwerk, das diese Runde überhaupt nötig gemacht hat: **eine Prüfung, die
+immer rot ist, prüft nichts.**
+
+**Behoben — und zwar zweimal, unabhängig voneinander, was den Befund erst rund macht.** Ich habe
+die acht Zeilen 75 bis 82 nachgetragen, jede aus dem eigenen Kapitel geschrieben. Beim nächsten
+Holen von `main` stand dort `10f0105` „docs: put points 75-82 into the Reihe-B table of contents"
+— **eine andere Sitzung hatte dieselbe Lücke zur selben Zeit gefunden und gefüllt.** Beim
+Zusammenführen habe ich meine sieben Zeilen fallengelassen und die ihren genommen; von mir bleibt
+die Zeile für diesen Punkt.
+
+Das ist kein Ärgernis, sondern die Bestätigung: dieselbe Lücke wurde an einem Tag von zwei
+Sitzungen unabhängig gefunden, und **keine von beiden hätte davon erfahren**, hätte nicht eine von
+ihnen nachgeholt und gemerkt, dass die Arbeit schon getan war. Doppelte Arbeit ist der
+sichtbare Teil; der unsichtbare ist, dass wir beide auch dieselbe Lücke **übersehen** haben
+könnten. Danach:
+
+```
+buch: ok (65 points, 19-83, no duplicate, no gap, no dead reference)
+```
+
+**Was ich dabei NICHT getan habe:** die Aufstellung „Stand in Zahlen" zählt die Reihe B weiter bis
+Punkt 74. Sie für fremde Punkte auf „gilt / überholt / offen" aufzuteilen hieße, über deren Stand
+zu entscheiden; das steht dem Koordinator zu. Statt zu raten steht die Lücke jetzt **als Lücke**
+über der Tabelle, mit der gemessenen Kapitelzahl daneben.
+
+### Abgewogen und verworfen: `E_TIMEOUT` heißt nicht „Rechner weg"
+
+Der Verdacht war eine echte Naht. PR 102 lässt einen App-Kanal, dessen Uhr abgelaufen ist, mit
+`E_TIMEOUT` statt `E_INTERNAL` enden (23.10., 18:02 Uhr), und `reason.ForCode` aus PR 120 bildet
+`E_TIMEOUT` auf `NodeAway` ab — „Der Rechner für diese Aktion ist gerade nicht verbunden."
+(18:11 Uhr, neun Minuten später, andere Sitzung). Das wäre genau die Klasse aus Punkt 50: ein
+Zustand wird als etwas anderes dargestellt.
+
+**Es ist keiner.** `relay.openAndPump` kürzt einen vom Controller geschlossenen Kanal auf
+`code = ""` ab (`relay.go:379-382`, Zweig `theirClose`), und `ForCode("")` ist `None`. Der
+`E_TIMEOUT` des Controllers erreicht `ForCode` nie; der Controller schreibt seinen eigenen Grund
+in sein eigenes Journal, was der Kommentar an `relay.Forward` auch sagt. **Gelesen, nicht
+gemessen.**
+
+### Zur Entscheidung, nicht behoben: `Serves` antwortet für eine Abhängigkeit zweimal verschieden
+
+`apps/server-controller/classes/serve/serve.go:292` trägt `installKey` **bedingungslos** in
+`s.acts` ein, während `activateKey` (Zeile 305) und `stageKey` (Zeile 306) nur eingetragen werden,
+wenn ihre Abhängigkeit da ist. `install` und `stage` brauchen **dieselbe** Abhängigkeit
+(`s.d.Updater`), und beide weisen bei `nil` mit demselben Code ab. Auf einem Controller ohne
+Updater antwortet `Serves(…/install)` also **wahr** und `Serves(…/stage)` **falsch** — über eine
+Abhängigkeit.
+
+Der Kommentar direkt darüber (Zeile 295–301) begründet das Gattern genau damit, dass `Serves` die
+Frage beantworten soll, die ihm gestellt wird. `stageKey` kam mit PR 121 am 24.10. und hat das
+neue Muster nur auf den **neuen** Schlüssel angewandt.
+
+**Was heute schiefgeht: nichts** — `Serves` hat im Produktionscode keinen einzigen Aufrufer, der
+Fund ist latent. Und `serve.go:433-441` nennt den bedingungslosen Eintrag von `installKey`
+ausdrücklich als Stand „seit Aufgabe 19". Eine dokumentierte Entscheidung umzudrehen ist nicht
+Sache dieser Runde: **Thomas entscheidet**, ob `installKey` auf `d.Updater != nil` gegattert wird
+— verhaltensneutral auf der Leitung, denn der unbekannte Schlüssel endet in `Server.core` mit
+demselben `E_INTERNAL` — oder ob der Satz über `Serves` die Ausnahme nennt.
+
+### Ein Fund außerhalb des Fensters, der Vollständigkeit wegen
+
+`apps/server-api/classes/rights/check.go:24` nennt als Nachrechenanweisung „`grep -n
+'Open\.[A-Za-z]*' check.go rights.go`, **five hits**". Der genannte Befehl liefert **sieben**. Die
+Aufzählung darunter ist weiter richtig — gelesen werden genau `Params`, `Action`, `Task`,
+`Confirm`, und `Window`/`E2E` nicht —, nur die Zahl reproduziert nicht. Gemessen über die
+Fassungen: es waren schon **sieben**, als der Satz am 12.10.2026 geschrieben wurde. Also **kein
+Fund dieser Nähte**, und hier nicht angefasst.
+
+### Was diese Runde nicht gelesen hat
+
+Ehrlichkeit ist hier mehr wert als Vollständigkeit.
+
+- **Nicht gelesen, weil fremde Arbeit:** `tools/erstlauf.sh`, `docs/app-weg.md`,
+  `docs/messungen-m1-m3.md`, `docs/thomas-entscheidet.md`.
+- **Nicht gelesen, weil nach dem Fenster:** alles, was nach `17b9895` auf `main` kam — beim
+  Schreiben dieses Punktes **62 Commits** bis Punkt 82, darunter die PRs 124 bis 141. Dieser
+  Zweig führt sie mit, **geprüft sind sie nicht.**
+- **Nur überflogen, nicht Zeile für Zeile:** `tools/erstlauf-probe/main.go`,
+  `tools/proxmox-sechs*.sh`, `versuch-rust/sign`, `versuch-port/wordcraft` — dort nur, dass
+  `exec.Command` einen festen Pfad ohne Shell nimmt —, die Installations- und Proxmox-Dokumente.
+- **Ein Werkzeug, das nichts gemessen hat, und darum verworfen:** ein Scanner auf unexportierte
+  Go-Deklarationen ohne Leser — die typische Form einer stehengebliebenen Hälfte — hat
+  Methodenaufrufe der Form `empfaenger.name` nicht als Leser erkannt und `closeChannel` selbst
+  als „nirgends gelesen" gemeldet, bei drei belegten Aufrufen. Nach messen.md ist ein Lauf, dessen
+  Kontrolle sich falsch verhält, wertlos; der Scanner ist **verworfen, nicht geflickt**. Die
+  Klasse „unexportierte Hälfte ohne Aufrufer" ist damit **nicht geprüft**.
+- **Die Linux-Seite ist nicht gelaufen:** gemessen wurde auf dem Windows-Rechner, 88 Fälle
+  überspringen sich dort selbst (`check.sh` sagt die Zahl). `go test -race` ist nicht gelaufen.
+
+### Der Prüfsatz am Ende
+
+**Zwei Zahlen, weil sie zwei verschiedene Bäume messen** — darum stehen beide da:
+
+```
+am Kopf des Fensters (17b9895), also an dem Stand, der geprüft ist:
+  vorher   ->  ci-count: ok (3425 cases ran, 88 skipped)
+  nachher  ->  ci-count: ok (3426 cases ran, 88 skipped)
+
+am zusammengeführten Kopf dieses Zweiges, den der Pull Request anbietet:
+  bash tools/check.sh                 ->  check: ok, Ausstiegscode 0, 323 passed, 0 failed
+  bash tools/ci-count.sh <test.json>  ->  3451 passed, 0 FAILED, 88 SKIPPED
+                                          ci-count: ok (3451 cases ran, 88 skipped)
+```
+
+Der **eine** Fall zwischen 3425 und 3426 ist `TestTheWaysIntoCloseChannelAreTheNamedOnes`. Die
+**25** zwischen 3426 und 3451 sind **nicht** meine: sie kommen mit den 59 Commits, die nach
+`17b9895` auf `main` gelandet sind und die dieser Zweig mitführt — gelaufen sind sie, **geprüft
+nicht.** Wer die 3451 als Zahl dieser Prüfrunde liest, schreibt ihr fünfundzwanzig Fälle gut, die
+eine andere Sitzung gemessen hat.
+
+Herkunft: Prüfrunde über die Nähte des Fensters 19.–24.10.2026, Zweig `pruefrunde-naehte`.
+
+---
+=======
+## Punkt 85: Ein flatternder Prüffall, der an der Vorrichtung lag — und das Flattern stand in der Zahl
+
+Gemessen am 24.10.2026 als root, in WSL (Debian, Go 1.27), Zweig `terminal-fault-race` auf
+`main` (f77143c). Aufgefallen ist es in der CI: Lauf 40105559326, Prüfung „controller cases that
+need root", Zweig `ausfall` — ein Zweig, der **keine Zeile Go anfasst**. Derselbe Satz war im
+`main`-Lauf davor (40102495746) grün.
+
+**Herkunft:** der rote Lauf kommt aus der Sitzung, die den Ausfall je Maschine gemessen hat
+(CI-Lauf 40105559326; ihr eigener Punkt stand bei diesem Zweig noch in einem offenen Vorschlag). Dass die **Vorrichtung** des Falls schuld ist und nicht der
+Produktionscode, hat die Sitzung „Sichern und wiederherstellen" zuerst gesagt. Welche Stelle der
+Vorrichtung es ist, weicht von ihrer Lesart ab, und beides steht unten: sie hielt das endende
+`exit` der Eingabe für den Gewinner des Rennens, gemessen gewinnt es, weil **gar kein Fehler
+entstand**.
+
+```
+terminal_test.go:665: exit 0 although the channel broke, after 2.002541317s, stderr ""
+--- FAIL: TestAFaultEndsTheTerminalAtOnce (2.00s)
+```
+
+**Die Flatterquote, vor jeder Änderung:** 30 Läufe, je `-count=1`, **23 grün, 7 rot — 23 %**.
+Jeder rote Lauf bei 2,003 s.
+
+### Die Zahl sagt schon, dass es nicht die Grenze war
+
+Der Fall hat zwei Riegel: `code == 0` und `took > faultWithin`, und `faultWithin` ist **5 s**.
+Gerissen ist der erste, bei 2,0035 s. **2,0035 s ist `LastWord`**, die zwei Sekunden, die eine
+sauber beendete Eingabe der Shell für ihr letztes Wort lässt — nicht die Grenze des Falls. Der
+Lauf war also kein „zu langsame Maschine" und kein „die Störung wurde verschluckt", sondern ein
+Lauf, in dem **gar nichts kaputtgegangen ist**.
+
+### Was wirklich entschied: eine Lesegrenze des Pseudoterminals
+
+Die Attrappe `errWriter` lässt den **ersten** Schreibvorgang durch und scheitert erst vom zweiten
+an. Die ganze Ausgabe dieses Laufs ist aber das Echo der beiden getippten Zeilen. Ob dieses Echo
+in **einem** oder in **zwei** Lesevorgängen bei `pumpOut` ankommt, ist ein Rennen zwischen
+`pumpIn`, das den zweiten Tastenrahmen schreibt, und `pumpOut`, das das Pseudoterminal liest.
+
+Ein mitzählender Schreibkanal an derselben Stelle, 10 Läufe, sagt es ohne Deutung:
+
+```
+code=1 nach  1,8 ms     Schreibvorgänge=2  Größen=[16 2]
+code=0 nach  2,0035 s   Schreibvorgänge=1  Größen=[18]
+```
+
+16 + 2 = 18. Im roten Lauf kamen beide Echos in **einem** Lesevorgang, der Pumpenlauf schrieb
+**einmal** — und dieser eine Schreibvorgang **gelang**. Danach schläft die Shell 30 s, es kommt
+nichts mehr, die saubere Eingabe bekommt ihre zwei Sekunden `LastWord`, und `0` ist darauf die
+**richtige** Antwort.
+
+### Also: der Fall war falsch, der Code war recht
+
+Nichts in `pumpOut`, `runShell` oder `run` wirft einen Schreibfehler weg. Geändert ist nur die
+Vorrichtung: der Kanal ist jetzt **weg** und nicht wackelig (`brokenChannel` scheitert bei
+**jedem** Schreibvorgang), und der Fall prüft **zuerst**, dass die Shell überhaupt geschrieben hat
+— sonst sähe ein Lauf ohne jede Ausgabe wieder wie ein verschluckter Fehler aus. Die Spanne, die
+der Fall entscheidet, bleibt unberührt: 30 s Schlaf gegen 5 s Grenze.
+
+**Danach:** 30 Läufe, **30 grün, 0 rot.**
+
+### Zwei Kontrollmutanten, wie `messen.md` sie verlangt
+
+| Mutant | Eingriff (per `-overlay`, keine Datei im Baum verbogen) | Erwartung | 30 Läufe |
+|---|---|---|---|
+| muss sterben | in `pumpOut` kann `werr != nil` nie zutreffen (der Schreibfehler wird verschluckt) | rot | **0 grün, 30 rot** |
+| muss leben | der lokale Lesepuffer heißt `raw` statt `buf` | grün | **30 grün, 0 rot** |
+
+Der sterbende Mutant meldet dabei `exit 0 after 2 writes into a channel that was gone` — der Fall
+kann einen verschluckten Fehler jetzt von „es wurde nichts geschrieben" unterscheiden, und das ist
+der Unterschied, der ihm vorher fehlte.
+
+### Was das über solche Fälle sagt
+
+Dieser Fall ist zum **zweiten** Mal an einer Zahl gescheitert, die nicht seine Entscheidung war:
+am 23.10.2026 waren Schlaf und Grenze dieselbe Sekunde, jetzt war die Attrappe auf einen
+**zweiten** Schreibvorgang angewiesen. Beide Male war der Code recht. **Eine Attrappe, die erst
+beim n-ten Mal kaputtgeht, macht die Stückelung eines Datenstroms zum Teil der Zusicherung** — und
+die Stückelung eines Pseudoterminals gehört dem Kern, nicht dem Prüfsatz. Wer „der Kanal ist weg"
+meint, baut einen Kanal, der von Anfang an weg ist, und belegt mit einem Zähler, dass die gemeinte
+Stelle überhaupt erreicht wurde.
+
+### Die naheliegende andere Reparatur flattert ebenfalls — gemessen, nicht vermutet
+
+Vorgeschlagen war, die Eingabe mit `holdOpen` offen zu halten und das `exit` zu streichen, damit
+das saubere Ende von `pumpIn` das Rennen nicht gewinnen kann. Das lässt `errWriter` aber, wie es
+ist — und damit bleibt die Stückelung die Entscheiderin. Dieselbe Sonde, 5 Läufe:
+
+```
+code=1 nach    1,7 – 2,4 ms   Schreibvorgänge=2  Größen=[10 2]     3 von 5
+code=1 nach   30,0 s          Schreibvorgänge=2  Größen=[12 2]     2 von 5
+```
+
+Der zweite Schreibvorgang — und damit der Fehler — kommt in diesen zwei Läufen erst, als `sleep
+30` fertig ist und das Pseudoterminal **ein zweites Mal** etwas herausgibt. Der Fall wäre dort rot,
+jetzt am Zeitriegel (30 s gegen `faultWithin` von 5 s) statt an `code == 0`. Die Datei hält dieses
+Mittel schon seit 18.10.2026 als erfolglos fest; was hier dazukommt, ist die Zahl.
+
+**Also gehört die Reparatur an den Schreibkanal, nicht an die Eingabe:** solange die Attrappe einen
+**zweiten** Schreibvorgang braucht, entscheidet die Stückelung, und man verschiebt nur, welcher
+Riegel reißt. Nur fünf Läufe, und das ist wenig — als Beleg, dass dieses Mittel das Flattern nicht
+beendet, reichen sie, weil es schon zweimal rot war.
+
+**Nicht gemessen und darum offen:** warum der Lauf auf einem GitHub-Runner häufiger oder seltener
+stückelt als hier. Die 23 % gelten für diese Maschine; dass es dieselbe Ursache ist, folgt aus der
+Fehlerzeile (`code == 0` bei 2,003 s), nicht aus einer gemessenen Quote dort.
+
+---
+
+## Punkt 86: Eine Kanalnummer gilt als belegt, nachdem die API die Freigabe schon gelesen hat — und das nächste OPEN darauf verschwindet lautlos
+
+**Woher das kommt.** Die Linux-Prüfung „-race (Linux goroutines)“ wurde immer wieder rot, ohne
+dass etwas kaputt war, und einmal ist derselbe Commit (`97945b6`) bei der Wiederholung ohne jede
+Änderung grün geworden. Eine Prüfung, die gelegentlich ohne echten Fehler rot wird, ist
+schlimmer als keine Prüfung (`tools/recovery-ci.sh`) — also war zu messen, nicht zu drehen.
+
+**Was gemessen ist.** Die Laufliste der Prüfung, 200 Einträge gelesen, davon **90 abgeschlossene
+Läufe** (ohne abgebrochene). In **12 von 90 = 13 %** war die Aufgabe `-race` rot wegen zweier
+Fälle des Pakets `apps/server-controller/classes/link`: `TestFramesAfterOwnCloseAreDropped`
+(10×) und `TestChannelNumberFreeOnlyAfterBothCloses` (2×). Vier weitere rote `-race`-Läufe
+gehören woanders hin: `TestAOneTimeCodeReachesNoLog` (`users`), `TestAFaultEndsTheTerminalAtOnce`
+und zweimal `TestNormalCloseGivesTheNumberBackAtOnce` (Terminal), dazu ein Lauf (40114506408), in
+dessen Protokoll keine `--- FAIL`-Zeile zu finden war und der hier **nicht untersucht** ist.
+
+**Und 13 % ist eine Untergrenze, keine Quote.** Die erste Fassung dieses Punktes nannte 9 von 90
+= 10 %, und das war zu niedrig gezählt. `gh run list` zeigt je Lauf nur den **letzten Versuch**:
+ein Lauf, den jemand mit `gh run rerun --failed` wiederholt hat, steht dort als `success`, und der
+rote erste Versuch ist aus der Liste verschwunden. Nachgemessen über die API
+(`runs/<id>/attempts/1`): von den 90 Läufen sind **6 wiederholt** worden, und in **vier** davon
+war Versuch 1 in der Aufgabe `-race` rot — dreimal an genau diesen beiden Fällen (40119921187 und
+40087877366 mit `TestFramesAfterOwnCloseAreDropped` nach 30,06 bzw. 30,07 s, 40109214083 mit
+`TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s), einmal an einem Terminal-Fall. Diese
+drei fehlten in der ersten Zählung.
+
+Daraus folgt zweierlei. Erstens: wer das Flattern aus der Laufliste zählt, zählt zu niedrig, und
+zwar um so mehr, je fleissiger wiederholt wird. Zweitens, und das ist der unangenehmere Teil:
+**eine Wiederholung löscht den Beleg aus der Liste.** Ein roter Lauf, den niemand wiederholt hat,
+steht darin; ein roter Versuch unter einem wiederholten Lauf ist nur über die API zu finden, und
+nur, wenn man weiß, dass man danach suchen muss. 13 % ist also das, was sich **nachweisen** lässt,
+nicht das, was war.
+
+**Der eine Lauf, der das Flattern beweist.** Lauf 40109214083 auf Commit `97945b6` ist
+`run_attempt` **2** und grün; Versuch 1 desselben Laufs, derselbe Commit, derselbe Baum, ist rot
+mit `TestChannelNumberFreeOnlyAfterBothCloses` nach 30,06 s. Dazwischen lag nichts als
+`gh run rerun --failed`. Das ist der Nachweis an einem unveränderten Baum und stärker als jede
+Statistik: der Zweig, auf dem es auffiel, ändert **keine** Codedatei (nur `docs/` und
+`tools/*.sh`) und kann die Ursache nicht sein. Berichtigt am 24.10.2026: hier stand erst, der
+einzige echte Lauf auf diesem Commit sei grün gewesen — das war falsch gelesen, weil die
+Laufliste den roten Versuch 1 nicht zeigt, und es hätte den eigenen Befund geschwächt.
+
+**Auf dieser Maschine ist nichts geflattert.** In WSL (Debian, go1.27.2, `-race`): 3000 Läufe der
+beiden Fälle auf **einem** Prozessorkern, 500 Läufe mit allen Kernen, 20 Läufe des ganzen Pakets
+auf zwei Kernen — **0 Fehlschläge**. Die natürliche Flatterquote hier ist 0 %, und damit war der
+Beweis einer Besserung durch Wiederholen allein nicht zu führen. Gemessen wurde deshalb **durch
+Einspritzen**: eine Verzögerung an genau der Stelle, an der das Wettrennen vermutet wurde, und
+dann der Vergleich der Fehlermeldung mit der aus der CI.
+
+**Zur Nummer, und was mit ihr geschehen ist.** Dieser Punkt hat die 83 getragen, dann die 84,
+dann die 85, und trägt jetzt die **86**. Dreimal umgeschrieben, jedes Mal, weil ein anderer Zweig
+zuerst zusammengeführt wurde: PR 139 nahm die 83, PR 143 die 84, PR 144 die 85. Gemessen am 24.10.2026 an den
+offenen Pull Requests, bevor 139 herein kam: `main` endete bei 82, die **83 war von fünf Zweigen
+beansprucht** (PR 139, 142, 143, 144 und dieser) und die 84 von PR 140. PR 139 ist zuerst
+zusammengeführt worden und hat die 83 bekommen; die vier anderen stehen seitdem alle auf Konflikt
+und schreiben ebenfalls um.
+
+Ein Ausweichen nach oben war vorher nicht möglich. Auf einem Zweig, der von `main` geschnitten
+ist, wäre die 85 ein Loch über 83 und 84 gewesen, und genau das weist der Riegel mechanisch ab
+(ausprobiert: „no chapter carries these numbers, although they lie between 19 and 85: 83 84“).
+Solange `main` bei 82 endete, war die 83 auf diesem Zweig die einzige Nummer, die den Riegel grün
+ließ. Das ist die Regel des Buches und kein Versehen: eine Nummer lässt sich nicht
+vorreservieren, **wer zweitens zusammenführt, schreibt um**, und bis dahin hält jeder Zweig seine
+Reihe lückenlos.
+
+Die Vorhersage von damals ist zweimal eingetreten, und das ist der Grund, warum sie hier
+stehenbleibt. In der Fassung mit der 84 stand: „die 84 ist nicht sicher, PR 140 beansprucht sie
+ebenfalls, und PR 142, 143 und 144 greifen nach demselben Umschreiben danach“. Genau so kam es,
+zweimal hintereinander — PR 143 nahm die 84, PR 144 die 85. Die **86** ist jetzt die nächste freie
+Nummer und aus demselben Grund genauso unsicher: **PR 140 und 142 stehen noch offen**. Wer zuerst
+herein kommt, bekommt die Zahl; die übrigen schreiben um. Verweise auf diesen Punkt gibt es keine,
+das Umschreiben kostet also zwei Zeilen — das Kapitel und die Zeile in der Reihe-B-Tabelle. Drei
+Umschreibungen für einen Punkt sind der Preis dafür, dass die Reihe am Dateiende wächst und der
+Riegel nur die eigene Datei sieht.
+
+**Was die Bauart des Riegels dabei zeigt.** `tools/check-buch.sh` erzwingt Lückenlosigkeit
+**innerhalb einer Datei** und kann fremde Zweige nicht sehen. Damit drängt er jede parallel
+laufende Sitzung auf dieselbe nächste Nummer und zeigt die Kollision erst beim Zusammenführen.
+Fünf Zweige auf einer Nummer ist die vorhersehbare Folge davon, nicht die Unaufmerksamkeit von
+fünf Sitzungen. Hier nur als Beobachtung notiert; was daraus folgt, ist eine Frage der
+Koordination und steht nicht in diesem Punkt.
+
+### Es sind zwei Fehler, nicht einer
+
+Die Protokolle zeigen zwei Erscheinungen mit ganz verschiedenen Laufzeiten:
+
+| Erscheinung | Laufzeit | Meldung | Läufe |
+|---|---|---|---|
+| A | 0,03–0,05 s | `the handler was called 2 times and came back 1 times` | 4 |
+| B | 30,04–30,08 s | `waiting for 4 on channel 1: ...`, dazu `Run did not end` | 8 |
+
+Die 8 sind 5 aus der Laufliste und 3 aus verdeckten ersten Versuchen. **B ist also die Mehrheit,
+zwei Drittel** — und B ist der Fehler, der hier nicht behoben wird.
+
+**A ist ein Testfehler.** Der Fall liest `opened` und `back` unmittelbar nach `waitFor`, also
+sobald `Run` zurück ist. Das Ende von `Run` ist aber **nicht** das Ende der Handler: die Goroutine
+eines Kanals (`channels.run`) hat hinter dem Handler noch die CLOSE-Buchung zu erledigen, und
+`back.Add(1)` steht im Handler dahinter. Wer die Zähler dort liest, liest zu früh. Der Kommentar
+im Nachbarfall sagte sogar ausdrücklich das Gegenteil („Counted once the tunnel is over, so that
+no handler is still on its way“) — er war falsch.
+
+*Beweis:* 50 ms zwischen `c.send` der CLOSE und der Buchung dahinter, eingespritzt in
+`channels.finish`. Der Fall fällt sofort mit **genau** der CI-Meldung
+(`the handler was called 2 times and came back 1 times`, 0,08 s). Mit der Behebung in diesem
+Commit ist er bei derselben Einspritzung **grün**.
+
+**B ist ein Wettrennen im Code.** `channels.finish` schreibt die CLOSE dieser Seite und setzt
+`ch.closed = true` **erst, nachdem der Schreibvorgang zurück ist**. Die API kann die CLOSE in
+dieser Lücke schon gelesen und beantwortet haben. Trifft ihre CLOSE für dieselbe Nummer in der
+Lücke ein, dann setzt `channels.route` nur `ch.peer` und gibt die Nummer **nicht** frei
+(`if ch.closed { c.drop(ch) }` greift nicht). Das unmittelbar folgende OPEN der API für diese
+Nummer fällt dann in den Zweig „nach der eigenen CLOSE wird alles verworfen“ und wird **lautlos
+weggeworfen** — kein Kanal, keine Antwort, kein Fehler. Die API wartet auf einen Kanal, der nie
+kommt.
+
+*Beweis:* eine **einmalige** Verzögerung von 2 s an derselben Stelle, aber nur für Kanal 1 (damit
+die Antwort auf den Merker nicht mitverzögert wird). Der Fall fällt nach **30,08 s** mit
+`Run did not end`, `waiting for 4 on channel 1: ... opPing: use of closed network connection` und
+`failed to write msg: use of closed network connection` — Zeile für Zeile die Meldung aus der CI.
+Mit der Behebung von A ist er bei dieser Einspritzung **weiter rot**, wie es sein muss: A und B
+sind zwei Fehler, und hier ist nur A behoben.
+
+**Dass die Zahl 30 zweimal vorkommt, hat das Lesen verdeckt.** `answer` im Test (die Schranke
+eines Lesevorgangs der API) und `WriteTimeout` im Code sind beide 30 s. Eine Meldung nach 30,06 s
+sagt darum nicht, welche der beiden Schranken abgelaufen ist, und die erste Lesart („der Test
+dreht den Zeitablauf zu knapp“) war deshalb naheliegend und falsch.
+
+### Was das für den Betrieb heißt
+
+Nicht nur ein Testproblem. Eine API, die eine Kanalnummer wiederverwendet, sobald sie die CLOSE
+dieser Seite gelesen und ihre eigene gesendet hat — und genau das erlaubt der Vertrag, „CLOSE
+gesendet und empfangen“ — kann ihr OPEN verlieren. Kein Absturz, keine Lücke in der Sicherheit:
+ein hängender Kanal, auf den niemand antwortet. Die Buchhaltung des Controllers läuft dem
+Vertrag nach, statt ihm zu folgen.
+
+### Warum B hier nicht behoben ist
+
+Der naheliegende Griff — `ch.closed = true` **vor** den Schreibvorgang setzen — ist falsch.
+`finish` hält beim Setzen noch nicht die Schreibsperre des Tunnels (`t.mu` wird erst in
+`c.send` genommen). Zwischen dem Setzen und dem Nehmen der Sperre könnte `route` die Nummer
+freigeben, ein neuer Kanal entstehen und **dessen** erster Rahmen vor der CLOSE des alten auf die
+Leitung gehen. Dann wäre aus einem verlorenen OPEN eine falsche Reihenfolge auf der Leitung
+geworden, und das ist schlimmer.
+
+Was es wirklich braucht, ist eine dritte Zustandsstufe („meine CLOSE ist dem Tunnel übergeben“),
+die unter derselben Sperre gesetzt wird, die die Reihenfolge auf der Leitung hält — oder die
+Entscheidung, ein OPEN für eine Nummer, deren CLOSE der Gegenseite schon da ist, nicht zu
+verwerfen. Beides rührt den Schließweg an, der an drei Stellen Sperren in festgelegter Reihenfolge
+nimmt, und gehört in eine eigene, geprüfte Änderung. Der Befund ist hier wichtiger als der grüne
+Lauf.
+
+### Die rote Aufgabe auf `main` hatte eine andere Ursache
+
+Geprüft, wie im Auftrag verlangt: Lauf **40097136329** auf `main` war in der Aufgabe
+„check.sh + counted test run“ rot, und das war **nicht** dieses Flattern. Im Protokoll steht
+`buch: these points have a chapter but no row in the Reihe-B table of contents: 75 76 77 78 79 80
+81` — `tools/check-buch.sh` hat fehlende Tabellenzeilen gemeldet, deterministisch und zu Recht.
+Auf dem heutigen `main` (f77143c) ist `bash tools/check-buch.sh` grün
+(64 Punkte, 19–82). Zwei verschiedene Ursachen, zwei verschiedene Aufgaben.
+
+### Flatterquote vorher und nachher
+
+| | vorher | nachher |
+|---|---|---|
+| CI, Aufgabe `-race`, 90 abgeschlossene Läufe | mindestens 12 rot (13 %), davon 4 × A und 8 × B | **unvermessen** — braucht neue Läufe |
+| hier, 3000 Läufe auf einem Kern, `-race` | 0 | 0 |
+| hier, 500 Läufe, `-race` | 0 | 0 |
+| hier, Einspritzung A (50 ms) | **rot** (0,08 s) | **grün** |
+| hier, Einspritzung B (2 s, einmalig) | **rot** (30,08 s) | **rot** (unverändert) |
+
+### Was ungemessen bleibt
+
+- **Die CI-Quote nach der Änderung.** Sie ist erst nach genug neuen Läufen zu haben. Erwartet
+  wird, dass die 4 Erscheinungen vom Typ A verschwinden und die 8 vom Typ B bleiben — also
+  **ein Drittel** des nachweisbaren Flatterns, nicht alles. Wer diese Prüfung jetzt für still
+  hält, irrt. Und wer sie nachzählt, muss die Versuche mitzählen (`runs/<id>/attempts/1`), sonst
+  sieht sie stiller aus, als sie ist.
+- **Das natürliche Eintreten von B.** Hier nie gesehen, nur durch Einspritzen erzwungen. Warum
+  es auf einem 4-Kern-Runner unter `-race` mit über zwanzig gleichzeitig laufenden Paketen in
+  etwa jedem zwanzigsten Lauf auftritt und auf dieser Maschine in 3000 Läufen nie, ist nicht
+  gemessen.
+- **Ob B über die Tests hinaus schon einmal zugeschlagen hat.** Keine Spur in einem Protokoll
+  einer echten Anlage gesucht; die API im Betrieb verwendet Nummern vielleicht gar nicht so
+  schnell wieder.
+- **Die anderen roten `-race`-Läufe**, soweit sie nicht hierher gehören: `TestAOneTimeCodeReachesNoLog`
+  (`users`) und Lauf 40114506408 sind hier **nicht untersucht**. Die Terminal-Fälle
+  (`TestAFaultEndsTheTerminalAtOnce`, `TestNormalCloseGivesTheNumberBackAtOnce`) sind es
+  inzwischen, aber von anderer Hand: **Punkt 85** hat sie gemessen, und dort lag es an der
+  Vorrichtung des Falls (eine Lesegrenze des Pseudoterminals) und nicht am Produktionscode.
+
+Verwandt: **Punkt 69** (die Linux-Prüfung war drei Tage rot, und niemand hat sie gezählt) —
+dieselbe Prüfung, dieselbe Frage, diesmal nicht „zählt sie?“, sondern „sagt sie die Wahrheit?“.
+**Punkt 70** ist der andere Fund in diesem Paket, ebenfalls unter Last.
+
+**Punkt 85** ist der nächste Verwandte und am selben Tag entstanden: auch dort ein flatternder
+Fall, der die Prüfung ohne echten Fehler rot machte, auch dort an einem Zweig aufgefallen, der
+keine Zeile Go anfasst. Der Vergleich ist der Ertrag. Dort lag **alles** an der Vorrichtung des
+Falls, und mit ihrer Behebung ist das Flattern weg. Hier liegt die Hälfte der Erscheinungen an der
+Vorrichtung (A, behoben) und zwei Drittel der Läufe an einem Wettrennen im Produktionscode
+(B, **nicht** behoben) — die Prüfung flattert also weiter, und das ist kein Rest von A.
+Zwei flatternde Fälle am selben Tag, zwei verschiedene Antworten auf dieselbe Frage: wer von der
+Vorrichtung des einen auf die des anderen schliesst, hält einen offenen Befund für erledigt.
+
+---
+
+## Punkt 87: Der Weg zurück geht — er bleibt an einem Systembenutzer hängen, den keine Sicherung kennt
+
+Gemessen am 24.10.2026 auf einer eigenen Wegwerf-Maschine: VM 310 `ngc-sicherung-probe`,
+10.2.3.220, Vollklon der Proxmox-Vorlage 300, zweite Platte mit `mkfs.ext4 -O encrypt` auf
+`/var/lib/ngc/apps`, podman 5.4.2 wie auf svc-1. Diese Maschine hat der Anlage nie gehört.
+Sie ergänzt Punkt 81, der sagt, was gesichert wird; dieser sagt, was davon zurückkommt.
+
+**Was gemessen ist.** Aus der Sicherung von svc-1 zurückgelegt: `/etc/ngc` samt Modi, die
+`state.db`, die Datenordner beider Apps. Die Datenbank **öffnete** — der Controller las beide
+App-Zeilen und fasste beide Apps an. Dann stand er an einer Wand:
+
+```
+WARN the runtime directory of an app could not be made, it stays off
+     app=org.sorglos.terminal
+     err="runtime: no system user for this container
+          user: unknown user ngc-terminal-439982dd"
+```
+
+Der **Systembenutzer** einer App und ihr verschlüsselter Datenordner werden von
+`install/activate.go` angelegt und von sonst nichts; `node.Restore` sucht den Benutzer und legt
+keinen an. Ohne diesen Schritt bleibt nach einer Wiederherstellung **jede** App für immer aus,
+und das Einzige im Produkt, das es richtigstellt, ist ein Admin, der die App neu aus dem Laden
+einrichtet — für Zeilen, die in der Sicherung schon dastanden.
+
+**Nicht zu verwechseln mit einem Ausfall.** Die Sitzung „Was passiert, wenn ein Rechner
+ausfällt" hat den anderen Weg gemessen — ihre Messung, in ihrem eigenen Papier: nach einem Neustart
+kommen die App-Container auf svc-1 und svc-2 eine Sekunde nach dem Controller von selbst wieder.
+Der Unterschied ist genau dieser Benutzer — bei einem Ausfall ist er noch da, bei einer
+Wiederherstellung auf eine neue Maschine nicht.
+
+Mit `tools/sicherung-zurueck` (ruft `runtime.EnsureUser` und `runtime.EnsureData`, die Funktionen
+des Produkts selbst) ging es weiter, Ausstiegscode 0. Die fscrypt-Schlüsselkennungen auf 310 sind
+danach **bitgleich** mit denen auf svc-1 — der Schlüssel der App-Daten reist allein in
+`controller.json` mit. Und dann lief eine App wieder:
+
+```
+ngc-terminal-439982dd   localhost/ngc-terminal:1.0.0   Up About a minute
+```
+
+Ohne API, ohne Laden, ohne Admin, allein aus der Sicherung.
+
+**Drei Dinge, die dabei mitgemessen wurden.**
+
+1. **Ein Controller startet nicht ohne API-Verweis.** Mit `apis: []` antwortet er „Die
+   Konfiguration dieses Servers fehlt oder ist unvollständig." Eine Wiederherstellung lässt sich
+   also nicht erst einmal offline prüfen; man muss die API-Adresse totlegen (hier
+   `wss://127.0.0.1:7443`), und das muss man wissen, weil die zurückgespielte `controller.json`
+   den `noiseKey` des alten Rechners trägt — eine zweite Maschine damit an der echten API wäre
+   svc-1 ein zweites Mal.
+2. **`app-daten.tar` ist Klartext.** Punkt 81 und ein früherer Stand dieses Blattes behaupteten
+   das Gegenteil. Beim Sichern läuft der Dienst, also liegt der Schlüssel jeder App im
+   Schlüsselbund des Kerns und root liest die Ordner durch ihn hindurch: 1419 ELF-Köpfe und die
+   dpkg-Listen des Containers, im Klartext gezählt. Sicherheitsfolge: dieser Teil ist der
+   empfindlichste der ganzen Sicherung, weil er der einzige ist, der ohne jeden Schlüssel
+   aufgeht. Stabilitätsfolge: dieselbe Tatsache rettet die App-Daten über einen Verlust des
+   dbKey hinweg.
+3. **Der Datenordner einer App ist auch podmans Container-Lager.** Die Terminal-App kam zurück
+   und lief, die Uhr nicht: `crun: mount devpts to dev/pts: Invalid argument`, obwohl Abbild,
+   Daten und Benutzer da sind und die Container-Konfigurationen beider Apps an dieser Stelle
+   gleich sind. Unterschied: der Terminal-Container lief beim Sichern seit drei Stunden, der
+   Uhr-Container seit sieben Minuten. Der zurückgespielte Zustand trägt auch eine kaputte Zeit
+   (`Exited (0) 292 years ago`). Gegenprobe mit angehaltenem Terminal-Container: die Uhr startet
+   genauso nicht, es ist also kein Gedränge um `devpts`.
+
+**Was nicht gemessen ist.** Die Ursache des Uhr-Fehlers — dass ein `tar` im Betrieb für die
+**Daten** eine Sicherung und für das **Container-Objekt** eine Momentaufnahme ist, die
+schiefgehen kann, ist die naheliegende Erklärung und kein Beweis. Ein `podman rm` mit Neuanlegen
+aus dem vorhandenen Abbild ist nicht gefahren. Die Kopplung einer neuen Maschine ist nicht
+gefahren: sie braucht einen angemeldeten Admin, und mit einer alten `controller.json` wäre sie
+svc-1 ein zweites Mal. Das Zurückspielen der MariaDB ist nicht gefahren.
+
+**Was darum zu entscheiden wäre:**
+
+- Ob `node.Restore` den Systembenutzer und den Datenordner **selbst** anlegen soll, statt dass
+  ein eigenes Werkzeug es tut. Das wäre die bessere Anlage und die größere Änderung: ein
+  Controller, der beim Hochfahren Systembenutzer anlegt, tut mehr als heute.
+- Ob eine Sicherung die Container-Lager der Apps überhaupt mitnehmen soll. Nimmt sie sie nicht
+  mit, ist nach jeder Wiederherstellung eine Neueinrichtung nötig; nimmt sie sie mit, kann ein
+  Container so zurückkommen, wie die Uhr zurückkam.
+- Ob die Wegwerf-Maschine stehen bleibt. Sie trägt eine Klartextkopie der App-Daten von svc-1
+  und dessen `controller.json`; solange sie steht, ist sie so empfindlich wie svc-1 selbst.
+
+**Nachtrag vom selben Tag, und er korrigiert den Vorschlag dieses Punktes.** „Mehrere
+Verwahrstellen für den Schlüssel, eine für die Daten" war zu schwach; die Sitzung „Was
+passiert, wenn ein Rechner ausfällt" hat nachgemessen, woran es wirklich hängt:
+`/etc/ngc/db-keys` sind **224 Byte**, die eine **285 MB** große Datenbank aufschließen. Was sie
+gefährlich macht, ist nicht ihr Ort, sondern dass sie alles aufschließen und in eine
+Textnachricht passen — zwei Ordner auf derselben Platte sind deshalb keine Trennung, sondern
+dieselbe Maschine, dasselbe Konto, dieselben Rechte.
+
+`tools/sicherung.sh` nimmt daraufhin **zwei Ziele** und verweigert ohne das zweite den Dienst;
+ein Lauf, der Daten und Schlüssel an einen Ort schreiben soll, bricht ab (drei Fälle gemessen,
+Code 2, keine Ordner bleiben liegen). Der Lauf mit getrennten Zielen: `ok`, 313 s, **348 MB
+Daten gegen 75 KB Schlüssel** für fünf Rechner — klein genug für einen Passwortmanager, was
+das Argument praktisch macht und nicht nur richtig. Und geprüft, ob die Trennung eine ist: alle
+18 Geheimnisse aus dem Schlüssel-Ordner gegen den Daten-Ordner gesucht, **0 von 18** gefunden.
+Die Wortfunde (`dbKey`, `PRIVATE KEY`) sind Feldnamen im NGC-Programm und Fehlermeldungen in
+`libapt-private.so` des Grundabbilds, keine Schlüssel.
+
+**Und die Ausnahme ist geschlossen, gefahren und nicht beschlossen.** `app-daten.tar` war
+Klartext und der einzige Teil der Sicherung, der ohne jeden Schlüssel aufging. Die Sitzung, der
+Thomas die Sicherungsform übergeben hat, entschied: verschlüsselt, bevor die Daten die Maschine
+verlassen, mit einem Schlüssel, der nicht mitfährt — und mit drei Bedingungen, deren dritte
+verlangt, dass der Weg zurück erst einmal gegangen ist. Thomas hat eine Maschine gegeben, also
+ist er gegangen.
+
+`tools/sicherung.sh` erzeugt jetzt je Rechner und Lauf einen eigenen Schlüssel (32 Byte,
+`openssl rand`), legt ihn **nur** in den Schlüssel-Ordner (45 Byte je Rechner) und
+verschlüsselt den Datenordner mit AES-256-CTR, bevor er die Maschine verlässt. Der Schlüssel
+reist über ssh-stdin in eine Datei mit Modus 0600 und wird `shred`-et — nie als Argument, denn
+ein Argument steht in `ps`. Der Klartext wird nirgends eine Datei: `tar` schreibt in `openssl`.
+Lauf über alle fünf Maschinen: `ok`, **473 s** gegen 313 s ohne Verschlüsselung.
+
+Auf **VM 311**, einem Klon der Vorlage, der der Anlage nie gehört hat: `tar` auf die Datei,
+Entschlüsseln mit leerem und mit falschem Schlüssel — jedes Mal
+`This does not look like a tar archive`. Mit dem Schlüssel aus dem Schlüssel-Ordner: **6720
+Dateien**. Danach der ganze Weg — `/etc/ngc` aus dem Schlüssel-Ordner, `state.db` aus dem
+Daten-Ordner, `sicherung-zurueck`, entschlüsseln (2 s für 199 MB) — und dann:
+
+```
+org.sorglos.terminal   localhost/ngc-terminal:1.0.0   Up 45 seconds
+org.sorglos.uhr        localhost/ngc/uhr:1.0.0        Up 45 seconds
+```
+
+**Beide Apps**, ohne eine einzige Warnung des Controllers. Damit öffnet kein Teil dieser
+Sicherung mehr ohne Schlüssel, und die Anlage läuft trotzdem daraus wieder an.
+
+Was AES-256-CTR **nicht** gibt, und das steht dabei statt vorausgesetzt zu werden: eine
+Beglaubigung. Es ist Vertraulichkeit; was ein verändertes Byte fängt, ist die sha256 im
+Verzeichnis, auf der Maschine genommen und hier gegengerechnet.
+
+**Und die Prüfsummen liegen jetzt bei den Schlüsseln**, nicht neben den Daten — wieder ein
+Gedanke derselben Sitzung: eine Liste neben ihren Dateien fängt einen Unfall, aber wer im
+Daten-Ordner schreiben darf, ändert die Datei und die Zeile darüber. Gemessen mit einem
+angehängten Byte: der Daten-Ordner allein trägt **keine einzige** Prüfsumme mehr, mit
+`summen.txt` aus dem Schlüssel-Ordner fällt es als `FAILED` auf. Damit gilt für beide Hälften
+derselbe Satz: wer nur die Daten hat, kann sie weder lesen noch unbemerkt ändern.
+
+Nebenbefund: die Uhr, die beim ersten Weg zurück **nicht** mitkam, lief diesmal. Einziger
+Unterschied zwischen den Läufen ist das Alter ihres Container-Objekts beim Sichern (sieben
+Minuten gegen Stunden). Das stützt die Erklärung weiter oben in diesem Punkt und beweist sie nicht — und
+der Beweisversuch ist an der eigenen Vorrichtung gescheitert: ein von Hand mit `setpriv`
+angelegter Container bekommt nicht das Netz, das der Controller als root einrichtet
+(`pasta failed ... Permission denied`), also sagt sein Scheitern nichts über den des Produkts.
+Der Beweis braucht einen Container, der über die **Einrichtung** entsteht, und damit eine Anlage,
+in der man eine App einrichten darf.
+
+Herkunft und die ganze Messreihe: `docs/sicherung-und-weg-zurueck.md`, Abschnitte 6 und 9.
+
+---
+
+## Punkt 88: Der Galera-Verkehr lief ohne Cipher-Beschränkung — die Vorlage war richtig, die Anlage nicht
+
+Gemessen und behoben am 24.10.2026 an den drei Datenbankknoten der verteilten Anlage, auf
+Thomas' Anweisung. Der Befund ist **nicht meiner**: die Sitzung „Release 0.2.1 veröffentlichen"
+hat ihn beim Bau von db-2 und db-3 gefunden und mir gemeldet, weil sie ihn nicht anfassen wollte,
+solange an db-1 gemessen wurde.
+
+**Was gemessen war.** `apps/server-db/templates/galera.cnf` auf `main` ist seit dem 17.10.2026
+richtig: `socket.ssl_cipher=ECDHE-ECDSA-AES256-GCM-SHA384`, die TLS-1.2-Schreibweise, mit
+`TestTheClusterCipherIsATLS12ListAndNotASuite` dahinter. Die **laufende** Anlage war es nicht.
+Auf allen drei Knoten stand in `/etc/mysql/mariadb.conf.d/60-ngc.cnf` der TLS-1.3-Suite-Name
+`TLS_AES_256_GCM_SHA384` — geschrieben von *ulh*, nicht von diesem Repo —, und eine
+`99-erstlauf-galera.cnf` setzte `wsrep_provider_options` ohne Cipher neu. Darum stand MariaDB
+nicht still, sondern lief **ohne jede Cipher-Beschränkung**: `show variables like
+"wsrep_provider_options"` zeigte auf allen drei `socket.ssl_cipher =` leer.
+
+Die 99-Datei enthält nichts weiter als diese eine Zeile (auf db-1 und db-3 nachgesehen), also
+war sie gefahrlos aus dem Weg zu nehmen.
+
+**Was getan wurde, rollend, einer nach dem anderen.** Ausgangslage auf allen drei:
+`wsrep_cluster_size 3`, `Primary`, `Synced` — **und `safe_to_bootstrap: 0`**, weshalb niemals
+zwei gleichzeitig: zwei von drei halten das Quorum, der neu gestartete tritt über IST wieder
+ein. Je Knoten beide Dateien als `.vor-cipher-2111` beiseitegelegt (nichts gelöscht), den Wert
+wortgleich mit der Vorlage gesetzt, die 99-Datei zur Seite, `systemctl restart mariadb`.
+
+| Knoten | Neustart | danach |
+|---|---|---|
+| db-3 (10.2.3.218) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-2 (10.2.3.217) | Code 0, 4 s | `active`, Verbund 3, `Synced`, Cipher gesetzt |
+| db-1 (10.2.3.212) | Code 0, 4 s | `active`, Verbund 3, `Primary`, `Synced`, Cipher gesetzt |
+
+Der Verbund war nach jedem Schritt vollständig, von einem anderen Knoten aus gegengeprüft.
+`ngc_blob` 15 Zeilen und `ngc_user` 1 Zeile nach dem Neustart von db-1 unverändert.
+
+**Und die Liste beißt — das ist der Teil, der sonst fehlt.** Dass eine Variable einen Wert
+zeigt, ist kein Nachweis. Gegen den Galera-Anschluss 4567 von db-3 nach db-1, mit dem
+Knotenzeugnis, TLS 1.2 angeboten:
+
+| angeboten | Antwort |
+|---|---|
+| nur `AES128-GCM-SHA256` | `alert handshake failure` |
+| nur eine CBC-Suite (`ECDHE-ECDSA-AES256-SHA384`) | `alert handshake failure` |
+| `ECDHE-ECDSA-AES256-GCM-SHA384` | **`New, TLSv1.2, Cipher is ECDHE-ECDSA-AES256-GCM-SHA384`** |
+| alles anbieten | der Server wählt genau diese Suite |
+
+Ohne Knotenzeugnis scheitern **alle** TLS-1.2-Versuche, auch der erlaubte: Galera verlangt ein
+Client-Zeugnis, und dieser Probelauf konnte „Cipher abgelehnt" und „Zeugnis fehlt" nicht
+trennen. Erst mit dem Zeugnis des Knotens ist es eine Messung. Unter TLS 1.3 hat Galera keinen
+Hebel: dort handelt der Anschluss von selbst `TLS_AES_256_GCM_SHA384` aus, gemessen.
+
+**Was nicht gemessen ist:** die Gegenrichtung, dass ohne die Liste eine AES-128- oder CBC-Suite
+durchkommt. Das ist am 17.10.2026 gemessen worden und steht im Kommentar der Vorlage; ich habe
+den schwachen Zustand nicht wiederhergestellt, um es nachzustellen — dafür hätte ein laufender
+Knoten zurückgedreht werden müssen.
+
+**Die Anlage darüber läuft unverändert:** `ngc-api` und die Controller aktiv, die Oberfläche
+antwortet mit `HTTP 200`, und in den vier Minuten nach dem letzten Neustart keine Fehlerzeile und
+keine Tunnelzeile in den Protokollen der drei Controller — die Tunnel sind also nie
+abgerissen.
+
+**Ein Befund der Ausgangslage, und er ist nicht meiner.** Dass alle drei Knoten
+`safe_to_bootstrap: 0` tragen, habe ich beim Messen gesehen; was es bedeutet, hat die Sitzung
+„Was passiert, wenn ein Rechner ausfällt" auf jedem Knoten einzeln nachgelesen und
+eingeordnet — **ihre Messung, ihre Überlegung**: fallen alle drei unsauber **zugleich** weg
+(Stromausfall, Neustart des Wirts), darf kein Knoten den Verbund von selbst hochziehen, weil
+keiner weiß, ob er den neuesten Stand hat. Die Anlage steht dann, bis jemand
+`galera_new_cluster` fährt.
+
+Daraus ihr Satz, den ich übernehme, weil er die Rangfolge betrifft: **der Umbau auf drei Knoten
+hat auch etwas weggenommen.** Am Mittag trug der einzelne Knoten `safe_to_bootstrap: 1` und fing
+sich nach einem harten Schnitt in vier Sekunden allein. Jetzt übersteht die Anlage den Verlust
+eines Knotens, ohne dass ein Benutzer es merkt — und sie steht, wenn alle zugleich weg sind. Der
+häufige Fall ist gelöst, der seltene war es vorher. Das ist kein Vorwurf an den Umbau, sondern
+der Grund, warum mein Lauf rollend ging und niemals zwei Knoten gleichzeitig angefasst hat.
+
+**Nachtrag: die Kopien sind weg, und das Aufräumen hat zwei Lücken gefunden.** Auf Thomas'
+Anweisung je Knoten die `60-ngc.cnf.vor-*` und die beiden `99-erstlauf-galera.cnf`-Kopien
+gelöscht (db-1 sechs Dateien, db-2 und db-3 je vier), danach auf allen drei `mariadb active`,
+`Verbund 3`, `Synced`. **Vorher** gesichert, und dabei kam heraus: `/etc/mysql/mariadb.conf.d`
+stand in **keiner** Sicherung, obwohl `60-ngc.cnf` allein `wsrep_cluster_address`,
+`wsrep_node_name`, `wsrep_node_address`, `wsrep_sst_auth` und die Pfade der
+`file_key_management` trägt — ein Datenbankknoten hätte sich daraus nicht wieder aufbauen
+lassen. Und der Lauf von 18:21 kannte nur fünf Maschinen, weil ich fünf genannt hatte; db-2 und
+db-3 fehlten ganz. Beides in `docs/sicherung-und-weg-zurueck.md`, Abschnitt 11; das Werkzeug
+nimmt die Datei jetzt mit, zu den Schlüsseln, weil `wsrep_sst_auth` eines ist. Und der eigentliche Posten: dass *ulh* diesen Wert überhaupt schreibt und eine 99-Datei
+darüberlegt, gehört dort behoben, sonst bringt die nächste Neuinstallation ihn zurück. Die
+Release-Sitzung hat ihren Teil daran bereits berichtigt.
+
+Herkunft: `docs/sicherung-und-weg-zurueck.md` nennt die Messreihe nicht — dieser Punkt steht für
+sich, weil er nicht zur Sicherung gehört, sondern nur an einem Abend an derselben Anlage anfiel.
+
+## Punkt 89: Dreimal am selben Tag hält die Anlage die Auskunft und gibt sie nicht her
+
+Dies ist kein neuer Einzelbefund, sondern das Muster über drei, die am 24.10.2026 unabhängig
+voneinander an verschiedenen Stellen gemessen wurden. Es steht hier zusammen, weil es dreimal
+verstreut harmlos aussieht und einmal zusammen nicht mehr.
+
+In allen drei Fällen **hat** die Anlage die Information. Sie ist nicht verloren, nicht ungenau,
+nicht teuer zu beschaffen. Was fehlt, ist jedes Mal der **Anlass**, sie zu holen:
+
+1. **Der Laden antwortet nicht** (Punkt 79, hier gemessen). Der Grund steht in der Zeile des
+   Ladens — `{"checked":…,"error":"Der Store hat nicht oder nicht brauchbar geantwortet."}` — und
+   die Zeile trägt sogar das Alter des letzten guten Blicks, weil `checked` beim Fehlschlag nicht
+   vorrückt. Im Journal stehen dazu **null Zeilen**, gemessen an einer Runde, die wirklich
+   gescheitert ist. Über die Befehlszeile gibt es keinen Weg, danach zu fragen. Sichtbar ist es
+   allein in `ngc.store/sources`, hinter einer Anmeldung.
+2. **Die Meldung ist gebaut, aber unerreichbar** (Punkt 79, am Code gelesen). `Server.hour`
+   enthält ein `slog.Warn("catalogs could not be fetched", …)`. Es feuert nie, weil
+   `Stores.Refresh` für diesen Fall keinen Fehler zurückgibt: der Fehler des einzelnen Ladens geht
+   in `_ = st.note(...)` und die Funktion endet auf `return nil`. Der Code **will** melden und
+   kann nicht.
+3. **Der Text, den niemand aufschreibt** (Punkt 78, von einer anderen Sitzung gemessen). Der
+   Controller protokolliert `bytes=510`, aber nie den Text selbst, und ein Schalter dafür steht in
+   keiner Konfiguration. Die Zahl ohne den Text macht den Vorfall unzuordenbar.
+
+Dazu gehört ein vierter Fall, der nicht NGC gehört, aber dasselbe tut und darum hier genannt ist:
+der DNS dieses Netzes (Punkt 80) beantwortet die naive Frage nach einer Maschine mit der eigenen,
+und zwar **mit derselben Zahl**, ob die gemeinte Maschine läuft oder abgeschaltet ist. Auch hier
+ist die Wahrheit greifbar — ein `--resolve` genügt — und nichts weist darauf hin, dass man sie
+braucht.
+
+**Was gemessen ist:** die drei Stellen, jede an ihrem Ort, mit den Belegen in den Punkten 78, 79
+und 80.
+
+**Was abgewogen ist, und was darum zu entscheiden wäre:**
+
+- Ob NGC eine **Regel** haben soll, wann ein stiller Zustand laut wird. Vorschlag zur
+  Entscheidung: ein Zustand, den die Anlage selbst als Fehler in eine Zeile schreibt, gehört
+  **beim Übergang** ins Journal — beim ersten Mal und beim Verschwinden, nicht bei jeder
+  Wiederholung. Das trifft Fall 1 und 3 und kostet nichts an Rauschen, denn 168 gleiche Zeilen
+  findet auch niemand.
+- Ob es eine Stelle geben soll, die **alle** stillen Zustände einer Anlage auf einmal zeigt — eine
+  Übersicht oder einen Befehl. Heute muss man wissen, dass es die Zeile des Ladens gibt, um sie zu
+  lesen. Wer eine Anlage aus der Ferne betreut, hat dafür keine Tür.
+- Ob ein `_ =` vor einem Fehler im Quelltext eine **Begründung** daneben braucht. In Fall 2 ist
+  das Verwerfen beabsichtigt und der Kommentar sagt auch, warum (ein kaputter Laden darf den
+  nächsten nicht kosten) — nur die Folge, dass die Warnung darüber unerreichbar wird, steht
+  nirgends. Das ist die Art Nebenwirkung, die beim Lesen nicht auffällt und beim Messen Stunden
+  kostet.
+
+Keine der drei ist für sich ein schwerer Fehler. Zusammen sind sie der Grund, warum diese Woche
+dreimal etwas erst beim gezielten Hinsehen aufgefallen ist.
+
+Herkunft: `docs/ausfall-je-maschine.md` für die Fälle 1 und 2, Punkt 78 für Fall 3.
+
+## Punkt 90: Ein fehlendes Mitglied des Lastverteilers wird dem Benutzer als `HTTP 500` zugestellt — und nichts schreibt es auf
+
+Gemessen am 24.10.2026 zwischen 13:57 und 14:07 UTC an der verteilten Anlage, api-2 (VMID 302) mit
+`qm stop` abgeschaltet und wieder angefahren. Der Fall ist der harmloseste der sechs Ausfälle und
+im Verhalten gegenüber dem Benutzer der **schlechteste**.
+
+**Was gemessen ist.** Je vierzig Anfragen, getrennt nach Weg, weil der erste Anlauf an genau
+dieser Trennung gescheitert ist:
+
+| | `POST /api/v1/login/start` (über den Verteiler) | `GET /` (PHP auf api-1, nicht weitergeleitet) |
+|---|---|---|
+| beide APIs oben | 40/40 gut | 40/40 gut |
+| api-2 nachweisbar aus | **31/40 gut, 9 schlecht** — 6× `HTTP 500`, 3× keine Antwort | 40/40 gut |
+
+Der Ausfall ist also auf der **Oberfläche unsichtbar** und auf **jedem API-Weg** spürbar:
+ungefähr jede vierte Anmeldung scheitert, solange das Mitglied fehlt. Für den Benutzer ist das
+genau das „erst scheitert die Anmeldung, dann geht sie", das in der Woche vom 19.10.2026 mehrfach
+berichtet und nie erklärt wurde. Hier ist die Erklärung.
+
+Zwei Dinge daran sind der eigentliche Befund:
+
+1. **Die Zahl ist `500`, nicht `503`.** „Internal server error" ist die Meldung für einen Fehler
+   im Programm. Eine fehlende Maschine ist keiner. Der Benutzer bekommt rund 1600 Byte
+   Apache-Fehlerseite und keinen Hinweis, dass ein Rechner fehlt — und beim nächsten Versuch geht
+   es, was den Eindruck „irgendwas spinnt" festigt.
+2. **Im Fehlerprotokoll steht nichts.** `grep -c` auf `proxy|balancer` in
+   `/var/log/apache2/error.log`: **0**. Die 500er und 502er stehen allein im Zugriffsprotokoll und
+   liegen dort minutengenau in den Messfenstern. Wer nach der Ursache sucht, findet in der Datei,
+   die dafür gedacht ist, keine Zeile.
+
+**Und der `::`-Satz aus Punkt 80 liegt hier im Anfrageweg der Anlage, nicht im Messwerkzeug.**
+Der Verteiler trägt sein Mitglied als Namen (`BalancerMember "https://api-2.ngc.mein.lan:7443"`),
+und auf api-1 gemessen löst dieser Name auf **zwei** Adressen auf:
+
+```
+getent ahosts api-2.ngc.mein.lan   ->   10.2.3.211 STREAM …   und   :: STREAM
+```
+
+Ist die echte Adresse tot, bleibt das `::`, und das führt auf die eigene Maschine. Im Journal von
+`ngc-api` auf api-1 steht dann `http: TLS handshake error from [::1]:34332: EOF` — Apache hat sich
+zu sich selbst verbunden und ist am Namensabgleich gescheitert (`SSLProxyCheckPeerName on`). Ohne
+den `::`-Satz hätte Apache ein totes Mitglied zu überspringen; mit ihm hat es ein zweites, das
+antwortet und dann den Abgleich verweigert.
+
+**Was NICHT gemessen ist:** diese `[::1]`-Zeile kam **einmal** in den neun Fehlschlägen vor. Dass
+das `::` der Weg aller neun ist, steht damit nicht fest. Belegt ist, dass es im Anfrageweg liegt.
+
+**Was zu entscheiden wäre:**
+
+- Ob ein fehlendes Mitglied dem Benutzer überhaupt als Fehler durchgereicht werden darf. Es gibt
+  ein zweites, gesundes Mitglied; `failontimeout=On` und `retry=5` sind gesetzt. Vorschlag zur
+  Entscheidung: eine Anfrage, für die ein gesundes Mitglied bereitsteht, gehört **dorthin
+  weitergeworfen** und nicht beantwortet — `proxy-error-override` oder ein ausdrückliches
+  Übergehen des toten Mitglieds. Die Anlage hat die Reserve, sie benutzt sie nur nicht.
+- Wenn doch ein Fehler herauskommt: ob er `503` sein soll statt `500`, mit `Retry-After`. Für
+  `E_UNREACHABLE` hat die Oberfläche längst einen eigenen Satz („Service unavailable", Punkt 79
+  und der db-1-Fall) — eine fehlende Maschine könnte denselben Weg nehmen, den eine fehlende
+  Datenbank schon nimmt, statt als Programmfehler zu erscheinen.
+- Ob der `::`-Satz aus dem DNS verschwinden soll (Punkt 80) **oder** die Mitglieder des
+  Verteilers als nackte Adressen eingetragen werden sollen. Das Zweite ist in einer Hand und
+  wirkt sofort; das Erste ist richtiger und liegt beim Netz.
+- Ob Apache den Fehlschlag eines Mitglieds ins Fehlerprotokoll schreiben soll (`LogLevel
+  proxy:info` genügt dafür). Heute ist der Ausfall nur aus dem Zugriffsprotokoll zu erschließen,
+  und das ist dieselbe Gestalt wie Punkt 90: die Auskunft ist da, der Anlass fehlt.
+
+Zum Vergleich, weil es im selben Lauf gemessen wurde und die Messlatte setzt: der Ausfall der
+**Datenbank** (db-1) wird mit eigenem Code `E_UNREACHABLE`, eigener Meldung „Dienst nicht
+erreichbar." und einer Journalzeile mit Zähler beantwortet. Dieselbe Anlage kann es also.
+
+Herkunft und die ganze Messreihe aller sechs Maschinen: `docs/ausfall-je-maschine.md`.
+
+## Punkt 91: Die fünf Sekunden sind zwei eigene Zahlen derselben Länge — der Umschaltweg war gebaut und kam nie zum Zug
+
+Gemessen am 25.10.2026 an der verteilten Anlage, als Nacharbeit zum DB-Fall aus Punkt 89 und zum
+Lastverteiler-Fall aus Punkt 90.
+
+**Der Befund in einem Satz:** der Umschaltweg auf den nächsten Datenbankknoten war vorhanden und
+richtig — `db.nodes` nannte alle drei, und `balancer.Connect`
+(`apps/server-db/classes/mariadb/nodes.go`) nimmt der Reihe nach den nächsten Knoten. Er kam nur
+nie zum Zug, weil **die Frist für den Anwahlversuch EINES Knotens genauso lang war wie die Frist
+für die ganze Anfrage**.
+
+| Zahl | Wo sie steht | Woher sie kommt |
+|---|---|---|
+| 5 s Anwahlfrist je Knoten | `apps/server-db/classes/mariadb/mariadb.go`, `c.Timeout` | **eigene Einstellung**, keine Vorgabe |
+| 5 s Frist der Benutzeranfrage | `apps/server-api/classes/dbwait/dbwait.go`, `UserWait` | **eigene Einstellung** (Punkt 48) |
+
+**Keine der beiden ist eine Vorgabe der Bibliothek, und das ist nachgelesen, nicht vermutet.**
+`mysql.NewConfig()` (`vendor/.../dsn.go`) setzt `Timeout` nicht, und bei `Timeout == 0` überspringt
+`connector.go` Zeile 92 die eigene Frist und gibt `net.Dialer` **gar keine** — die Anwahl fällt
+dann an den Kern. `tcp_syn_retries` ist auf allen sechs Maschinen **6** (gelesen am 25.10.2026),
+also etwa 130 s gegen einen Rechner, der das SYN verwirft. Die eigene Einstellung war also nicht
+das Übel, nur die **Länge** war es. Beide Zahlen sind einstellbar: sie sind Konstanten im Code,
+keine Zeile in `/etc/ngc/*.json`.
+
+**Warum der zweite Aufrufer 0,03 s hatte.** `picker.failed` legt einen Knoten, der abgelehnt hat,
+für `failPause` (30 s) nach hinten. Der erste Aufrufer zahlt die Anwahl, alle folgenden erben die
+Erkenntnis. Das erklärt das „erst scheitert es, dann geht es" aus Punkt 90 **auf demselben
+Muster**, nur an einer anderen Stelle.
+
+**Und eine Beobachtung, die dazugehört:** jeder Datenbankknotenname löst auf api-1 auf **zwei**
+Adressen auf — `db-1.ngc.mein.lan` auf `10.2.3.212` **und** `::` (gelesen am 25.10.2026). Das ist
+derselbe `::`-Satz aus Punkt 80 und 90, jetzt auch im Datenbankweg. Er kostet hier nichts
+Messbares, weil `::` örtlich ist und sofort ablehnt; er teilt aber die Anwahlfrist auf zwei
+Adressen auf.
+
+### Entschieden: die Anwahlfrist wird auf 1 s gekürzt — Stufe **Stabilität**
+
+Nach der Rangfolge **Sicherheit vor Stabilität vor Leistung** gibt **Stabilität** den Ausschlag,
+und die beiden anderen Stufen sind ausdrücklich geprüft:
+
+- **Sicherheit: unberührt.** Es wird nichts gelockert. `SSLProxyVerify require`,
+  `SSLProxyCheckPeerName on`, `c.TLS` gegen die CA der Anlage,
+  `AllowFallbackToPlaintext = false` — alles bleibt, wie es war. Eine kürzere Anwahlfrist kann
+  keine Zertifikatsprüfung schwächen.
+- **Stabilität: das ist der Fall.** Die Anlage hat drei Knoten und benutzt die Reserve nicht. Ein
+  Aufrufer, der neben zwei lebenden Knoten auf einen toten wartet, ist ein Stabilitätsfehler und
+  kein Leistungsfehler.
+- **Leistung: nur die Erscheinung.** Die 5,03 s sind das, was man sieht, nicht der Grund.
+
+**Die Vorsicht, die der Auftrag verlangt, ist eingebaut, und sie liegt in der WAHL der Stelle:**
+gekürzt wird die **Anwahl**, nicht die Antwort. Alles nach dem Accept — TLS-Handschlag,
+Anmeldung, das `SET` — steht weiter unter `connectDeadline` (10 s, `nodes.go`) und
+`ReadTimeout` (60 s) des Treibers. Ein Knoten, der nur **langsam** ist, wird dadurch nicht zu
+einem toten; aufgegeben wird nur ein Knoten, der das SYN überhaupt nicht beantwortet.
+
+**Nachgewiesen am laufenden System, 25.10.2026 auf api-2 (10.2.3.211).** Kein Knoten wurde
+angehalten — weder Dienst noch Maschine: eine eigene nftables-Tabelle `messung5s` verwarf nur
+`10.2.3.218:3306` (db-3), die Härtungstabelle blieb unberührt, und die Tabelle wurde danach
+gelöscht. Ein Dienst-Stopp wäre der falsche Fall: der lehnt sofort ab und zeigt die fünf
+Sekunden gar nicht. Gemessen wurde mit demselben Programm in zwei Ständen, db-3 jeweils als
+ERSTER Knoten der Liste:
+
+| | Stand vorher (5 s) | Stand nachher (1 s) |
+|---|---|---|
+| 1. Aufruf | **Fehler nach 5,0016 s** — „no database node can be reached" | **gut nach 1,0049 s** |
+| 2. Aufruf | gut nach 5,417 ms | gut nach 0,251 ms |
+| 3. Aufruf | gut nach 0,238 ms | gut nach 0,229 ms |
+
+Gegenprobe ohne Regel, alle drei Knoten gesund: 7,222 ms / 0,297 ms / 0,195 ms. Die 5,0016 s
+treffen die 5,03 s vom 24.10.2026, und der erste Aufrufer bekommt jetzt eine Antwort statt einer
+abgelaufenen Frist.
+
+**Die 1 s ist gegen eine Messung gewählt, nicht gegen Geschmack:** 30 Anwahlen von api-1 zu den
+drei Knoten am 25.10.2026 brauchten **0,101 ms** im besten und **4,129 ms** im schlechtesten Fall.
+Eine Sekunde ist über zweihundertmal der schlechteste davon.
+
+**Was NICHT gedeckt ist, und es bleibt offen:** ein Knoten, der die Verbindung **annimmt und dann
+schweigt**. Der frisst weiter `connectDeadline` (10 s) und damit die ganze Frist der Anfrage; der
+Benutzer bekommt dann ein ehrliches 503 `db-busy`, aber eben kein 200. Der gemessene Fall war ein
+**weggefallener** Knoten, kein stummer. Eine gerechte Aufteilung der Restfrist auf die Knoten
+wäre der nächste Schritt — sie ist hier **nicht** gebaut, weil sie genau die Gefahr trägt, vor der
+die Rangfolge warnt: bei drei Knoten bekäme jeder nur ein Drittel, und ein gesunder, aber
+belasteter Knoten würde für tot erklärt.
+
+**Was NICHT gemessen ist:** die Zahl der konfigurierbaren Knoten ist 16 (`maxList`,
+`shared/config`). Fünfzehn tote Knoten passen in keine Fünf-Sekunden-Frist, mit keiner Anwahlfrist,
+die diesen Namen verdient. Der Prüffall hält darum die **betriebene** Gestalt (drei) und sagt das
+hin; `shared/` ist eingefroren, die Schranke lässt sich hier nicht senken.
+
+### Punkt 90, zweiter Teil: die Behebung liegt in der Vorlage, und die Vorlage hängt an `shared/`
+
+Geprüft am 25.10.2026: die Datei `/etc/ngc/apache-apis.conf` auf api-1 (10.2.3.210, Apache 2.4.69)
+ist **Zeichen für Zeichen** das, was
+`apps/server-controller/templates/apache-apis.conf.tmpl` erzeugt. Der nackte `500` liegt also
+**nicht** in NGC-Code, sondern in der Apache-Konfiguration — und die kommt aus der Vorlage. Von
+Hand auf der Maschine wäre falsch.
+
+Entschieden gehört in die Vorlage:
+
+1. `connectiontimeout=2` je Mitglied. Heute erbt die Anwahl `timeout=65`, ein Mitglied ohne
+   Rechner wird also über eine Minute lang bewartet, bevor der Verteiler das nächste ansieht. Zwei
+   Sekunden sind hundertfach die gemessene Anwahl und nehmen der **Antwort** nichts.
+2. `Header always set Retry-After "5" "expr=%{REQUEST_STATUS} == 503"`. Bleibt kein Mitglied
+   übrig, antwortet Apache selbst `503` — nackt. Eine besetzte Datenbank antwortet längst `503`
+   **mit** `Retry-After: 5` (Punkt 48). Der Satz macht aus zwei Antworten eine.
+   `headers_module` ist auf api-1 geladen (gelesen am 25.10.2026).
+3. `LogLevel proxy:info proxy_balancer:info`. Das schließt die zweite Hälfte von Punkt 90: am
+   24.10.2026 stand im Fehlerprotokoll **keine** Zeile, während neun von vierzig Anmeldungen
+   scheiterten.
+
+**Ausdrücklich NICHT entschieden: `failonstatus=500`.** Das wäre der Satz, der den nackten `500`
+in einen Wurf auf das gesunde Mitglied verwandelt — aber diese API antwortet ihre **eigenen**
+Fehler mit `500` (`E_INTERNAL`, `httpapi/fault.go`). `failonstatus` würde dann eine **gesunde**
+API wegen einer beschädigten Zeile aus dem Verteiler nehmen und ihren ehrlichen Rumpf durch eine
+Fehlerseite ersetzen. Die Erscheinung ist das nicht wert. Was von Punkt 90 danach übrig bleibt,
+braucht das `::` aus den Namen (Punkt 80) — und das liegt beim Netz.
+
+**Gebaut, und der Weg dahin gehört in den Punkt:** `shared/ulh.md` hält die Datei
+`apache-apis.conf` Zeichen für Zeichen als Vertrag, und
+`TestBalancerTemplateMatchesTheContract` vergleicht beide Seiten. Die Vorlage lässt sich also
+nicht ändern, ohne **einen Beispielblock in `shared/ulh.md` mitzuziehen** — und `shared/` ist
+eingefroren. Thomas hat am 25.10.2026 die Freigabe für genau diesen **einen** Beispielblock
+gegeben; Code in `shared/` ist nicht angefasst.
+
+**Was an Fall 2 NICHT geprüft ist, und es bleibt der ehrliche Rest:** auf der Maschine, auf der
+das geschrieben wurde, läuft kein Apache. Dass die drei Zeilen von Apache **angenommen** werden,
+ist unbelegt — wie in jedem Fall dieses Pakets. `headers_module` und `proxy_balancer_module`
+sind auf api-1 als geladen gelesen (25.10.2026). Und ob die neun Fehlschläge vom 24.10.2026
+damit auf null gehen, ist **nicht** nachgemessen: das bräuchte wieder einen Maschinen-Stopp von
+api-2, und der gehört in einen eigenen Lauf.
+## Punkt 92: Bei verlorener Mehrheit ist auch das Lesen zu — und die fünf Sekunden sind nicht dieselbe Störung wie die `HTTP 500`
+
+Am 24.10.2026 ist jede der sechs Maschinen einmal abgeschaltet worden. Zwei
+Fälle blieben offen, und beide sind am 25.10.2026 nachgeholt: **zwei
+Datenbankknoten gleichzeitig** (die Mehrheit fällt) und **der Dienst-Stopp**,
+den die ganze Reihe von gestern nicht enthielt — sie bestand aus sechs
+`qm stop`. Die Erwartungen stehen in einem Stand, der **vor** dem ersten Stopp
+festgeschrieben wurde; das ganze Blatt mit beiden Spalten:
+`docs/ausfall-nachtrag.md`.
+
+**Erstens: „lesen geht noch, schreiben nicht" gilt hier nicht.** Das war die
+Erwartung, die nachzumessen war. Auf dem einzigen überlebenden Knoten, während
+die Mehrheit weg war, scheitern Lesen und Schreiben **mit demselben Fehler und
+demselben Wortlaut**:
+
+```
+SELECT count(*) FROM ngc.ngc_app  ->  ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+INSERT INTO messung.nachtrag …    ->  ERROR 1047 (08S01): WSREP has not yet prepared node for application use
+```
+
+Der Grund ist eine Einstellung dieser Anlage und keine Eigenschaft des
+Verbunds: `wsrep_dirty_reads` steht auf `OFF`. Wer den Lesebetrieb bei
+verlorener Mehrheit haben will, muss ihn einschalten. **Ob er eingeschaltet
+werden soll, ist nicht entschieden** und steht unten.
+
+Dazu ein Befund, den niemand bestellt hat: **`SELECT 1` antwortet weiter mit
+`1`**, weil es keine Tabelle anfasst. Eine Überwachung, die so fragt, meldet
+diesen Knoten als gesund, während er keine einzige Zeile hergeben kann. Das
+ist eine Falle für jede Überwachung, die noch gebaut wird.
+
+**Zweitens: die Anlage antwortet ehrlich.** Der schwerere Befund, auf den der
+Auftrag gezielt hat — „Anmeldung fehlgeschlagen" statt „Dienst nicht
+erreichbar" —, ist **nicht** eingetreten. Alle 45 Anfragen bei verlorener
+Mehrheit bekamen `HTTP 503` mit
+`{"code":"E_UNREACHABLE","message":"Dienst nicht erreichbar."}`, und das
+Journal trennt `db-busy` von `db-unreachable` mit eigenen Zählern. Die Grenze
+dieser Aussage steht im Blatt: `login/start` hat gar keinen Anmeldefehler, mit
+dem sich das verwechseln ließe (derselbe Aufruf mit einem Namen, den es nicht
+gibt, antwortet im gesunden Betrieb ebenfalls mit `200`). Die Stelle, an der
+sich die beiden treffen könnten, ist `login/finish`, und die braucht einen
+Passkey — **dort ist nur der Code gelesen, nichts gemessen.**
+
+**Drittens, und das schärft Punkt 90: die fünf Sekunden und die `HTTP 500` sind
+zwei verschiedene Fehler.** Gestern lagen sie übereinander. Der Dienst-Stopp
+trennt sie, weil ein abgelehnter Verbindungsversuch sofort zurückkommt und ein
+verfallenes Paket erst nach Ablauf der Frist:
+
+| | Maschinen-Stopp api-2 (24.10.) | Dienst-Stopp api-2 (25.10.) |
+|---|---|---|
+| erste Anmeldung | `503` nach **5,03 s** | `200` in **0,024 s** |
+| 40 in Folge | 31/40 mit `500` | **6/40 mit `500`** |
+
+Der Zeitablauf gehört also **dem stummen Knoten** und nicht dem Umschalten. Die
+`500` dagegen **bleibt** — sechs von vierzig, über die ganzen drei Minuten
+verstreut, und was der Benutzer sieht, ist die nackte Apache-Seite
+`500 Proxy Error`, keine NGC-Antwort. Der Lastverteiler trägt
+`retry=5 … failontimeout=On`: eine abgelehnte Verbindung ist kein Zeitablauf,
+also greift `failontimeout` nicht, und `retry=5` holt das tote Mitglied alle
+fünf Sekunden zurück in die Reihe. Eine Lebensprobe, die es draußen hielte,
+gibt es nicht. **Und wieder schreibt der Apache darüber keine Zeile** — weder
+ins Journal noch in `error.log`, über die ganze Zeit.
+
+**Viertens: der geordnete Austritt ist der Grund für die gute Rückkehr.**
+`systemctl stop mariadb` auf db-1: keine Delle (alle fünf ersten Anfragen
+`200` in 0,024–0,056 s, 40/40 gut, keine API schrieb überhaupt eine Zeile), und
+die Rückkehr lief über **IST** — 53 Ereignisse, in derselben Sekunde fertig,
+`NRestarts=0`, Verbund nach 30 s wieder `size=3 Primary`. Gestern brauchte db-3
+nach dem **Maschinen**-Stopp 71 Versuche und kam nicht zurück, jeder Versuch
+mit vollem Abgleich. Daraus folgt eine Handlungsregel, die nichts kostet: **vor
+jedem Maschinen-Stopp den Dienst geordnet herunterfahren** ist billiger als
+jede Reparatur am Wiederanlauf.
+
+**Fünftens: api-2 ist nicht nur Zierde.** Mit `apache2` auf api-1 am Leben und
+nur dessen eigener `ngc-api` aus: **40/40 Anmeldungen gut, keine einzige
+`500`.** Das Urteil von gestern bleibt für die *Erreichbarkeit* richtig — fällt
+die Maschine api-1, ist alles weg —, aber der zweite API-Server trägt die API
+wirklich, sobald der Eingang lebt. Er hängt nur am selben einzigen Eingang.
+
+**Zwei eigene Erwartungen sind widerlegt, und sie stehen im Blatt als
+widerlegt.** Ich hatte bei zwei abwesenden Knoten rund 10 s für die erste
+Anfrage erwartet — es bleibt bei **einem** Zeitablauf von 5,02 s. Und ich hatte
+nach dem db-3-Fall von gestern Handarbeit für die Rückkehr erwartet — beide
+Knoten kamen nach dem harten Stopp **von selbst** in unter 30 s über den gcache
+zurück, `NRestarts=0`. Warum der Fall von gestern nicht zurückkam und dieser
+schon, ist mit einer Messung **nicht** geklärt.
+
+**Was offen bleibt:**
+
+- **Soll `wsrep_dirty_reads` eingeschaltet werden?** Dafür spricht, dass die
+  Oberfläche bei verlorener Mehrheit wenigstens etwas zeigen könnte statt
+  nichts; dagegen, dass sie dann **veraltete Daten** zeigt, ohne es zu wissen,
+  und dass „es geht noch irgendwie" einen Ausfall verdeckt, den jemand beheben
+  muss. Entscheidung für Thomas.
+- **Warum gab der Dienst-Stopp von api-2 sechs `500` und der von api-1 keine?**
+  Beide Male hing ein totes Mitglied im selben Lastverteiler. Offene Frage,
+  dieselbe Baustelle wie Punkt 90.
+- **Warum kam db-3 am 24.10. nicht zurück und die beiden am 25.10. schon?**
+  gcache-Reichweite oder Länge des Ausfalls — nicht gemessen.
+- **(c), (d) und (e) sind in keinem Fall gemessen.** Sie sitzen hinter einer
+  Anmeldung mit Passkey. Für den Dienst-Stopp auf svc-1 ist das die
+  entscheidende Lücke: dort sind die Container nachweislich **mitgefallen**
+  (`KEINE` statt zwei), aber ob die Oberfläche die Uhr in diesen drei Minuten
+  als „läuft" angezeigt hätte, weiß niemand.
+
+Herkunft, beide Erwartungsspalten und alle Rohzahlen: `docs/ausfall-nachtrag.md`.
+Werkzeuge: `tools/ausfall-mehrheit.sh`, `tools/ausfall-dienst.sh`.
+## Punkt 93: Die Protokollverschlüsselung war abgeschaltet, weil ein Prüflauf an einer anderen Stelle abbrach
+
+Auf allen drei Datenbankknoten lag `/etc/mysql/mariadb.conf.d/99-erstlauf-log.cnf`
+mit einer einzigen wirksamen Zeile:
+
+```
+[mariadbd]
+innodb_encrypt_log=OFF
+```
+
+Sie überschrieb `innodb_encrypt_log=ON` aus `60-ngc.cnf`. Gemessen am 25.10.2026:
+`SHOW VARIABLES` gab auf db-1, db-2 und db-3 übereinstimmend `OFF`, bei sonst
+vollständiger Verschlüsselung (`innodb_encrypt_tables=FORCE`,
+`file_key_management ACTIVE`). Das Wiederherstellungsprotokoll lag also im
+Klartext, während die Tabellen verschlüsselt waren.
+
+**Warum sie abgeschaltet war — und warum das kein Zugeständnis ist.** Die Datei
+stammt aus `/root/dbneu2.sh` auf db-1. Das Skript schreibt sie *absichtlich* als
+ersten Schritt, damit beim Neuanlegen des Datenordners überhaupt ein lesbares
+Protokoll entsteht, und **löscht sie im zweiten Schritt wieder**, bevor es mit
+`ON` neu startet. Der zweite Schritt wurde nie erreicht. Im Journal von db-1
+steht, woran es lag:
+
+```
+22:26:37 [ERROR] WSREP: Error setting SSL cipher list to 'TLS_AES_256_GCM_SHA384'
+22:26:37 [ERROR] WSREP: Failed to load provider
+22:26:37 [ERROR] Aborting
+```
+
+Das ist **Punkt 88**, der Galera-Verkehr ohne Cipher-Beschränkung. Das Skript
+brach daran ab, die Datei blieb liegen, und um 22:26:58 kam die Datenbank mit
+der liegengebliebenen Datei hoch. Die Abschaltung war also nie als nötig
+erwiesen — sie ist ein Rest eines Laufes, der an einer ganz anderen Stelle
+scheiterte.
+
+**Der Grund, warum sie trotzdem nicht einfach wegkonnte.** Der Datenordner wurde
+*unter* dieser Datei angelegt, das Protokoll war damit unverschlüsselt
+geschrieben. MariaDB 11.8 legt ein unlesbares Protokoll nicht von selbst neu an;
+bei einem **sauberen** Herunterfahren dagegen schon. Der Weg war deshalb je
+Knoten: sauber stoppen, Abschaltung im Journal nachlesen, Datei entfernen,
+starten.
+
+**Gefahren, rollend, am 25.10.2026:**
+
+| Knoten | Fenster | saubere Abschaltung | danach |
+|---|---|---|---|
+| db-1 (.212) | 10:59:26–10:59:46, 20 s | `log sequence number 2399724`, `seqno: 1992` | `innodb_encrypt_log ON`, Synced |
+| db-2 (.217) | 11:09:56–11:10:01, 5 s | `log sequence number 2736097`, `seqno: 2340` | `innodb_encrypt_log ON`, Synced |
+| db-3 (.218) | — | — | **offen, steht weiter auf `OFF`** |
+
+Der gefürchtete `Malformed log record` kam auf keinem der beiden Knoten. Und
+genau das ist der Beweis, dass MariaDB das Protokoll beim sauberen Stopp neu
+angelegt hat: wäre das alte, unverschlüsselte Protokoll geblieben, hätte der
+Dienst mit `ON` gar nicht erst starten können.
+
+**Warum db-3 offen blieb — und ein Befund über das Arbeiten zu mehreren.** Beim
+Nachmessen nach db-2 war db-1 weg. Nicht durch mich: im Journal von db-1 steht
+eine saubere Abschaltung um **11:09:03**, 53 Sekunden *bevor* ich db-2 stoppte,
+davor vier kurze SSH-Anmeldungen vom selben Arbeitsplatz mit demselben
+Schlüssel. Eine zweite Sitzung arbeitete gleichzeitig an db-1.
+
+Damit lief die Anlage von 11:09:56 bis 11:10:01 auf **einem** Knoten von dreien.
+Das ging gut, und zwar aus einem Grund, der nicht mein Verdienst ist: beide
+Knoten sind **sauber** gegangen, und bei einem geregelten Abgang schrumpft
+Galera die erwartete Mannschaft mit. db-3 blieb durchgehend `primary`
+(`members = 1/1`, `component = PRIMARY`), die Anmeldung antwortete vorher wie
+nachher mit `HTTP 200` in 0,005 s. Hätte die andere Sitzung db-1 hart
+abgeschossen statt sauber gestoppt, wäre db-3 beim Wegfall von db-2 in
+`non-Primary` gegangen und die Anlage hätte gestanden.
+
+**Die Lehre, die ich mittrage:** Der Verbund gehört **vor jedem einzelnen
+Knoten** gemessen, nicht einmal vor dem ersten. Die Regel „rollend, nie zwei
+zugleich" aus Punkt 88 reicht nicht, wenn man nicht der einzige ist, der sie
+befolgt — sie setzt stillschweigend voraus, dass niemand sonst an der Anlage
+steht.
+
+Der Rückweg liegt je Knoten unter `/root/99-erstlauf-log.cnf.rueckweg` und bleibt
+dort, bis db-3 durch ist.
+
+Herkunft und die Tafel aller acht Maschinen: `docs/messreste-je-maschine.md`.
+
+## Punkt 94: Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann
+
+In `ulh`, `apps/cli/assets/scripts/ngc-db.sh`, legt `ensure_encryption_keys()`
+das Schlüsselpaar für `file_key_management` an:
+
+```sh
+openssl enc -aes-256-cbc -pbkdf2 -md sha256 -salt \
+	-in "$plain" -out "${WORK}/keys.enc" -pass "file:${pass}"
+```
+
+MariaDBs `file_key_management` leitet den Schlüssel über OpenSSLs altes
+`EVP_BytesToKey` ab — das entspricht `-md sha1` **ohne** `-pbkdf2`. Was diese
+Funktion schreibt, kann der Plugin daher nie lesen. Gemessen am 23.10.2026 beim
+Aufbau von db-1:
+
+```
+[ERROR] mariadbd: Cannot decrypt /etc/ngc/db-keys/keys.enc. Wrong key?
+[ERROR] Plugin 'file_key_management' init function returned error.
+[ERROR] InnoDB: cannot enable encryption, encryption plugin is not available
+[ERROR] Unknown/unsupported storage engine: InnoDB
+[ERROR] Aborting
+```
+
+Der Knoten startet nicht. Das ist kein Randfall: es trifft **jede** frisch
+installierte Datenbankmaschine.
+
+**An der Anlage ist der Fehler nicht sichtbar, weil er von Hand umgangen wurde.**
+`/root/dbfix.sh` auf db-1 schreibt das Paar mit `-md sha1` neu, und sein eigener
+Kopf sagt, was das bedeutet:
+
+> Das ist KEINE Behebung im Code: ngc-db.sh schreibt beim naechsten Lauf wieder
+> -pbkdf2 -md sha256.
+
+Die Schlüsseldateien auf db-1, db-2 und db-3 sind damit **von Hand gesetzt** und
+stimmen mit nichts überein, was ein Installationslauf erzeugen würde. Das ist
+der Grund, warum dieser Punkt hier steht und nicht in der Aufräumliste: an der
+Anlage ist nichts zu tun, im Quelltext schon.
+
+Behoben gehört es in `ulh`, nicht hier. Die Prüfdatei `ngc-db.test.sh` prüft an
+den Stellen 449 und 452 ausdrücklich auf `-pbkdf2 -md sha256` und schreibt den
+Fehler damit fest.
+
+Herkunft: an der Anlage gemessen, Quelltext gelesen in `/root/ulh` auf db-2.
+---
+
+## Punkt 95: Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen
+
+Dies ist **keine zweite Bestandsaufnahme.** Punkt 72 hat die Härtung des App-Containers
+vollständig aufgenommen; seine Tabelle der Schalter gilt und wird hier nicht wiederholt. Gemessen
+sind hier nur die Posten, die Punkt 72 ausdrücklich als offen hinterlassen hat — seine Nummern 3
+und 7 aus „Was daraus zu bauen wäre", seine Probe 1, die mit einer Attrappe gefahren wurde, und
+die Folge des geteilten `TasksMax`, die dort als abgewogen und nicht gemessen steht. Dazu ein
+Befund, der in Punkt 72 nicht vorkommt.
+
+**Welche Maschinen.** `svc-1` (10.2.3.213) und `svc-2` (10.2.3.214) der **verteilten** Anlage,
+gemessen am 25.10.2026, podman 5.4.2. Dazu die **Einzel-VM 208** aus Punkt 72, gemessen am
+25.10.2026 kurz vor ihrem Ende — siehe die Anmerkung am Schluss. Jede Zahl gilt für die Maschine,
+die neben ihr steht.
+
+**Wie gemessen wurde.** Wie in Punkt 72: jeder Aufruf aus `/tmp` heraus mit
+`setpriv --reuid=<uid> --regid=<gid> --clear-groups` und mit `HOME`, `XDG_RUNTIME_DIR`,
+`PATH=/usr/bin:/bin`, `LANG=C.UTF-8` — den vier, die `Podman.run` mitgibt. Das Werkzeug wurde vor
+der ersten Zählung geprüft (`podman ps` antwortet mit dem Container, Ausstiegscode 0), und im
+Container fehlen `strings`, `ip`, `ss` und `capsh`, was vorher festgestellt wurde, damit keine
+leere Antwort als Null gelesen wird.
+
+### Posten 3 ist zu — `--cap-drop ALL` liegt an, erstmals an einer laufenden App
+
+Punkt 72 musste den am häufigsten genannten Härtungsschalter offen lassen: Terminal trägt
+`needs:["root"]`, also greift der `if !c.Root`-Zweig nicht, und Terminal war die einzige App der
+Anlage. Seit dem 24.10.2026 läuft auf `svc-1` eine **zweite** App, `org.sorglos.uhr`, und sie
+verlangt kein root. Beide Container auf derselben Maschine, nebeneinander gemessen:
+
+| | `ngc-terminal-439982dd` (uid 999) | `ngc-uhr-ad8c00e2` (uid 995) |
+|---|---|---|
+| `--cap-drop ALL` in `.Config.CreateCommand` | steht **nicht** drin | **steht drin** |
+| `.HostConfig.CapDrop` | `[]` | alle 11 benannt |
+| `.EffectiveCaps` | die 11 von podman | **`[]` — leer** |
+
+Damit ist der Schalter zum ersten Mal an einer laufenden App gemessen, und er liegt vollständig
+an: nicht „weniger Fähigkeiten", sondern **keine**. Der `if !c.Root`-Zweig in `createArgs` tut
+beides richtig — er lässt den Schalter bei einer root-App aus und setzt ihn bei einer anderen. Die
+Lesart aus Punkt 72 bleibt gültig: welche 11 eine root-App erbt, steht nicht im Repo, sondern in
+podman.
+
+### Posten 7 ist zu — Befund 1 liegt auf beiden App-Knoten genauso
+
+Punkt 72 warnt ausdrücklich, dass Befund 1 an `Delegate=` **einer** systemd-Einheit hängt und
+keine Zahl von der Einzel-VM über `svc-1` und `svc-2` etwas sagt. Gemessen, auf beiden:
+
+| | `svc-1` (213) | `svc-2` (214) |
+|---|---|---|
+| `systemctl show ngc-controller.service -p Delegate` | `Delegate=no` | `Delegate=no` |
+| `TasksMax` der Einheit | 3466 | 3466 |
+| `.HostConfig.CgroupManager` | `cgroupfs` | `cgroupfs` |
+| `.State.CgroupPath` | `/system.slice/ngc-controller.service` | `/system.slice/ngc-controller.service` |
+| `.HostConfig.PidsLimit` | 512 | 512 |
+
+Befund 1 gilt also für die ganze Anlage und nicht für eine Maschine: **auf keinem der drei
+gemessenen Knoten hat ein App-Container eine eigene cgroup.** Die 3466 sind `TasksMax` dieser
+Maschinen; auf der Einzel-VM waren es 9409 — dieselbe Ursache, eine andere Zahl, weil `TasksMax`
+aus dem Arbeitsspeicher folgt. Wer die Zahl zitiert, nennt die Maschine dazu.
+
+### Die Fork-Bombe ist gemessen, gedeckelt — und die Grenzen liegen auch im Verhalten nicht an
+
+Punkt 72 hat die Fork-Bombe bewusst nicht gefahren, weil sie auf einer Maschine mit fremden
+Sitzungen zerstörerisch wäre, und `inspect` gegen die cgroup-Dateien gelesen. Das ist die richtige
+Vorsicht, lässt aber die Frage aus Punkt 51 offen: *ob* `--pids-limit 512` eine echte Fork-Bombe
+stoppt. Gefahren wurde darum keine Bombe, sondern eine **gedeckelte Probe** auf der Einzel-VM 208:
+600 Aufgaben, also über 512 und weit unter der Decke 9409 — eine Zahl, die die Antwort gibt und
+nichts reißen kann.
+
+```
+600 Aufgaben gestartet         ->  600 von 600 gestartet, kein fork schlug fehl
+Aufgaben im Container gezählt  ->  1204 Einträge in /proc (gleichzeitig)
+400 MiB angefordert            ->  392 MiB angenommen, Ausstiegscode 0
+```
+
+`--pids-limit 512` und `--memory 256m` liegen damit **nicht nur laut cgroup-Datei nicht an, sondern
+auch im Verhalten nicht.** Eine Lesung einer cgroup-Datei kann über den falschen Baum gehen; 600
+gleichzeitige Aufgaben über einer Decke von 512 können es nicht.
+
+**Und das geteilte Fach ist anders geteilt, als Punkt 72 abgewogen hat.** Dort steht als Abwägung,
+die Aufgaben einer App zählten gegen `TasksMax` des Controllers. Gemessen, während die 600
+Aufgaben liefen:
+
+```
+cgroups, die Aufgaben mit uid 997 halten:
+  600  /user.slice/user-1000.slice/session-14.scope     <- die ssh-Sitzung des Messenden
+    3  /system.slice/ngc-controller.service             <- conmon, catatonit, ngc-hold
+pids.current der Controller-Einheit, währenddessen:  18   (nicht 618)
+```
+
+Die Aufgaben eines `podman exec` landen in der cgroup **des Aufrufers** — das bestätigt Punkt 72s
+zweiten Weg an der Grenze vorbei, und zwar als direkte Beobachtung des cgroup-Pfads. Daraus folgt
+beides: im Betrieb ist der Aufrufer `ngc-controller.service`, die Abwägung aus Punkt 72 trifft also
+für den echten Weg zu — aber sie trifft **nicht** zu, weil Apps und Controller ein Fach teilen,
+sondern weil der Controller der Aufrufer ist. Der Haltevorgang selbst sitzt in der
+Controller-cgroup (die drei Zeilen oben), die Sitzungen nicht.
+
+### Probe 1 ist ohne Attrappe gefahren — zwei echte Apps, fünf Wege, alle zu
+
+Punkt 72 musste die zweite App nachbilden (`zz.probe.other`). Auf `svc-1` gibt es sie wirklich.
+Terminal (uid 999) gegen Uhr (uid 995), jeder Weg als der Benutzer der einen App auf die andere:
+
+```
+ls  /var/lib/ngc/apps/org.sorglos.uhr        ->  Keine Berechtigung      (0700 995:995)
+ls  /var/lib/ngc/apps                        ->  Keine Berechtigung      (0711 root)
+ls  /run/ngc/ngc-uhr-ad8c00e2                ->  Keine Berechtigung      (0700 995:995)
+podman ps  mit XDG_RUNTIME_DIR der Uhr       ->  mkdir …/libpod: permission denied
+podman exec ngc-uhr-ad8c00e2 id              ->  stat …/.config: permission denied
+```
+
+Die beiden letzten Zeilen sind der Teil, den eine Attrappe nicht prüfen kann: nicht nur die
+**Daten** der anderen App sind zu, sondern auch ihr **Dienst** — weder über ihr
+`XDG_RUNTIME_DIR` noch über ihr `HOME` kommt man an ihren Container. Die Zeile aus
+`podman_linux.go` trägt damit auch gegen eine echte zweite App.
+
+Eine Gegenprobe gehört dazu, und sie war zunächst missverständlich: `ls` auf den **eigenen**
+Datenordner gab keine Zeile aus. Das ist keine verweigerte Berechtigung — es kam auch keine
+Fehlermeldung — sondern der Ordner enthält nur `.config` und `.local`, und `ls` ohne `-a` zeigt
+davon nichts. Mit `ls -ld` ist der eigene Ordner lesbar.
+
+### Befund — `--read-only` lässt vier beschreibbare Ordner offen, und der Quelltext sagt das Gegenteil
+
+In `createArgs` steht über `--read-only`:
+
+> Das Abbild selbst bleibt unschreibbar; was die App behaelt, gehoert unter /data, **which is the
+> only place it may write.**
+
+Gemessen im laufenden Container (VM 208):
+
+| Ort | Art | Größe | schreibbar |
+|---|---|---|---|
+| `/` | overlay | 74 G | nein (`ro`) |
+| `/data` | ext4, eingehängt | 74 G | ja — so gewollt |
+| `/tmp` | tmpfs | **3,9 G** | **ja** |
+| `/run` | tmpfs | **3,9 G** | **ja** |
+| `/var/tmp` | tmpfs | **3,9 G** | **ja** |
+| `/dev/shm` | tmpfs | 63 M | **ja** |
+
+`/data` ist also nicht der einzige Ort, an den die App schreiben darf — es ist der einzige, der
+einen Neustart übersteht. Das ist die Art Abweichung, die hier am häufigsten vorkommt: der
+Kommentar sagt etwas anderes als der Code tut, und niemand liest ihn gegen den laufenden Zustand.
+Podman hängt diese vier selbst ein; `--read-only` meint bei podman die Wurzel, nicht den ganzen
+Container.
+
+**Warum das nicht nur Wortklauberei ist** — und das ist abgewogen, nicht gemessen: die drei tmpfs
+sind je 3,9 GiB groß, also je etwa die Hälfte des Arbeitsspeichers der Maschine, und ein tmpfs
+zählt gegen den Arbeitsspeicher. Zusammen mit Befund 1 aus Punkt 72 — `memory.max` ist `max` — ist
+das ein Weg, den Speicher des Wirts zu füllen, ohne eine einzige Grenze zu verletzen, die irgendwo
+steht. Welche der beiden Hälften zuerst zu schließen ist, die cgroup oder die Größe der tmpfs, ist
+eine Entscheidung und steht hier nicht.
+
+### Kleiner Nachtrag — `/var/lib/ngc` ist auflistbar
+
+Punkt 72 hat `/var/lib/ngc/apps` als `0711 root` gemessen und den Zugriff darauf verweigert
+gesehen. Das Verzeichnis **darüber** ist `0755 root` und von jedem App-Benutzer auflistbar; auf
+`svc-1` und auf 208 gleichermaßen:
+
+```
+ls /var/lib/ngc  als App-Benutzer  ->  apps  controller  release.seq  staged  (spool auf 208)
+release.seq                        ->  0644, von jedem lesbar
+```
+
+Die Inhalte sind zu (`controller` und `spool` sind `0700`). Kein Loch — aber die App erfährt den
+Aufbau des Servers und die laufende Release-Nummer, und beides braucht sie nicht. Erwähnt, weil
+Punkt 72 die Zeile darunter ausdrücklich gemessen hat und diese nicht.
+
+### Anmerkung zur Maschine — die Einzel-VM 208 ist weg
+
+Die Zahlen zu 208 in diesem Punkt sind am 25.10.2026 gemessen; die Maschine war beim Messen
+ausgeschaltet und wurde dafür angekündigt gestartet. Beim Abschluss der Messung war sie **auf dem
+Wirt nicht mehr vorhanden**: `qm status 208` antwortet
+`Configuration file 'nodes/pve/qemu-server/208.conf' does not exist`, es gibt keine Konfiguration
+und keine Platte mehr, und dafür sind die VMs 307 bis 309 neu dazugekommen. Entfernt hat sie
+dieser Strang nicht — er hat `qm start 208` aufgerufen und sonst nichts am Wirt.
+
+**Die Ursache ist gemeldet, nicht von hier gemessen:** die Sitzung „Die tote Einzel-VM aufräumen"
+hat 208 auf Thomas' ausdrückliche Entscheidung mit `qm destroy 208 --purge` entfernt, samt Platte
+und Schnappschuss; die Messskripte der Maschine sind unter `D:\claude\workinglte-vm-bergung`
+gesichert. Gemessen ist hier nur, dass Konfiguration und Platte weg sind — wer es getan hat und
+warum, steht auf dem Wort jener Sitzung.
+
+Das steht aus einem Grund hier: **die Messungen von Punkt 72 und die Zahlen dieses Punktes zu 208
+sind auf dieser Maschine nicht wiederholbar** — nicht wegen eines Ausfalls, sondern weil die
+Maschine absichtlich abgeräumt wurde. Wer sie wiederholen will, braucht eine neue Einzel-VM. Was
+ohne sie wiederholbar ist, steht oben unter `svc-1` und `svc-2`.
+
+### Was daraus zu bauen wäre
+
+1. **Posten 3 und 7 aus Punkt 72 können gestrichen werden** — beide sind gemessen. Posten 1, 2, 4,
+   5 und 6 stehen unverändert; Posten 2 (der Controller muss das Verwerfen bemerken) ist durch die
+   Verhaltensprobe oben eher dringlicher geworden als vorher.
+2. **Den Kommentar an `--read-only` berichtigen.** „The only place it may write" ist falsch;
+   richtig ist „der einzige Ort, der einen Neustart übersteht". Ein Satz, kein Umbau — aber genau
+   diese Sorte Satz wird sonst als Zusicherung weitergelesen.
+3. **Eine Grenze für die drei tmpfs**, oder eine Zeile, die sagt, warum 3 × 3,9 GiB im Container in
+   Ordnung sind. Solange `memory.max` `max` ist, ist das die bequemste Art, dem Wirt den Speicher
+   zu nehmen.
+4. **Ein Fall, der `/var/lib/ngc` auf `0711` prüft** — wenn es eng sein soll. Ob es eng sein soll,
+   ist eine Entscheidung: die Liste `apps`, `controller`, `staged` ist kein Geheimnis, aber sie
+   steht auch nicht in einem Vertrag.
+5. **Dieselbe Messung auf einem Knoten mit `Delegate=yes`**, sobald es einen gibt. Erst dann ist
+   gemessen, ob `PIDsLimit = 512` in Betrieb trägt — und Punkt 72 nennt die Folge: 512 reißen bei
+   rund 53 Terminal-Sitzungen, unter den 64, die ein Browser öffnen darf.
+
+**Getrennt gehalten:** gemessen sind die beiden Tabellen (cap-drop, Delegate/cgroup auf beiden
+Knoten), die gedeckelte Verhaltensprobe samt der cgroup-Zuordnung der 600 Aufgaben, die fünf Wege
+der Probe 1, die Tabelle der Einhängungen und die Rechte an `/var/lib/ngc`. Abgewogen sind die
+Folge der drei tmpfs für den Arbeitsspeicher des Wirts, die Dringlichkeit von Posten 2 und jede
+Zeile der letzten Liste. Nicht gemessen ist, ob `nosuid` auf `/data` wirkt — das steht in Punkt 72
+und ist dort als geschlossen, nicht gemessen gekennzeichnet; dieser Punkt ändert daran nichts.
+
+---
+
+## Punkt 96: Eine App auf eine neue Fassung heben geht — aber nicht über den Weg, den die Oberfläche dafür hat
+
+Punkt 96 ist der erste Punkt über das **Heben einer App**. Punkt 72 und Punkt 95 haben den
+Container einer App aufgenommen, `docs/app-weg.md` den Weg einer App in den Laden — beide hören
+auf, wo eine App einmal läuft. Dieser Punkt fängt dort an und beantwortet eine Frage, die bis
+hierher niemand gestellt hat: was mit einer eingerichteten App und **ihren Daten** passiert, wenn
+eine neue Fassung kommt.
+
+**Welche Maschinen.** Die **verteilte** Anlage: `svc-1` (10.2.3.213), `api-1` (10.2.3.210),
+`store` (10.2.3.215). Beide Server auf `ngc-api`/`ngc-controller` **0.2.2** (contract 1), die
+Programme vom 24.10.2026 11:05 bis 12:21. podman 5.4.2. Die App ist `org.sorglos.uhr`.
+
+**Woher die Zahlen kommen.** Der Hub selbst lief am **25.10.2026** und ist im Journal von `svc-1`
+auf die Millisekunde protokolliert; jede Zeitangabe unten ist von dort, nicht nachgerechnet. Der
+Zustand von Laden, Datenordner und Abbildspeicher ist am **29.10.2026** gelesen. Der Quelltext ist
+der Stand von `origin/main` am 29.10.2026 (`25b8f24`).
+
+### Gemessen: der Hub lief, und die App war 262 ms weg
+
+`org.sorglos.uhr` wurde auf `svc-1` von **1.0.0 auf 1.0.1** gehoben. Aus dem Journal, in der
+Reihenfolge, in der es dort steht:
+
+| Zeit (25.10.2026) | was |
+|---|---|
+| 20:05:58 | die **alte** Fassung bedient noch eine Anfrage — `action=zeit` im Container `image=localhost/ngc/uhr:1.0.0` |
+| 20:06:18.184 | das neue Abbild wird geladen, aus `/var/lib/ngc/staged/accept-2060123582/files/services/amd64.tar` |
+| 20:06:18.263 | der alte Container **stirbt** |
+| 20:06:18.390 | der alte Container ist **entfernt** |
+| 20:06:18.454 | der neue Container wird angelegt, `image=localhost/ngc/uhr:1.0.1` |
+| 20:06:18.525 | der neue Container **läuft** |
+| 20:06:22 | die **neue** Fassung bedient eine Anfrage — `action=zeit` |
+
+Daraus zwei Zahlen, beide gemessen und nicht abgewogen:
+
+- **Die App ist zwischendurch weg.** Die alte Fassung läuft **nicht** weiter, bis die neue steht:
+  sie wird angehalten und entfernt, und erst danach wird die neue angelegt. Zwischen „alter
+  Container gestorben" und „neuer Container läuft" liegen **262 ms** (20:06:18.263912 bis
+  20:06:18.525490).
+- **Der ganze Tausch dauert 341 ms**, vom Laden des Abbilds bis zum Start.
+
+Die 262 ms sind **eine** Messung, an **einer** App, deren Abbild 85 MB hat. Dass eine größere App
+in derselben Zeit tauscht, sagt diese Zahl nicht.
+
+### Gemessen: die Daten bleiben, und der Benutzer bleibt derselbe
+
+Das ist der Befund, nach dem gesucht wurde, und er fällt zugunsten von NGC aus. Belegt ist er mit
+zwei Dateien im Datenordner, die vor dem Hub und nach dem Hub gelesen wurden:
+
+- `vor-dem-update.txt`, vor dem Hub von Hand in den Datenordner gelegt (25.10.2026 19:49) — liegt
+  **unverändert** da, nach dem Hub und nach einem Neustart der Maschine am 29.10.
+- `zugriffe` mit dem Inhalt **42** — der Zähler, den **erst 1.0.1** mitbringt. Er steht im
+  **selben** Ordner, in dem die Datei von vorher liegt.
+
+Beide gehören `ngc-uhr-ad8c00e2`, **uid 995** — demselben Benutzer wie vor dem Hub. Der Ordner ist
+`drwx------`.
+
+Im Quelltext steht dasselbe, an zwei Stellen und mit Begründung: `install/activate.go` setzt
+`installed := old.Version != ""` und gibt den Benutzer und den Datenordner nur dann in die
+Rücknahmeliste, wenn die App **nicht** installiert war — „an update must never take the user of
+the app away on a failure: the data directory belongs to it". `install/update.go` ruft `setUp` mit
+`installed = true`, immer.
+
+**Kein Datenverlust über einen Hub hinweg.** Der schwerste Befund, den dieser Auftrag finden
+konnte, liegt nicht vor.
+
+### Gemessen: der Datenordner ist nicht verschlüsselt
+
+Dies widerspricht einer Annahme, mit der gearbeitet wurde. `/var/lib/ngc/apps` ist auf `svc-1`
+
+```
+/dev/sdb on /var/lib/ngc/apps type ext4 (rw,relatime)
+```
+
+— nackt. Kein `fscrypt`, kein `gocryptfs`, keine Einhängeoption, die etwas verschlüsselt; beide
+Werkzeuge sind auf der Maschine nicht vorhanden. Geschützt ist der Ordner durch **Rechte und
+Eigentum**: `drwx------`, Eigentümer der App-Benutzer, und `/var/lib/ngc/apps` selbst
+`drwx--x--x root`. Das hält jeden anderen App-Benutzer heraus und hält `root` nicht heraus —
+gelesen wurden die beiden Dateien oben als `root`.
+
+Der Quelltext nennt ihn an mehreren Stellen „the encrypted data directory" (`install/update.go`,
+`install/activate.go`). **Auf dieser Anlage trägt der Satz nicht.** Ob er je getragen hat oder für
+eine andere Einrichtung gedacht war, sagt diese Messung nicht; sie sagt nur, dass er hier nicht
+stimmt.
+
+### Gemessen: jeder Hub lässt ein ganzes Abbild im Datenordner liegen
+
+Der Quelltext sagt das selbst voraus und nennt es als Kosten, nicht als Fehler
+(`install/update.go`: „every update adds a set of image layers under `config.AppDataDir/<app>` …
+The image of the version before is NOT removed either"). Gemessen auf `svc-1`, im Abbildspeicher
+der beiden Apps, der **innerhalb** des Datenordners liegt:
+
+| App | Hübe | Abbilder im Speicher | Datenordner |
+|---|---|---|---|
+| `org.sorglos.uhr` | **einer** (1.0.0 → 1.0.1) | **2** | 93 MB |
+| `org.sorglos.terminal` | keiner | **1** | 110 MB |
+
+Das alte Abbild ist noch da. Weil dieser Speicher das Heimatverzeichnis des App-Benutzers ist,
+zählt `runtime.DataSize` diese Abbilder als **Daten der App**: was ein Benutzer als Platzverbrauch
+seiner App zu sehen bekommt, wächst mit jedem Hub um ein ganzes Abbild, und nichts räumt auf. Der
+Quelltext nennt auch, warum nicht: `dbapi.App` hat kein Feld für die Kennung eines Abbilds, also
+gibt es keinen Namen, den man `Engine.RemoveImage` reichen könnte, und `shared/dbapi` ist
+eingefroren. **BLOCKIERT, nicht gebaut** — so steht es dort, und so bleibt es hier.
+
+### Gemessen: der Hub lief über die Einrichtung, nicht über den Update-Weg
+
+Der Ordner, aus dem das neue Abbild geladen wurde, heißt `accept-2060123582`. `accept-` legt
+`install.Accept` an — das ist der Weg einer **Einrichtung** (`install.Manager.Activate`), nicht der
+Weg eines Updates (`install.Manager.Update`).
+
+Das ist kein Zufall und kein Umweg, den jemand gewählt hat, sondern der einzige Weg, den die
+laufende Anlage hat. `install.Manager.Update` wird im ganzen Baum von genau **einer** Stelle
+gerufen, `update/install.go:473`, und die steht hinter
+
+```go
+if m.d.Apps == nil { return ErrInternal }
+```
+
+`node/run.go:928` übergibt `Apps: nil`, mit Kommentar: ein App-Update gehe „through the activation
+(install.Manager) on this controller". Also ist `install.Manager.Update` auf diesem Programm
+**nicht erreichbar**, und ein App-Hub ist eine Einrichtung der neuen Fassung über eine alte.
+
+Das hat eine Folge, die gemessen und nicht abgewogen ist: `activate.go:235` weist eine Fassung ab,
+die nicht neuer ist als die eingerichtete
+
+```go
+if installed && old.Version != p.Version && !store.Newer(p.Version, old.Version) {
+        return nil, ErrForbidden
+}
+```
+
+— **ein Rückdreh auf eine ältere Fassung wird verweigert**, bevor die API die Datei überhaupt
+sendet.
+
+### Gemessen: die Oberfläche sieht die neue Fassung, kann sie aber nicht anbieten
+
+Die Oberfläche hat eine vollständige Update-Seite. `apps/web/public/assets/js/apps/store.js`
+zeichnet unter „Updates" je Ziel eine Zeile `eingespielt → verfügbar`, eine Wahl zwischen
+**automatisch**, **auf Klick** und **nur melden**, und einen Knopf „Jetzt aktualisieren". Apps
+stehen dort mit drin: `updates/rows.go` liest `AppList` und rechnet `Available` aus dem Katalog
+**des Ladens, aus dem die App eingerichtet wurde**.
+
+Der Laden trägt heute `1.0.1` **und** `1.0.2` für die Uhr, eingerichtet ist `1.0.1`. Die Zeile muss
+also `1.0.1 → 1.0.2` zeigen.
+
+**Der Knopf erscheint trotzdem nicht, und der Grund ist nicht ein Fehler, sondern eine Hälfte, die
+nicht gebaut ist.** Der Knopf hängt an einem Zustand:
+
+```js
+if (u.state === catalog.UPDATE_DOWNLOADED) { … "Jetzt aktualisieren" … }
+```
+
+`updates/rows.go` (`fill`) setzt `row.State` nur aus einer **Meldung eines Knotens**; ohne Meldung
+bleibt er leer. Die Meldung `UpdateDownloaded` entsteht, wenn der stündliche Rundlauf die Datei auf
+dem Knoten bereitlegt. Und dieser Rundlauf kennt **keine Apps**:
+
+- `Updates.Rollout` läuft über `rolloutOrder` — die NGC-Teile. Eine zweite Schleife über die Apps
+  gibt es nicht.
+- `nodesFor(part)` wählt Knoten über `tunnel.Components(h.Roles)`, also über NGC-Teile.
+- `stageAndInstall` nimmt ein `rel *store.Release` — eine **Fassung von NGC**, kein App-Paket. Es
+  gibt in diesem Weg keine Stelle, die ein `*.ngc` anfassen könnte.
+
+Also wird ein App-Paket **nie** bereitgelegt, kein Knoten meldet je `UpdateDownloaded` für eine
+App, `row.State` bleibt für Apps **immer** leer, und der Knopf wird für eine App **auf jedem
+Programmstand** nicht gezeichnet. Die Wahl „automatisch / auf Klick / nur melden" wird für
+App-Zeilen mitgezeichnet, und **nichts im Baum liest sie für eine App**: sie ist ein Versprechen
+ohne Gegenstück.
+
+Das ist der eigentliche Befund dieses Punkts zur Frage „angeboten oder von selbst": **weder**. Die
+Anzeige der neuen Fassung ist gebaut, das Einspielen aus der Oberfläche heraus ist für Apps nicht
+gebaut. Der Weg, der funktioniert, ist der von Hand: im Laden die neue Fassung einrichten. Den ist
+die Uhr am 25.10. gegangen.
+
+**Und das ist von außen gemessen, nicht nur am Quelltext gelesen.** Das Zugriffsprotokoll des
+Ladens (`/var/log/nginx/access.log` auf `store`) ist nicht gedreht und deckt die ganze Lebenszeit
+des Ladens ab, **23.10.2026 22:15 bis 30.10.2026 12:36**. Darin stehen zwei Dinge nebeneinander:
+
+- **Der Katalog wird stündlich geholt, von beiden APIs.** `10.2.3.210` je zur Minute 36:25,
+  `10.2.3.211` je zur Minute 36:50, Antwort `200`, Länge **1626** — genau die Größe des heute
+  ausgelieferten Katalogs mit Folge 9. Zuletzt am 30.10. 12:36:25. Die API **kennt** also
+  `uhr 1.0.2`, seit es am 25.10. 20:44 unterschrieben wurde, und hat es seither rund 115 Mal neu
+  gelesen.
+- **Das Paket dazu ist nie geholt worden.** Jeder Paket-Abruf der ganzen Protokollzeit:
+
+```
+      4 GET /terminal.ngc
+      2 GET /uhr-1.0.1.ngc
+      5 GET /uhr.ngc
+```
+
+`uhr-1.0.2.ngc`: **null Mal.** Der letzte Paket-Abruf überhaupt war am 25.10. 20:06:14, die
+Einrichtung von 1.0.1 von Hand.
+
+Damit braucht der Befund den Quelltext nicht mehr als Beweis, sondern nur als Erklärung: wenn der
+stündliche Rundlauf App-Pakete bereitlegte, läge in über hundert Runden mindestens **ein** Abruf
+von `uhr-1.0.2.ngc` im Protokoll. Es liegt keiner. **Der Rundlauf fasst Apps nicht an.**
+
+**Eine eigene Fehlmessung, und sie steht hier, statt sie zu löschen.** Diese Prüfrunde hat die
+Kette zuerst anders gelesen: der stündliche Rundlauf schreibt seit Tagen
+`WARN the update round stopped error="updates: the round stopped at a node"` (im Journal von
+`api-1`, zuletzt am 29.10.2026 19:42), der Griff für den Kanal `ngc.store/controller/stage` ist
+erst mit `5ff4bc8` am 24.10.2026 13:03 in `main` gekommen, und **kein** Controller der Anlage ist
+jünger: `db-1` fährt 0.2.1 vom 24.10. 11:49, `svc-1` 0.2.2 vom 11:05, `svc-2` 0.2.1 vom 11:07,
+`api-1` 0.2.2 vom 11:06. Daraus wurde geschlossen, der Rundlauf stürbe am stage-Kanal, und ein
+Rollout der Programme würde den Knopf einschalten. **Das ist widerlegt**, an einer Datei:
+`/var/lib/ngc/staged/ngc-controller` auf `db-1` ist vom **30.10.2026 12:36**, die `ngc-api` daneben
+vom selben Tag 04:36 — der stage-Schritt **läuft**, heute, auf dem alten Programm. Der Rundlauf
+stirbt also eine Stufe später, und er stirbt an NGC-Teilen, nicht an Apps. Für den Knopf einer App
+ist er ohnehin ohne Belang, weil er Apps nie anfasst. Woran er wirklich stirbt, steht im
+NGC-**Protokoll** und nicht im Journal; eine frühere Sitzung hat dort `E_FORBIDDEN` beim
+install-Schritt gemessen (stehende Zustimmung gegen Root-Aufgabe, `shared/` und damit eingefroren).
+**Diese Prüfrunde hat das nicht nachgemessen** und übernimmt es als fremde Messung.
+
+### Gemessen: der Zustand des Ladens, und eine Falle darin
+
+Auf `store` (10.2.3.215), gelesen am 29.10.2026:
+
+- Der ausgelieferte Katalog `/var/www/store/catalog.json` steht auf **Folge 9**, Laden `global`,
+  Kennung des Schlüssels `RPmRtyPJs5WQECAkiPeBsg`.
+- Er trägt **beide** Apps. Die Uhr mit **drei** Fassungen: 1.0.0, 1.0.1, 1.0.2. Die Pakete
+  `uhr-1.0.1.ngc` und `uhr-1.0.2.ngc` liegen daneben.
+- Zwei Sicherungen des jeweils vorigen Katalogs liegen in `/root/store/`:
+  `catalog-vor-uhr-1.0.1-20261025.json` und `catalog-vor-uhr-1.0.2-20261025.json`.
+
+**Die Falle:** `/root/store/seq` sagt **7**. Der unterschriebene Katalog sagt **9**. Wer die
+nächste Folge aus dieser Datei liest und 8 unterschreibt, unterschreibt einen **Rückschritt**, und
+`store.ErrRollback` weist ihn bei jedem Abholen ab — der Laden wäre für jede Installation tot, bis
+jemand höher unterschreibt. `docs/app-weg.md` nennt `seq` nicht als Quelle; die einzige
+verlässliche Folge steht im Katalog selbst. Die Datei wird offenbar nicht mitgeschrieben, wenn
+`ngc-store catalog` läuft.
+
+**Nachtrag vom 30.10.2026, und er schärft die Falle:** der Laden wurde an diesem Tag zweimal neu
+unterschrieben, auf Folge **10** und auf Folge **11**. `/root/store/seq` sagt danach weiterhin
+**7**. Die Datei wird also nicht nur einmal übersehen, sondern bei jedem Unterschreiben.
+
+### Gemessen: ein abgebrochener Versuch hinterlässt an der App nichts — und der Laden erreicht die Oberfläche nur stündlich
+
+Am 30.10.2026 wurde ein Versuch mit einer Fassung, die **nicht läuft**, angefangen und auf halbem
+Weg abgebrochen. Was dabei herauskam, ist für den Weg selbst brauchbar:
+
+- **Eine Fassung, die nicht läuft, ist baubar und geprüft:** `uhr-1.0.3.ngc`, dasselbe Abbild ohne
+  das Programm der App. Gegenprobe auf dem Baurechner:
+  `crun: executable file /usr/lib/ngc/ngc-uhr not found`. Im Container ist `/usr/lib/ngc/` leer.
+  Das Paket liegt beiseite unter `/root/store/uhr-1.0.3.ngc.zurueckgenommen`.
+- **Der Laden lässt sich heben und zurücknehmen, aber nur vorwärts.** Folge 9 → 10 (mit 1.0.3) →
+  11 (ohne 1.0.3, Paket aus dem Ordner genommen). Ein Zurückschreiben der Sicherung auf Folge 9
+  wäre nur so lange gültig gewesen, wie **keine** Installation die 10 gesehen hat; danach weist
+  `store.ErrRollback` den Laden ab. Die sichere Form einer Rücknahme ist also eine **höhere**
+  Folge ohne das Paket, nicht die alte Datei zurück.
+- **`ngc-store catalog` liest jeden Paketordner-Inhalt** (`apps/cli/classes/catalog.go`: „Catalog
+  reads every package in dir"). Eine Fassung aus dem Katalog nehmen heißt darum: die Datei aus
+  `/var/www/store` nehmen und neu unterschreiben. Umgekehrt landet jedes Paket, das dort liegt,
+  beim nächsten Unterschreiben **automatisch** im Katalog — auch eines, das man nur zum Aufbewahren
+  hingelegt hat.
+- **Der neue Katalog erreicht die Oberfläche nicht sofort.** Unterschrieben um 13:14, geprüft um
+  13:15 mit `curl` von `api-1` (`http=200`). Zehn Minuten später, um 13:24, hatte **keine** NGC-API
+  ihn geholt: im Zugriffsprotokoll des Ladens steht für den neuen Katalog (1882 Byte) genau **ein**
+  Abruf, und der ist die eigene Gegenprobe (`curl/8.14.1`); von `Go-http-client` **null**. Die
+  letzten API-Abrufe waren von 12:36 und haben den alten Katalog bekommen. Wer in dieser Zeit in
+  die Oberfläche schaut, sieht darum die **alte** neueste Fassung — am 30.10. die 1.0.2 — und nicht
+  die eben unterschriebene. `docs/app-weg.md` nennt den stündlichen Abruf; hier ist er gemessen.
+- **Ein Abbruch vor dem Einspielen lässt die App unberührt.** Der Container der Uhr lief
+  unverändert weiter (dasselbe Container-Kennzeichen, Abbild 1.0.1, Laufzeit durchgehend), es
+  wurde an diesem Tag **kein** Paket vom Laden geholt, und der Abbildspeicher der App enthielt
+  weiter genau **zwei** Abbilder. Es gibt also keinen Zwischenzustand zwischen „Katalog
+  unterschrieben" und „App gehoben", in dem die App schon etwas abbekommen hätte.
+- **Der Zähler aus 1.0.1 arbeitet im Betrieb.** Vor dem Versuch stand `zugriffe` auf **42**, nach
+  einem einzigen Klick auf die Zeit in der Oberfläche auf **43**, und im Journal steht die
+  erfolgreiche Aktion um 13:20:21 auf Abbild 1.0.1. Damit ist der Zähler nicht nur über einen Hub
+  hinweg erhalten, sondern am laufenden System auch benutzt worden.
+
+**Nicht gemessen, weil abgebrochen:** was ein Einspielen einer Fassung, die nicht läuft, an der
+Anlage anrichtet. Die Vorhersage aus dem Quelltext steht unten unter „Abgewogen" und ist
+unverändert offen.
+
+### Gemessen am 30.10.2026: ein zweiter Hub, und er kostet wieder keine Daten — aber er lässt zwei Fassungen gleichzeitig laufen
+
+Am 30.10.2026 um 18:18:05 UTC wurde die Uhr auf `svc-1` ein zweites Mal gehoben, von 1.0.1 auf
+1.0.2, aus der Oberfläche heraus von Hand. Der Hauptbefund des Punkts steht damit zum dritten Mal:
+
+**Der Hub kostet keine Daten, und er kostet sie auch auf einer gestörten Maschine nicht.** Vor und
+nach dem Hub Byte für Byte dasselbe:
+
+```
+zugriffe            43     sha256 0e55092af0746630c98d1b2e0d960617c33f8ea7b55739fd18cb7cd5342a28ca
+vor-dem-update.txt  61 B   sha256 0ec76c9ff6d8b69610bc144496d6fe03595f62ee3f14024c770dfb6940b68465
+Eigentuemer                ngc-uhr-ad8c00e2  uid 995  gid 987   Rechte 600
+Zeitstempel                zugriffe 13:20:21 UTC, Markierung 25.10. 19:49:08 — unveraendert
+```
+
+Die Markierung liegt seit dem 25.10. da und hat jetzt **zwei** Hübe überlebt. Der Zähler stand vor
+und nach dem Hub auf 43, also hat auch keiner der beiden Prozesssätze (siehe unten) dazwischen
+hineingeschrieben.
+
+**Die Ausfallzeit: 249,9 ms.** Aus den podman-Ereignissen im Journal von `svc-1`:
+
+```
+18:18:05.346764  image loadfromarchive  7291709bcd5a  .../staged/accept-1568701847/files/services/amd64.tar
+18:18:05.432050  container died         f42bcd313a5e  (image=localhost/ngc/uhr:1.0.1)
+18:18:05.510222  container cleanup      f42bcd313a5e
+18:18:05.565224  container remove       f42bcd313a5e
+18:18:05.591286  image pull             7291709bcd5a  localhost/ngc/uhr:1.0.2
+18:18:05.622194  container create       5ec5da237f4b  (image=localhost/ngc/uhr:1.0.2)
+18:18:05.677880  container init         5ec5da237f4b
+18:18:05.681901  container start        5ec5da237f4b
+```
+
+Gestorben 18:18:05.432050, gestartet 18:18:05.681901 — **249,851 ms** weg. Ganzer Vorgang ab dem
+Entpacken 335,1 ms. Zum Vergleich die erste Messung vom 25.10.2026: 262 ms weg, 341 ms ganzer
+Tausch. Zwei Messungen, zwei Maschinenzustände, dieselbe Größenordnung; die Reihenfolge
+anhalten → entfernen → anlegen → starten ist in beiden identisch, es gibt keinen Parallellauf der
+beiden Fassungen während des Tauschs.
+
+**Diese Maschine war beim Messen gestört, und das muss neben der Zahl stehen.** Ein anderer Strang
+hatte `ngc-controller` auf `svc-1` um 17:00:42 UTC mit `kill -9` abgeschossen; der Controller kam
+um 17:00:47 zurück und startete um 17:05:58 noch einmal. Jeder dieser Starts legte einen weiteren
+Prozesssatz je eingerichteter App an, ohne den vorherigen zu beenden. Zustand unmittelbar vor dem
+Hub, um 17:14:56 UTC: `pgrep -c -u ngc-uhr-ad8c00e2 ngc-hold` = **3**, dasselbe für das Terminal
+= **3**. Ein Hub auf einer Maschine mit drei Prozesssätzen misst nicht den sauberen Hub.
+
+Die Dauer oben ist davon dennoch unberührt, und zwar nachweislich: in den podman-Ereignissen des
+Tauschs kommen **nur** `f42bcd313a5e` und `5ec5da237f4b` vor. Der Tausch hat die beiden anderen
+Sätze nicht angefasst. Ohne diesen Beleg wäre die Zahl wertlos gewesen.
+
+**Und hier der eigentliche Befund dieses zweiten Hubs: nach dem Hub laufen zwei verschiedene
+Fassungen der Uhr gleichzeitig auf demselben Datenordner.** Gemessen um 18:19:09 UTC, Schicht aus
+`/proc/<pid>/mountinfo` und Prüfsumme von `/proc/<pid>/root/usr/lib/ngc/ngc-uhr`:
+
+```
+pid  789  start 14:08:24  overlay/4500702b93a7  prog 1846f6d3a4cf…  = uhr:1.0.1
+pid 4352  start 17:00:47  overlay/4500702b93a7  prog 1846f6d3a4cf…  = uhr:1.0.1
+pid 7321  start 18:18:05  overlay/24dc2ae6a07f  prog 74792027b62f…  = uhr:1.0.2
+```
+
+Alle drei in cgroup `/ngc.apps/ngc-uhr-ad8c00e2` (`procs=6`, `pids.current=21`), alle im Zustand
+`S`, alle mit demselben Datenordner `/var/lib/ngc/apps/org.sorglos.uhr`. Die Zuordnung der
+Schichten ist über die Eltern-Schicht belegt: `24dc2ae6a07f` → Eltern `f8a1cfa1d53b` → Abbild
+`7291709bcd5a` = `localhost/ngc/uhr:1.0.2`; `4500702b93a7` → Eltern `e254f868805d` → Abbild
+`15964a559108` = `localhost/ngc/uhr:1.0.1`.
+
+Der Hub selbst hat dabei **keinen** Satz dazugelegt — die Zahl blieb 3 — aber er hat nur den
+**einen** Satz getauscht, den podman kannte. Die beiden Waisen laufen weiter auf der alten Fassung.
+Es gibt also keinen zweiten Weg in diesen Fehler hinein, und auch keinen heraus.
+
+**Dazu der Teil, der jede naheliegende Behebung aushebelt: podman hat den alten Behälterdatensatz
+gelöscht, während dessen Prozesse weiterlaufen.** `container remove f42bcd313a5e` um
+18:18:05.565224, und `overlay-containers/containers.json` kennt danach genau einen Behälter,
+`5ec5da237f4b`; `f42bcd313a5e` kommt darin nicht mehr vor. Die Prozesse 789 und 4352 laufen
+trotzdem. Daraus folgt:
+
+- **Die Waisen sind über podman nicht mehr erreichbar.** Kein `podman ps` zeigt sie, kein
+  `podman stop` oder `podman rm` erreicht sie. Sie verschwinden nur durch `kill` auf die PID oder
+  durch einen Neustart der Maschine. Wer über podman aufräumt, lässt bestehende Waisen stehen und
+  ist auf einer frischen Maschine trotzdem grün.
+- **Die Waisen nageln die alten Abbilder fest.** Schicht `4500702b93a7` ist weiter von zwei
+  Prozessen gemountet, also ist das 1.0.1-Abbild nicht löschbar. Der Abbild-Haufen aus dem
+  Abschnitt weiter oben wuchs mit diesem Hub von **2 Abbildern / 93 MB** auf **3 / 97 MB** und
+  lässt sich nicht aufräumen, solange Waisen laufen. Zwei Fehler, die sich gegenseitig halten.
+- **Das Messgerät für die Behebung** ist darum nicht die Prozesszahl allein: `pgrep -c -u
+  <app-benutzer> ngc-hold` **und** die Zahl der Einträge in `containers.json` müssen
+  übereinstimmen. Am 30.10. standen sie auf **3** und **1**. Die Abweichung zwischen den beiden
+  Zahlen ist der Fehler, nicht die 3.
+
+**Was dieser zweite Hub NICHT misst:** den Hub auf einer unberührten Maschine. Die Verdoppelung
+stammt aus einer Controller-Fassung 0.3.0 vom 30.10. 14:08, die ein anderer Strang gebaut hat; die
+Behebung läuft dort. Die Gegenmessung auf einer frischen Maschine steht aus. Dass zwei Fassungen
+gleichzeitig laufen, ist eine Folge der Verdoppelung und **kein** Befund über den Hub-Weg selbst —
+wohl aber der Beweis, dass die Verdoppelung schwerer ist als ein Schönheitsfehler: sie führt zu
+zwei verschiedenen Programmen auf einem Datenbestand.
+
+### Abgewogen, nicht gemessen
+
+Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
+
+- **Dass die Zeile `1.0.1 → 1.0.2` heute wirklich auf dem Schirm steht.** Gemessen ist, dass die
+  API den Katalog mit Folge 9 stündlich liest, und gelesen ist der Weg, auf dem die Zeile daraus
+  entsteht (`rows.go`, `available`). Auf die Update-Seite einer angemeldeten Sitzung hat niemand
+  geschaut: der Browser dieser Prüfrunde kommt nicht an die Oberfläche, weil die Anlage ihr eigenes
+  Zertifikat führt und dieser Rechner dessen Aussteller nicht kennt
+  (`ERR_CERT_AUTHORITY_INVALID`) — und die Anmeldung kann ohnehin nur ein Mensch. **Dass der Knopf
+  fehlt, ist dagegen nicht mehr offen:** das Zugriffsprotokoll des Ladens zeigt null Abrufe von
+  `uhr-1.0.2.ngc` in über hundert Runden, und ohne geholtes Paket gibt es keinen Zustand
+  `UPDATE_DOWNLOADED` und keinen Knopf. Offen ist nur noch, wie die Zeile **aussieht**.
+- **Dass ein Rollout der Programme am Knopf einer App etwas ändert.** Nein, nach der Lesart oben:
+  der Rundlauf kennt keine Apps, auf keinem Stand. Ein Rollout behebt die **NGC-Teile** und die
+  stündliche Warnung, nicht das Anbieten einer App.
+- **Dass die 262 ms typisch sind.** Eine Messung, eine App, ein kleines Abbild.
+- **Was bei einer Fassung passiert, die nicht läuft.** Nicht gemessen, in keiner Richtung. Der
+  Quelltext sagt zweierlei, das zusammengenommen unbequem ist: ein Fehlschlag lässt die Zeile der
+  App auf der **alten** Fassung stehen (`install/update.go`,
+  `TestUpdateLeavesTheOldVersionInTheRowAtEveryStep`), aber der Container der alten Fassung ist zu
+  dem Zeitpunkt schon **entfernt** (die Reihenfolge im Journal oben). Daraus folgt der Verdacht,
+  dass eine kaputte neue Fassung eine App tot stehen lässt, während die Datenbank die alte nennt —
+  **Verdacht, nicht Befund.** Ein Rückdreh von Hand ist dann auch versperrt, weil
+  `activate.go:235` die ältere Fassung abweist. Das ist der erste Posten für den nächsten
+  Durchgang.
+- **Ob der Satz „verschlüsselt" auf einer anderen Einrichtung trägt.** Hier trägt er nicht.
+
+### Was daraus zu bauen wäre
+
+1. **Den Rundlauf über die Apps führen** — oder die Wahl „automatisch / auf Klick / nur melden"
+   bei App-Zeilen ausblenden, bis es sie gibt. Im Moment zeigt die Oberfläche eine Einstellung,
+   die für Apps nichts bewirkt, und einen Knopf, der für Apps nie kommt. Das ist der Posten, an dem
+   „eine App auf eine neue Fassung heben" vom Handgriff zum Weg wird.
+2. **Die Programme auf der Anlage heben**, auf einen Stand ab `5ff4bc8` (24.10. 13:03) — aus einem
+   anderen Grund als zuerst gedacht: nicht für den Knopf einer App, sondern damit der stündliche
+   Rundlauf für die NGC-Teile aufhört, jede Stunde eine Warnung zu schreiben. Die Wand dahinter
+   (`E_FORBIDDEN` beim install-Schritt) ist damit nicht behoben.
+3. **`/root/store/seq` mitschreiben oder abschaffen.** Eine Zahl, die an zwei Stellen steht und an
+   einer falsch ist, ist schlechter als keine.
+4. **Den Satz „encrypted data directory" im Quelltext richtigstellen** oder die Verschlüsselung
+   bauen. Im Moment verspricht der Kommentar mehr, als die Anlage hält.
+5. **Das alte Abbild nach einem Hub entfernen.** Braucht ein Feld in `shared/dbapi` — eingefroren,
+   also blockiert.

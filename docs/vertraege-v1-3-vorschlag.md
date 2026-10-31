@@ -1017,3 +1017,58 @@ er kommt wieder, sobald eine App an den 512 anstößt.
 3. **P3** — weil es **jetzt noch gratis** ist: `release-packer` existiert nicht, der
    zweite Schreiber ist nicht gebaut. Nach ihm ist dieselbe Entscheidung ein Umbau, und
    bis dahin entpackt der Controller nach einer Annahme, die nirgends steht.
+
+---
+
+## Nachtrag 20.10.2026: P14 und P15 kommen aus Punkt 68
+
+Beide stammen aus dem Portierversuch zu `docs/vertraege-v1.2.md`, Punkt 68 — ein fremdes
+Rust-Programm als NGC-App. **Die Entscheidungstabelle oben kennt sie noch nicht.**
+
+### P14 — Eine Oberfläche darf 16 MiB, ein Programm 4 GiB
+
+`MaxUIFile = 16 << 20` und `MaxUITotal = 64 << 20` (`shared/store/pack.go:22-23`) gegen
+`MaxPackage = 4 << 30` (`shared/store/catalog.go:25`). Das Verhältnis ist 1:256, und es ist
+nicht begründet: beide Zahlen stehen ohne Kommentar zu ihrer Höhe.
+
+**Gemessen:** Wordcrafts WebAssembly-Bau ist **44 027 637 Bytes** — 2,6-mal über der
+Dateigrenze, und als `data:`-Adresse (base64, +33 %) über die Gesamtgrenze von 64 MiB. Kein
+Programm dieser Größenklasse kann je eine NGC-Oberfläche haben, auch wenn jeder andere
+Blocker fiele.
+
+**Der Änderungssatz:** `MaxUIFile` und `MaxUITotal` anheben — oder ausdrücklich
+nicht, mit einem Satz, der sagt warum. Betroffen ist auch die JavaScript-Seite
+(`apps/web/public/assets/js/contracts/uitar.js:20-24`) und das Zwischenlager der Shell
+(`appframe.js:49-50`, `CACHE_BYTES = MAX_UI_TOTAL`): eine höhere Grenze heißt ein größeres
+Zwischenlager im Browser, bei acht offenen Apps achtmal.
+
+**Der Preis:** die Shell hält das ui-tar vollständig im Speicher und hasht es in einem Zug
+(`appframe.js:656-668`). 16 MiB sind dort eine bewusst kleine Zahl; 64 MiB je Datei wären
+eine ganz andere Last auf einem schwachen Gerät. Das ist die eigentliche Frage, nicht die
+Zahl selbst.
+
+**Ohne die Änderung:** NGC-Oberflächen bleiben handgeschrieben und klein. Das ist ein
+vertretbarer Zustand — er muss nur dastehen, damit niemand ein halbes Jahr in eine
+Portierung steckt, die an einer Zahl ohne Begründung endet.
+
+### P15 — Ein Stream hat keine Nachrichtengrenzen, und jede App erfindet ihre eigenen
+
+`serve` gibt den Klartext eines Kanals als **Byte-Strom** an das Dienstprogramm durch
+(`apps/server-controller/classes/serve/call.go:193-197`); wo eine Nachricht aufhört, sagt
+nichts. Das Terminal hat sich dafür einen eigenen Kopf aus drei Bytes erfunden —
+Art und Länge, `KindKeys` = 1, `KindResize` = 2 (`classes/terminal/terminal.go:76-96`).
+
+**Der Befund:** das ist die zweite Hälfte eines Vertrags, die in einer App liegt. Jede
+weitere App, die über einen Stream mehr als einen Byte-Brei schickt, erfindet denselben Kopf
+neu — mit eigener Länge, eigener Bytefolge und eigenen Fehlern. Beim Portierversuch stand
+genau diese Entscheidung wieder an.
+
+**Der Änderungssatz:** ein Rahmen mit Längenkopf in `shared/`, einmal, mit Vektoren in
+`shared/testdata` wie jeder andere Vertrag — und das Terminal zieht darauf um.
+
+**Der Preis:** eine Vertragsdatei mehr und eine Umstellung im Terminal. Die JavaScript-Seite
+braucht das Gegenstück, also eine zweite Umsetzung — der Preis aus Punkt 67, hier mit
+Ansage.
+
+**Ohne die Änderung:** es bleibt bei „jede App ihr eigenes Protokoll". Bei zwei Apps ist das
+nichts; bei zehn ist es zehn Stellen, an denen eine Längenprüfung fehlen kann.

@@ -2,8 +2,9 @@
 // user, role, app and action. No unsigned part of the OPEN moves that decision;
 // a signed one does, and Request says which and why. The rights of a role live
 // in the database (dbapi.BlobRights), the roles of a user in the trust list,
-// which only an admin can change. The role admin may use every core action;
-// every other right is granted per role and app.
+// which only an admin can change. The role admin may use every core action,
+// and holds the rights of every installed app without a row of its own
+// (adminApps); every other right is granted per role and app.
 //
 // The licence of an app is the one source of the decision this package does
 // not read yet: it arrives with the task that builds Check's caller (point 20
@@ -19,6 +20,7 @@ import (
 
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
+	"github.com/sorglos-it/nextgencloud/shared/store"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 )
 
@@ -43,7 +45,47 @@ func Of(ctx context.Context, db dbapi.Store, l *trust.List, user string) (map[st
 			out[right] = true
 		}
 	}
+	if admin {
+		if err := adminApps(ctx, db, out); err != nil {
+			return nil, false, err
+		}
+	}
 	return out, admin, nil
+}
+
+// adminApps adds the rights of every installed app to an admin's rights. It
+// closes a circle that left a freshly installed app unreachable for everybody:
+// an app only reaches the menu with <app>/use (coreapp.Dispatcher.apps), and
+// the one page that hands rights out read its list of apps FROM that menu, so
+// the first right of a new app could never be given to anyone.
+//
+// It is granted here and not written into the row of the role admin, and that
+// is the whole point: a right that lives in no row cannot be taken away by
+// saving the page without it, and an installation never stands with an app
+// nobody may see.
+//
+// A row that is switched off or carries no version is left out, exactly as
+// the menu leaves it out; a manifest the database cannot parse is a broken row
+// and grants nothing, which is what Dispatcher.apps does with it as well.
+func adminApps(ctx context.Context, db dbapi.Store, out map[string]bool) error {
+	list, err := db.AppList(ctx)
+	if err != nil {
+		return err
+	}
+	for _, a := range list {
+		if !a.Active || a.Version == "" {
+			continue
+		}
+		m, err := store.ParseManifest(a.Manifest)
+		if err != nil {
+			continue
+		}
+		out[a.ID+"/"+core.RightUse] = true
+		for _, act := range m.Actions {
+			out[a.ID+"/"+act.Name] = true
+		}
+	}
+	return nil
 }
 
 // read returns the rights of one role; a role without a row has none.

@@ -336,7 +336,7 @@ func Dial(ctx context.Context, cfg Config) (*Tunnel, error) {
 	// other end of one; the library lets an answer without it pass.
 	if c.Subprotocol() != tunnel.Subprotocol {
 		c.Close(websocket.StatusProtocolError, "")
-		return nil, ErrLink
+		return nil, broke(ReasonSubprotocol)
 	}
 	// Before the first read: a message of this contract is one frame with the
 	// tag of its Noise message and not a byte more.
@@ -395,14 +395,14 @@ func handshake(ctx context.Context, c *websocket.Conn, cfg Config) (*noisep.Tran
 	}
 	if typ != websocket.MessageBinary || len(msg2) != wire.HandshakeSize {
 		c.Close(websocket.StatusProtocolError, "")
-		return nil, ErrLink
+		return nil, broke(ReasonHandshake)
 	}
 	// Messages 1 and 2 carry an empty payload in every use of Noise in NGC, so
 	// a payload here is a protocol error and nothing to read.
 	payload, cs1, cs2, err := hs.ReadMessage(nil, msg2)
 	if err != nil || len(payload) != 0 || cs1 == nil || cs2 == nil {
 		c.Close(websocket.StatusProtocolError, "")
-		return nil, ErrLink
+		return nil, broke(ReasonNoise)
 	}
 	return noisep.NewTransport(true, cs1, cs2), nil
 }
@@ -423,12 +423,12 @@ func (t *Tunnel) readHello(ctx context.Context) (tunnel.Hello, error) {
 	}
 	if f.Channel != wire.ControlChannel || ctl.T != wire.CtlHello {
 		t.fail()
-		return tunnel.Hello{}, ErrLink
+		return tunnel.Hello{}, broke(ReasonHello)
 	}
 	h, err := tunnel.ParseHello(ctl.B)
 	if err != nil {
 		t.fail()
-		return tunnel.Hello{}, ErrLink
+		return tunnel.Hello{}, broke(ReasonHelloBody)
 	}
 	return h, nil
 }
@@ -506,7 +506,7 @@ func (t *Tunnel) Run(ctx context.Context) error {
 			// send on a tunnel only the goodbye is left here.
 			if ctl.T != wire.CtlBye {
 				t.fail()
-				return ErrLink
+				return broke(ReasonBye)
 			}
 			return nil
 		}
@@ -530,12 +530,12 @@ func (t *Tunnel) message(ctx context.Context) ([]byte, error) {
 	}
 	if typ != websocket.MessageBinary {
 		t.fail()
-		return nil, ErrLink
+		return nil, broke(ReasonNotBinary)
 	}
 	plain, err := t.tr.Open(data)
 	if err != nil {
 		t.fail()
-		return nil, ErrLink
+		return nil, broke(ReasonDecrypt)
 	}
 	return plain, nil
 }
@@ -547,17 +547,17 @@ func (t *Tunnel) message(ctx context.Context) ([]byte, error) {
 func takeMessage(plain []byte) (wire.Frame, wire.Control, error) {
 	f, err := wire.Decode(plain)
 	if err != nil {
-		return wire.Frame{}, wire.Control{}, ErrLink
+		return wire.Frame{}, wire.Control{}, broke(ReasonFrame)
 	}
 	if f.Channel != wire.ControlChannel {
 		return f, wire.Control{}, nil
 	}
 	if f.Type != wire.TypeData {
-		return wire.Frame{}, wire.Control{}, ErrLink
+		return wire.Frame{}, wire.Control{}, broke(ReasonControlType)
 	}
 	ctl, err := wire.ParseControl(f.Payload)
 	if err != nil || !wire.ControlAllowed(wire.LinkTunnel, true, ctl.T) {
-		return wire.Frame{}, wire.Control{}, ErrLink
+		return wire.Frame{}, wire.Control{}, broke(ReasonControlBody)
 	}
 	return f, ctl, nil
 }
@@ -881,7 +881,13 @@ func Keep(ctx context.Context, cfg Config) {
 			return
 		}
 		if err != nil {
-			log.Warn("tunnel failed", "api", cfg.API.URL, "err", err)
+			// The reason names WHICH clause of the contract was broken, and
+			// it is here because a line without it was measured useless: on
+			// 24.10.2026 svc-1 wrote this very line and no reader could tell
+			// which of thirteen places had fired. It is empty for every error
+			// that is not a broken contract - an API that cannot be reached
+			// has no clause - and slog then simply writes nothing for it.
+			log.Warn("tunnel failed", "api", cfg.API.URL, "err", err, "reason", ReasonOf(err))
 		}
 		sleep(jitter(pause))
 		pause = grow(pause)

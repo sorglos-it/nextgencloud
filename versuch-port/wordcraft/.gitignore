@@ -1,0 +1,8 @@
+# Built artefacts of the port attempt. The binaries are evidence of a
+# measurement, not something to carry in the repo.
+build/
+services/
+wordcraft-cli
+LICENSE-MIT
+LICENSE-APACHE
+*.ngc

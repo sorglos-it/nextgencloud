@@ -579,7 +579,7 @@ func (c *channels) route(f wire.Frame) (*Channel, tunnel.Opened, what, error) {
 		// the answer below is written - before the next frame is taken. It
 		// holds the number for no longer than this one call.
 		if f.Type != wire.TypeClose && len(c.m) >= wire.MaxTunnelChannels {
-			return nil, tunnel.Opened{}, nothing, ErrLink
+			return nil, tunnel.Opened{}, nothing, broke(ReasonChannels)
 		}
 		ch = c.hold(f.Channel)
 		if f.Type != wire.TypeOpen {

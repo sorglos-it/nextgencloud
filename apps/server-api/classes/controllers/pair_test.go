@@ -6,11 +6,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
+	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
 	"github.com/sorglos-it/nextgencloud/shared/tunnel"
+	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
 func TestPairCodeMatchesTheTrustList(t *testing.T) {
@@ -160,3 +164,118 @@ func pairBody(t *testing.T, code tunnel.PairCode, ctrlKey, secret []byte) string
 
 var _ = dbapi.Pending{}
 var _ = trust.Version{}
+
+// ---- the log of a pairing ---------------------------------------------------
+//
+// What has to be true of the code below, and what each case points its counter
+// at (messen.md, "Eine Vorrichtungsprüfung, die nur der Mutant erfüllt"):
+//
+//   - An attempt that spent a code leaves EXACTLY ONE line, and that line says
+//     which check said no -- not a code, a name or a hash.
+//   - An attempt that spent NO code leaves NO line, because that one is
+//     unbounded: see audit.Log.Pairing.
+//
+// Every case makes its own server, so no counter of one carries into another
+// (messen.md: cases over one-time values must be separated).
+
+// pairLog reads the whole log of srv, newest first.
+func pairLog(t *testing.T, srv *Server) []core.LogEntry {
+	t.Helper()
+	got, err := srv.S.DB.LogQuery(ctx, core.LogQuery{Limit: 50})
+	if err != nil {
+		t.Fatalf("log: %v", err)
+	}
+	return got
+}
+
+func TestABurntPairingCodeLeavesOneLineThatNamesTheCheck(t *testing.T) {
+	srv, _ := newServer(t)
+	code, _, err := srv.NewPairCode(ctx)
+	if err != nil {
+		t.Fatalf("code: %v", err)
+	}
+	// The way to the line is open: before the attempt there is nothing.
+	if got := pairLog(t, srv); len(got) != 0 {
+		t.Fatalf("the log was not empty before the attempt: %+v", got)
+	}
+	ctrl, _ := trusttest.NodeKeys(21)
+	w := httptest.NewRecorder()
+	srv.Pair(w, post(pairPath(code), pairBody(t, code, ctrl.Public, []byte("wrong secret!!!!"))))
+	if w.Code != 403 {
+		t.Fatalf("pair answered %d", w.Code)
+	}
+	got := pairLog(t, srv)
+	if len(got) != 1 {
+		t.Fatalf("a burnt code left %d lines, want 1: %+v", len(got), got)
+	}
+	e := got[0]
+	if e.Kind != core.LogTrust || e.Action != audit.ActionPair ||
+		e.Result != string(wire.CodeVerify) || e.Detail != string(reason.PairProof) {
+		t.Fatalf("line %+v", e)
+	}
+	// Nobody was signed in, so the machine owns the line -- and the name the
+	// request carried ("services-1") is nowhere in it.
+	if e.User != audit.UserSystem {
+		t.Fatalf("user %q", e.User)
+	}
+	if e.Node != "" || e.App != "" {
+		t.Fatalf("the line carries a value of the attempt: %+v", e)
+	}
+}
+
+func TestAPairingThatGotThroughLeavesALineToo(t *testing.T) {
+	srv, _ := newServer(t)
+	code, _, err := srv.NewPairCode(ctx)
+	if err != nil {
+		t.Fatalf("code: %v", err)
+	}
+	ctrl, _ := trusttest.NodeKeys(22)
+	w := httptest.NewRecorder()
+	srv.Pair(w, post(pairPath(code), pairBody(t, code, ctrl.Public, code.Secret)))
+	if w.Code != 204 {
+		t.Fatalf("pair %d %s", w.Code, w.Body)
+	}
+	got := pairLog(t, srv)
+	// Why the good case is counted at all: a log that holds only failures
+	// cannot tell "none happened" from "nothing is written" -- which is the
+	// very reading M3 had to leave open.
+	if len(got) != 1 || got[0].Result != "ok" || got[0].Detail != "" {
+		t.Fatalf("a pairing that got through left %+v", got)
+	}
+	if got[0].Action != audit.ActionPair {
+		t.Fatalf("action %q", got[0].Action)
+	}
+}
+
+func TestAnAttemptThatSpendsNoCodeLeavesNoLine(t *testing.T) {
+	srv, _ := newServer(t)
+	code, _, err := srv.NewPairCode(ctx)
+	if err != nil {
+		t.Fatalf("code: %v", err)
+	}
+	ctrl, _ := trusttest.NodeKeys(23)
+	body := pairBody(t, code, ctrl.Public, code.Secret)
+	// A hash that was never a secret of this installation. Nothing is spent,
+	// so nothing is written: this line is one anybody on the network could
+	// order without limit.
+	h := sha256.Sum256([]byte("never a secret of this installation"))
+	path := tunnel.PathPair + "?secret=" + enc.B64.EncodeToString(h[:])
+	w := httptest.NewRecorder()
+	srv.Pair(w, post(path, body))
+	if w.Code != 403 {
+		t.Fatalf("pair answered %d", w.Code)
+	}
+	if got := pairLog(t, srv); len(got) != 0 {
+		t.Fatalf("an attempt that spent nothing left %+v", got)
+	}
+	// And the proof that the way to a line is open at all for this server:
+	// the same request with the real hash writes one.
+	w = httptest.NewRecorder()
+	srv.Pair(w, post(pairPath(code), body))
+	if w.Code != 204 {
+		t.Fatalf("the reachability check answered %d", w.Code)
+	}
+	if got := pairLog(t, srv); len(got) != 1 {
+		t.Fatalf("the reachability check left %d lines", len(got))
+	}
+}

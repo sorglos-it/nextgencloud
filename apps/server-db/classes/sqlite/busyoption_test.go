@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -30,26 +31,36 @@ func TestTheBusyDeadlineOfTheOptionsReachesTheFile(t *testing.T) {
 	if want == DefaultBusyTimeout {
 		t.Fatal("the option carries the default, so this case cannot tell the two apart")
 	}
-	db, err := OpenDBWith(testConfig(t, "state.db"), Options{BusyTimeout: want})
+	// BOTH handles of the split, and every connection of each: the PRAGMA is
+	// run by the connector on each one, and a pool that set it once would
+	// leave the others at SQLite's own default of zero. The read handle is
+	// here because it is the handle a measurement forgets - it is opened by
+	// OpenRWWith with the same Options, and a deadline that reached only the
+	// writes would make the two halves of one file two different files.
+	write, read, err := OpenRWWith(testConfig(t, "state.db"), Options{BusyTimeout: want})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	// Every connection of the pool, not just the first: the PRAGMA is run by
-	// the connector on each one, and a pool that set it once would leave the
-	// others at SQLite's own default of zero.
-	for i := range maxOpenConns {
-		conn, err := db.Conn(ctx)
-		if err != nil {
-			t.Fatalf("connection %d: %v", i, err)
-		}
-		defer conn.Close()
-		var got int64
-		if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&got); err != nil {
-			t.Fatalf("connection %d: %v", i, err)
-		}
-		if got != want.Milliseconds() {
-			t.Errorf("connection %d waits %d ms, want %d", i, got, want.Milliseconds())
+	defer write.Close()
+	defer read.Close()
+	for _, h := range []struct {
+		name  string
+		db    *sql.DB
+		conns int
+	}{{"write", write, writeConns}, {"read", read, readConns}} {
+		for i := range h.conns {
+			conn, err := h.db.Conn(ctx)
+			if err != nil {
+				t.Fatalf("%s connection %d: %v", h.name, i, err)
+			}
+			defer conn.Close()
+			var got int64
+			if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&got); err != nil {
+				t.Fatalf("%s connection %d: %v", h.name, i, err)
+			}
+			if got != want.Milliseconds() {
+				t.Errorf("%s connection %d waits %d ms, want %d", h.name, i, got, want.Milliseconds())
+			}
 		}
 	}
 }

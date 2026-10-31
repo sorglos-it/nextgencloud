@@ -51,6 +51,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/httpapi"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/login"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
 	"github.com/sorglos-it/nextgencloud/shared/noisep"
 	"github.com/sorglos-it/nextgencloud/shared/session"
@@ -384,6 +385,33 @@ func (s *Session) Close(ctx context.Context, code wire.Code, num uint32) error {
 	return s.closeChannel(ctx, num, cl)
 }
 
+// CloseBecause sends a CLOSE for a channel this API refused, with the sentence
+// that says which check said no. It is the one way a reason of ours reaches
+// the operator of a session.
+//
+// Three rules hold it, and all three are in the one line below:
+//
+//   - The sentence comes from the CLOSED list of package reason, so nothing a
+//     store, a controller, a database or a user wrote can ever ride out on it.
+//   - reason.Screen decides. The log gets every reason; the screen gets the
+//     narrower list, because one of the sentences would tell a user without a
+//     right whether an app is installed (package reason).
+//   - What may not be said falls back to wire.Error, the German text of the
+//     code -- which is exactly the CLOSE this API sent before there were
+//     reasons, so nothing a shell reads today gets worse.
+//
+// The shell shows the sentence only where it differs from what it would say
+// for the code itself (apps/web, net/channel.js, PR #82). A reason of the
+// list therefore reaches a person, and the fallback changes nothing on screen.
+func (s *Session) CloseBecause(ctx context.Context, code wire.Code, why reason.Reason,
+	num uint32) error {
+	cl := wire.Error(code)
+	if reason.Screen(why) {
+		cl.Message = string(why)
+	}
+	return s.closeChannel(ctx, num, cl)
+}
+
 // CloseWith sends a CLOSE that came from a controller, exactly as it stands.
 // It is not the same as Close and may not be built out of it: a CLOSE of the
 // far side can be status ok with no code at all, or carry a message and an
@@ -395,7 +423,13 @@ func (s *Session) CloseWith(ctx context.Context, c *link.Channel, cl wire.Close)
 
 // closeChannel writes one CLOSE and notes it. It is the ONE place of this
 // package that notes a CLOSE of ours -- the sentence lint_test.go measures --
-// and Close and CloseWith are the two ways in.
+// and Close, CloseBecause and CloseWith are the three ways in.
+//
+// It said TWO until CloseBecause arrived (23.10.2026) and was not carried
+// here. That is why lint_test.go now measures the SET of the callers and not
+// only that the note sits in one function: the old case was green either way,
+// so the sentence could drift without anything saying so. A fourth way in is
+// a decision, and the case is where it gets made.
 func (s *Session) closeChannel(ctx context.Context, num uint32, cl wire.Close) error {
 	if err := s.writeClose(ctx, cl, num); err != nil {
 		return err

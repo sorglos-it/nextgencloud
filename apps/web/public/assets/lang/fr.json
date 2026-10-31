@@ -5,6 +5,7 @@
   "login.nopasswordkeys": "Ce navigateur ne peut pas effectuer de connexion par mot de passe. Veuillez vous connecter avec une clé d'accès.",
   "login.locked": "Trop de tentatives échouées. Veuillez réessayer plus tard.",
   "login.locked.left": "Trop de tentatives échouées. Encore {seconds} secondes.",
+  "login.poweredby": "fonctionne avec NGC {version}",
   "login.totp.ask": "Veuillez saisir le code de votre application d'authentification.",
   "setup.code.incomplete": "Le code à usage unique est incomplet.",
   "setup.code.nomatch": "Le code à usage unique ne correspond pas à cette installation. Veuillez vérifier le code et réessayer.",

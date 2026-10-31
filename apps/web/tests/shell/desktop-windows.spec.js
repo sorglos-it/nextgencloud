@@ -364,3 +364,130 @@ test("pulling the north edge past the top leaves the bottom edge where it was", 
   // 10 + 300 was the bottom before, and it is the bottom after.
   expect(parseInt(g.top, 10) + parseInt(g.height, 10)).toBe(310);
 });
+
+
+// docs/gestaltung.md point 2, and it is the price Thomas named with the
+// decision he took: windows stay windows, on a phone too, so a window must
+// not be pushable over the edge - "sonst ist es weg und niemand holt es
+// zurück".
+//
+// MEASURED WHILE THE BUTTON IS STILL DOWN, and that is the whole difficulty
+// of this case: the pointer reaching an edge also arms the docking preview,
+// and letting go there docks the window to half the desktop instead of
+// leaving it where it was pushed. So the window is read mid-drag and the
+// pointer comes back to the middle before it is released.
+//
+// Dragged WELL past each edge, not one pixel past: the clamp has to hold for
+// a hand that keeps going, and the pointer leaving the desktop is the normal
+// case of this gesture.
+test("a window cannot be pushed over any edge of the desktop", async ({ shell }) => {
+  const win = await openApp(shell, "Rechner");
+  await expect(win).toBeVisible();
+  const a = await area(shell);
+
+  // The box of the window in the desktop's own coordinates.
+  const box = () => shell.evaluate(() => {
+    const d = document.getElementById("desktop").getBoundingClientRect();
+    const r = document.querySelector(".win").getBoundingClientRect();
+    return {
+      left: Math.round(r.left - d.left), top: Math.round(r.top - d.top),
+      right: Math.round(r.right - d.left), bottom: Math.round(r.bottom - d.top),
+    };
+  });
+
+  // pushTo drags the title bar towards (x, y), reads the window there, and
+  // brings the pointer back to the middle of the desktop before letting go.
+  const pushTo = async (x, y) => {
+    const g = await win.locator(".titlebar").boundingBox();
+    await shell.mouse.move(g.x + 40, g.y + g.height / 2);
+    await shell.mouse.down();
+    await shell.mouse.move(x, y, { steps: 12 });
+    const b = await box();
+    await shell.mouse.move(Math.round(a.w / 2), a.top + Math.round(a.h / 2), { steps: 8 });
+    await shell.mouse.up();
+    await shell.waitForTimeout(300);
+    return b;
+  };
+
+  // Far off to the left and up. The top edge was held before this; the left
+  // was not - 60 px of the title bar was all that had to stay behind.
+  let b = await pushTo(-600, a.top - 600);
+  expect(b).toMatchObject({ left: 0, top: 0 });
+
+  // Far off to the right and down. Both of these gave way before.
+  b = await pushTo(a.w + 600, a.top + a.h + 600);
+  expect(b.right).toBeLessThanOrEqual(a.w);
+  expect(b.bottom).toBeLessThanOrEqual(a.h);
+  expect(b.left).toBeGreaterThanOrEqual(0);
+  expect(b.top).toBeGreaterThanOrEqual(0);
+
+  // And it is still a window one can get rid of, which is the whole point of
+  // the rule: all three buttons on the screen, and Schließen really closes.
+  expect(await win.locator(".wbtn").evaluateAll((bs) => bs.every((x) => {
+    const r = x.getBoundingClientRect();
+    return r.left >= -0.5 && r.right <= innerWidth + 0.5
+      && r.top >= -0.5 && r.bottom <= innerHeight + 0.5;
+  }))).toBe(true);
+  await win.getByRole("button", { name: "Schließen" }).click();
+  await expect(win).toHaveCount(0);
+});
+
+test("a desktop that shrinks pulls a whole window back in, not just its corner", async ({ shell }) => {
+  // keepInView used to keep 80 px of the width and 40 px of the height on the
+  // desktop and leave the rest of the window off the screen. The same clamp
+  // as the drag now, so a window that was inside stays inside.
+  //
+  // The Rechner opens 560 x 400 and the desktop below is wider than that: the
+  // window FITS, which is the case this measures. The one that does not fit
+  // is the case below it.
+  const win = await openApp(shell, "Rechner");
+  await expect(win).toBeVisible();
+  await shell.setViewportSize({ width: 640, height: 520 });
+  await shell.waitForTimeout(300);
+  const got = await shell.evaluate(() => {
+    const d = document.getElementById("desktop").getBoundingClientRect();
+    const r = document.querySelector(".win").getBoundingClientRect();
+    return {
+      left: Math.round(r.left - d.left), top: Math.round(r.top - d.top),
+      over: Math.round(r.right - d.right), under: Math.round(r.bottom - d.bottom),
+      w: Math.round(r.width), dw: Math.round(d.width),
+    };
+  });
+  expect(got.w).toBeLessThanOrEqual(got.dw);
+  expect(got.left).toBeGreaterThanOrEqual(0);
+  expect(got.top).toBeGreaterThanOrEqual(0);
+  expect(got.over).toBeLessThanOrEqual(1);
+  expect(got.under).toBeLessThanOrEqual(1);
+});
+
+test("a desktop that shrinks cuts a window too big for it to fit", async ({ shell }) => {
+  // THE CASE THAT CANNOT BE SOLVED BY MOVING. The App-Store opens 760 wide;
+  // on a 420 px desktop - a phone turned upright under an open window - no
+  // position keeps the whole window on the screen, and pinning it to the left
+  // put its three title-bar buttons, the only way to close it, off the edge.
+  // So it is cut to fit, exactly as open() cuts a window to the desktop it
+  // opens on.
+  const win = await openApp(shell, "App-Store");
+  await expect(win).toBeVisible();
+  await shell.setViewportSize({ width: 420, height: 420 });
+  await shell.waitForTimeout(300);
+  const got = await shell.evaluate(() => {
+    const d = document.getElementById("desktop").getBoundingClientRect();
+    const r = document.querySelector(".win").getBoundingClientRect();
+    return {
+      left: Math.round(r.left - d.left), top: Math.round(r.top - d.top),
+      over: Math.round(r.right - d.right), under: Math.round(r.bottom - d.bottom),
+    };
+  });
+  expect(got.left).toBeGreaterThanOrEqual(0);
+  expect(got.top).toBeGreaterThanOrEqual(0);
+  expect(got.over).toBeLessThanOrEqual(1);
+  expect(got.under).toBeLessThanOrEqual(1);
+  // Which is what the rule is for: the window can still be closed.
+  expect(await win.locator(".wbtn").evaluateAll((bs) => bs.every((x) => {
+    const r = x.getBoundingClientRect();
+    return r.left >= -0.5 && r.right <= innerWidth + 0.5;
+  }))).toBe(true);
+  await win.getByRole("button", { name: "Schließen" }).click();
+  await expect(win).toHaveCount(0);
+});

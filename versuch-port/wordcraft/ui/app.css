@@ -1,0 +1,17 @@
+/* The app draws everything inside its window itself: the shell hands it only
+   ngc.js and the theme. No stylesheet of NGC reaches a frame. */
+:root { color-scheme: light dark; }
+body {
+  margin: 0; padding: 1.5rem;
+  font: 14px/1.5 system-ui, sans-serif;
+  background: #fff; color: #191919;
+}
+html[data-theme="dark"] body { background: #191919; color: #f0f0f0; }
+h1 { font-size: 1.2rem; margin: 0 0 .75rem; }
+input { font: inherit; padding: .2rem .4rem; }
+button { font: inherit; padding: .3rem .8rem; cursor: pointer; }
+pre {
+  white-space: pre-wrap; margin-top: 1rem; padding: .75rem;
+  border: 1px solid currentColor; min-height: 6rem; max-height: 18rem;
+  overflow: auto;
+}

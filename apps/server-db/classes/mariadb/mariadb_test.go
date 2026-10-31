@@ -173,8 +173,8 @@ func TestConnectorPinsTheSecureSettings(t *testing.T) {
 		if mc.MaxAllowedPacket != 128<<20 {
 			t.Errorf("%s: max_allowed_packet %d, want %d", node, mc.MaxAllowedPacket, 128<<20)
 		}
-		if mc.Timeout != 5*time.Second {
-			t.Errorf("%s: dial timeout %v, want 5s", node, mc.Timeout)
+		if mc.Timeout != time.Second {
+			t.Errorf("%s: dial timeout %v, want 1s", node, mc.Timeout)
 		}
 		if mc.ReadTimeout != 60*time.Second || mc.WriteTimeout != 60*time.Second {
 			t.Errorf("%s: read %v, write %v, want 60s each", node, mc.ReadTimeout, mc.WriteTimeout)

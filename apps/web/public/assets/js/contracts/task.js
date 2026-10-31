@@ -64,7 +64,7 @@ import { b64encode, utf8, fromUtf8, equal, encodedLen, viewOf, bytesOf, BadInput
 import { decode, Budget, BadJSON, S, str, bytes, int, raw, RAW } from "./json.js";
 import { validName, validAppID, validID } from "./text.js";
 import * as proof from "./proof.js";
-import { message, verify as verifyEnvelope, PURPOSE_TASK, PURPOSE_CONFIRM } from "./sign.js";
+import { message, parseEnvelope, verify as verifyEnvelope, PURPOSE_TASK, PURPOSE_CONFIRM } from "./sign.js";
 import { certHash } from "./session.js";
 import { keyOwner } from "./trust.js";
 import { MAX_PARAMS, validParams as wireValidParams } from "./wire.js";
@@ -473,6 +473,22 @@ export function buildTask({ inst, certHash: cert, node, app, service, action, pa
 // sessionSignKey that is none and bytes that are none all end in a rejected
 // promise, and nothing comes back that could pass for an envelope - measured,
 // the last three of them.
+// envelopeBytes writes a signed envelope the way it travels in an OPEN, and
+// READS ITS OWN WORK BACK with parseEnvelope before it hands the bytes over -
+// what leaves the shell is then what every verifier will decode out of exactly
+// these bytes, the same rule buildTask and wire.encodeOpen keep.
+//
+// It lived in apps/store.js until 23.10.2026 and is here now because a second
+// caller appeared (net/world.js, the task of an app's own channel). A copy of
+// an encoder that signatures depend on is the one kind of duplicate that gets
+// somebody hurt: two copies drift, and the one that drifts is the one nobody
+// reads.
+export function envelopeBytes(env) {
+  const b = utf8(JSON.stringify({ payload: b64encode(env.payload), kid: env.kid, sig: b64encode(env.sig) }));
+  parseEnvelope(b, MAX_TASK);
+  return b;
+}
+
 export async function signTask(sessionSignKey, bytes) {
   const { privateKey, kid } = sessionSignKey ?? {};
   const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, privateKey,

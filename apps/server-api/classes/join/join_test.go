@@ -11,7 +11,11 @@ import (
 
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/coreapp"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
+
+	"github.com/sorglos-it/nextgencloud/shared/core"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
@@ -344,3 +348,110 @@ func TestKeysRefusesAnUnlistedKey(t *testing.T) {
 // not exist yet. This is the obligation it wrote down, checked by the
 // compiler: coreapp does not import this package, so the check can live here.
 var _ coreapp.JoinCodes = (*Join)(nil)
+
+// ---- the log of a join ------------------------------------------------------
+//
+// The same two statements as in controllers/pair_test.go, measured on the
+// other of the two doors: an attempt that SPENT a code leaves exactly one
+// line that names the check, and an attempt that spent none leaves none.
+// Every case makes its own server, so no one-time value of one reaches
+// another (messen.md).
+
+// joinLog reads the whole log of j, newest first.
+func joinLog(t *testing.T, j *Join) []core.LogEntry {
+	t.Helper()
+	got, err := j.S.DB.LogQuery(ctx, core.LogQuery{Limit: 50})
+	if err != nil {
+		t.Fatalf("log: %v", err)
+	}
+	return got
+}
+
+func TestABurntJoinCodeLeavesOneLineThatNamesTheCheck(t *testing.T) {
+	j, fx := newJoin(t)
+	code, _, err := j.NewJoinCode(ctx)
+	if err != nil {
+		t.Fatalf("new code: %v", err)
+	}
+	if got := joinLog(t, j); len(got) != 0 {
+		t.Fatalf("the log was not empty before the attempt: %+v", got)
+	}
+	body, err := json.Marshal(fx.request([]byte("wrong secret!!!!")))
+	if err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	h := sha256.Sum256(code.Secret)
+	w := httptest.NewRecorder()
+	j.Accept(w, post(enc.B64.EncodeToString(h[:]), body))
+	if w.Code == http.StatusNoContent {
+		t.Fatal("a foreign MAC was taken")
+	}
+	got := joinLog(t, j)
+	if len(got) != 1 {
+		t.Fatalf("a burnt code left %d lines, want 1: %+v", len(got), got)
+	}
+	e := got[0]
+	if e.Kind != core.LogTrust || e.Action != audit.ActionJoin ||
+		e.Result != string(wire.CodeVerify) || e.Detail != string(reason.JoinProof) {
+		t.Fatalf("line %+v", e)
+	}
+	if e.User != audit.UserSystem || e.Node != "" || e.App != "" {
+		t.Fatalf("the line names somebody or something of the attempt: %+v", e)
+	}
+}
+
+func TestAJoinThatGotThroughLeavesALineToo(t *testing.T) {
+	j, fx := newJoin(t)
+	code, _, err := j.NewJoinCode(ctx)
+	if err != nil {
+		t.Fatalf("new code: %v", err)
+	}
+	body, err := json.Marshal(fx.request(code.Secret))
+	if err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	h := sha256.Sum256(code.Secret)
+	w := httptest.NewRecorder()
+	j.Accept(w, post(enc.B64.EncodeToString(h[:]), body))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("accept answered %d (%s)", w.Code, w.Body)
+	}
+	got := joinLog(t, j)
+	if len(got) != 1 || got[0].Result != "ok" || got[0].Detail != "" ||
+		got[0].Action != audit.ActionJoin {
+		t.Fatalf("a join that got through left %+v", got)
+	}
+}
+
+func TestAJoinAttemptThatSpendsNoCodeLeavesNoLine(t *testing.T) {
+	j, fx := newJoin(t)
+	code, _, err := j.NewJoinCode(ctx)
+	if err != nil {
+		t.Fatalf("new code: %v", err)
+	}
+	body, err := json.Marshal(fx.request(code.Secret))
+	if err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	// A hash that was never a secret here: nothing is spent, so nothing is
+	// written -- see audit.Log.Pairing for why that line is not wanted.
+	stranger := sha256.Sum256([]byte("never a secret of this installation"))
+	w := httptest.NewRecorder()
+	j.Accept(w, post(enc.B64.EncodeToString(stranger[:]), body))
+	if w.Code == http.StatusNoContent {
+		t.Fatal("an unknown hash was taken")
+	}
+	if got := joinLog(t, j); len(got) != 0 {
+		t.Fatalf("an attempt that spent nothing left %+v", got)
+	}
+	// The way to a line is open for this server all the same.
+	h := sha256.Sum256(code.Secret)
+	w = httptest.NewRecorder()
+	j.Accept(w, post(enc.B64.EncodeToString(h[:]), body))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("the reachability check answered %d", w.Code)
+	}
+	if got := joinLog(t, j); len(got) != 1 {
+		t.Fatalf("the reachability check left %d lines", len(got))
+	}
+}

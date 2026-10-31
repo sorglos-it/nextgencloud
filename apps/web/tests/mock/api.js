@@ -30,6 +30,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { b64encode, equal, utf8 } from "../../public/assets/js/contracts/b64.js";
 import * as wire from "../../public/assets/js/contracts/wire.js";
 import * as noise from "../../public/assets/js/contracts/noise.js";
+import * as taskOf from "../../public/assets/js/contracts/task.js";
 import * as session from "../../public/assets/js/contracts/session.js";
 import * as core from "../../public/assets/js/contracts/core.js";
 import * as proof from "../../public/assets/js/contracts/proof.js";
@@ -312,11 +313,19 @@ const GREETING = "willkommen$ ";
 // task 11). A refused OPEN gets a CLOSE instead of a first GRANT, which is the
 // other legal answer to an OPEN - Channel.firstGrant says so itself.
 const ACT_CONFIRM = "needsconfirm";
+// And one that is refused WITHOUT a signed task and runs WITH one - the real
+// case of an app whose manifest says needs:["root"], measured on the Debian
+// machine on 23.10.2026: shared/task/task.go:174 answers such a channel without
+// a task with ErrNoTask, which the API maps to E_CONFIRM. The shell then signs
+// one and opens again (net/world.js, signedRetry), and this is the only service
+// in this world where that second open can be reached at all.
+const ACT_TASK = "needstask";
 // What the two that DO start do once they have started. Each is kicked onto the
 // channel's own chain, so it waits for credit like every other answer.
 // ACT_CONFIRM is not in here: it never starts at all.
 const START = {
   [ACT_GREET]: (conn, ch) => conn.innerData(ch, utf8(GREETING)),
+  [ACT_TASK]: (conn, ch) => conn.innerData(ch, utf8(GREETING)),
   [ACT_OVER]: (conn, ch) => conn.innerEnd(ch),
 };
 
@@ -692,11 +701,31 @@ class Conn {
     // the controller decides that from the OPEN (its task and its action), and a
     // service it will not start is a service it does not do a handshake for.
     if (open.action === ACT_CONFIRM) { await ch.fail(wire.CODES.CONFIRM); return; }
+    // The same refusal, but only while no task is there. What the second open
+    // brings is kept, so a case can measure that the task really travelled and
+    // whether a confirmation came with it.
+    if (open.action === ACT_TASK && open.task === null) {
+      this.state.taskAsked = (this.state.taskAsked ?? 0) + 1;
+      await ch.fail(wire.CODES.CONFIRM);
+      return;
+    }
     // An app: this side plays the controller of the end-to-end handshake,
     // with the Noise key ctl-1 carries in the trust list and the dh key of
     // the client certificate as the peer.
+    // THE TASK GOES INTO THE PROLOGUE, as it does on the real side: e2e.Accept
+    // hashes "params and task as the OPEN carried them". The bytes are built
+    // back with the shell's own encoder, which writes the three members in one
+    // fixed order - so these are the bytes that travelled, not a second
+    // spelling of them. Until 23.10.2026 this hashed an empty task, which was
+    // right only as long as no channel here carried one.
+    const taskRaw = open.task === null
+      ? new Uint8Array(0) : taskOf.envelopeBytes(open.task);
+    if (open.task !== null) {
+      this.state.taskSeen = (this.state.taskSeen ?? 0) + 1;
+      this.state.confirmSeen = (this.state.confirmSeen ?? 0) + (open.confirm === null ? 0 : 1);
+    }
     const prologue = await noise.e2ePrologue(this.world.controller.id, open.app, open.service,
-      open.action, open.params ?? new Uint8Array(0), new Uint8Array(0));
+      open.action, open.params ?? new Uint8Array(0), taskRaw);
     const hs = await noise.HandshakeKK.of(false, prologue, this.world.controller.noise.priv,
       this.world.controller.noise.pub, this.state.clientDH);
     await hs.readMessage1(open.e2e);
@@ -1108,6 +1137,14 @@ export async function startMockAPI({ world, port, phpPort }) {
       // How many times the shell asked for the setup offer. A number, so the
       // case does not have to believe a flag the page set about its own work.
       if (url.searchParams.get("ask") === "setup") { res.end(String(setupOffers)); return; }
+      // What the app channels of this session carried: how often one was
+      // refused for want of a signed task, how often one came WITH a task, and
+      // how often a confirmation came with that task. Three numbers separated
+      // by a space, so the asking side has almost nothing to parse.
+      if (url.searchParams.get("ask") === "task") {
+        res.end([state?.taskAsked ?? 0, state?.taskSeen ?? 0, state?.confirmSeen ?? 0].join(" "));
+        return;
+      }
       // One character, so the asking side has nothing to parse.
       res.end(state?.sawPlaintext === true ? "1" : "0");
       return;

@@ -576,13 +576,20 @@ const RESULTS = {
     shape: A(pendingShape), items: { "": trust.MAX_NODES },
     check: (v) => every(v, checkPending) && unique(v, (p) => b64encode(p.key)),
   },
+  // fault is the optional second half of check: where an answer is refused
+  // over ONE named field, it says which, so the window can name it instead of
+  // saying only that nothing arrived. It is never a second set of rules -
+  // check here is derived from the same function.
   "ngc.users/pending-api": {
     shape: A(pendingAPIShape), items: { "": trust.MAX_NODES },
     check: (v) => every(v, checkPendingAPI) && unique(v, (p) => p.node),
+    fault: (v) => faultOfRows(v, pendingAPIFault, (p) => p.node),
   },
   "ngc.users/nodes": {
     shape: A(nodeInfoShape), items: { "": trust.MAX_NODES, "*/roles": MAX_NODE_ROLES },
+    soften: softenNodes,
     check: (v) => every(v, checkNodeInfo) && unique(v, (n) => n.node),
+    fault: (v) => faultOfRows(v, nodeInfoFault, (n) => n.node),
   },
   "ngc.users/log": {
     shape: A(logEntryShape), items: { "": MAX_LOG_LIMIT },
@@ -654,8 +661,30 @@ export function parseResult(a, b) {
   }
   // v is this module's own object, built out of the document just decoded, so
   // the checks below read what parseResult hands back and nothing else.
-  if (!r.check(v)) throw new Error("core: result the shell refuses");
+  //
+  // soften runs FIRST and on that same object: it empties the fields of this
+  // answer that are only shown and that cannot be read (RESULTS, softenNodes).
+  // Everything that is left is held as hard as before.
+  if (r.soften !== undefined) r.soften(v);
+  if (!r.check(v)) throw refusedResult(r.fault === undefined ? "" : r.fault(v));
   return v;
+}
+
+// The one refusal of a result, with the name of the field it fell over when
+// the table of that answer can say it. The message is the same sentence as
+// ever - apps/users.js reads it by its "core: " prefix - and the name rides
+// beside it, where a caller that does not look for it sees nothing new.
+function refusedResult(field = "") {
+  const e = new Error("core: result the shell refuses");
+  if (field !== "") e.field = field;
+  return e;
+}
+
+// refusedField is how a window asks which field was unreadable. "" means the
+// refusal names none, which is every other refusal of the shell.
+export function refusedField(e) {
+  const f = e?.field;
+  return typeof f === "string" ? f : "";
 }
 
 function checkMe(v) {
@@ -716,15 +745,64 @@ function checkPending(v) {
   return validText(v.name, MAX_TEXT) && v.key.length === KEY_SIZE && whole(v.since) && v.since > 0;
 }
 
-function checkPendingAPI(v) {
-  return validName(v.node) && v.noise.length === KEY_SIZE && v.sign.length === KEY_SIZE
-    && v.tls.length === HASH_SIZE && validTunnelURL(v.url) && whole(v.since) && v.since > 0;
+const checkPendingAPI = (v) => pendingAPIFault(v) === "";
+
+// WHAT A MACHINE ROW CARRIES, AND WHAT IT ONLY SHOWS. node and roles carry a
+// decision: the name is what a task is addressed to, and the roles are what
+// decides whether an app may run there at all. version and arch are shown in
+// a table and nothing else reads them.
+//
+// So the two sides are answered apart. nodeInfoFault names the field that did
+// not hold among the ones that carry a decision, and "" when they all do;
+// softenNodes empties an unreadable version or arch BEFORE this runs, so a
+// row is never lost over a word in a column. That is not cosmetics: one
+// controller whose binaries were stamped 0.0.0-dev took the WHOLE machine
+// list with it, and the window could only say that it got nothing
+// (docs/vertraege-v1.2.md, point 71).
+function nodeInfoFault(v) {
+  if (!validName(v.node)) return "node";
+  if (v.roles.length > MAX_NODE_ROLES || !noDuplicate(v.roles)
+    || !v.roles.every((r) => NODE_ROLES.has(r))) return "roles";
+  return "";
 }
 
-function checkNodeInfo(v) {
-  return validName(v.node) && v.roles.length <= MAX_NODE_ROLES && noDuplicate(v.roles)
-    && v.roles.every((r) => NODE_ROLES.has(r))
-    && optVersion(v.version) && (v.arch === "" || ARCHS.has(v.arch));
+const checkNodeInfo = (v) => nodeInfoFault(v) === "";
+
+// softenNodes empties what cannot be read of the two fields that are only
+// shown. It stands here, beside the rules of this answer, and runs from
+// parseResult where the document has just been decoded - never inside a
+// check. A check that changed a value on the way past would be a trap for
+// the next reader: it is asked twice in places (every, unique) and its name
+// says it asks a question.
+//
+// The object is this module's own, built by decode out of the document; no
+// caller holds it yet.
+function softenNodes(v) {
+  for (const n of v) {
+    if (!optVersion(n.version)) n.version = "";
+    if (n.arch !== "" && !ARCHS.has(n.arch)) n.arch = "";
+  }
+}
+
+// faultOfRows names the field of the FIRST row that did not hold, and "node"
+// when two rows carry the same name - which is the field the duplicate is
+// in. One name is what a window can put on screen.
+function faultOfRows(v, fault, key) {
+  for (const row of v) {
+    const bad = fault(row);
+    if (bad !== "") return bad;
+  }
+  return unique(v, key) ? "" : "node";
+}
+
+function pendingAPIFault(v) {
+  if (!validName(v.node)) return "node";
+  if (v.noise.length !== KEY_SIZE) return "noise";
+  if (v.sign.length !== KEY_SIZE) return "sign";
+  if (v.tls.length !== HASH_SIZE) return "tls";
+  if (!validTunnelURL(v.url)) return "url";
+  if (!(whole(v.since) && v.since > 0)) return "since";
+  return "";
 }
 
 function checkLogEntry(v) {

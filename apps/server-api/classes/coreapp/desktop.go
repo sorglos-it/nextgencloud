@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/appstore"
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/reason"
 	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/proof"
@@ -99,16 +100,16 @@ func (d *Dispatcher) registerDesktop() {
 func (d *Dispatcher) me(ctx context.Context, rq *Call) ([]byte, error) {
 	v, err := rq.S.Trust(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.Trust)
 	}
 	id := rq.Live.Verified.Cert().User
 	u, ok := v.List.User(id)
 	if !ok {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.UserUnknown)
 	}
 	row, err := rq.S.DB.UserGet(ctx, id)
 	if err != nil && !errors.Is(err, dbapi.ErrNotFound) {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	// The strictest level of the user's roles counts; a role the list does not
 	// hold cannot happen (trust.List.Validate).
@@ -147,7 +148,7 @@ func rank(l trust.Level) int {
 func (d *Dispatcher) apps(ctx context.Context, rq *Call) ([]byte, error) {
 	list, err := rq.S.DB.AppList(ctx)
 	if err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	out := make([]core.DesktopApp, 0, len(list)+2)
 	// The two core apps are always there and only for admins; their UI is part
@@ -227,18 +228,18 @@ func (d *Dispatcher) licenseState(ctx context.Context, a dbapi.App) (string, boo
 // byte as the API kept it (dbapi.BlobUI). The shell reads it like
 // store.WalkUI and runs it only after the proof of ui-proof holds.
 func (d *Dispatcher) ui(ctx context.Context, rq *Call) ([]byte, error) {
-	a, code := d.appOf(ctx, rq)
+	a, code, why := d.appOf(ctx, rq)
 	if code != "" {
-		return nil, fail(code)
+		return nil, failWhy(code, why)
 	}
 	b, err := rq.S.DB.BlobGet(ctx, dbapi.BlobUI, appstore.UIKey(a.ID, a.Version))
 	if err != nil {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.RowGone)
 	}
 	// Written out as they are: the shell compares their SHA-256 against the
 	// proof, so the API cannot change a byte unseen.
 	if _, err := rq.Out.Write(b.Data); err != nil {
-		return nil, fail(wire.CodeInternal)
+		return nil, failWhy(wire.CodeInternal, reason.Deliver)
 	}
 	return nil, nil
 }
@@ -264,9 +265,9 @@ func (d *Dispatcher) ui(ctx context.Context, rq *Call) ([]byte, error) {
 // Deps), while ui-proof is registered either way, so a dependency on it would
 // turn this action off wherever the store actions are off.
 func (d *Dispatcher) uiProof(ctx context.Context, rq *Call) ([]byte, error) {
-	a, code := d.appOf(ctx, rq)
+	a, code, why := d.appOf(ctx, rq)
 	if code != "" {
-		return nil, fail(code)
+		return nil, failWhy(code, why)
 	}
 	p, err := (&appstore.Stores{S: rq.S}).Proof(ctx, a.ID, a.Version)
 	// A version with no evidence kept answers like one that is not installed;
@@ -274,10 +275,12 @@ func (d *Dispatcher) uiProof(ctx context.Context, rq *Call) ([]byte, error) {
 	// that no longer holds. E_NOTFOUND for the latter would tell a shell that
 	// the version is gone when it is the trust in it that is gone.
 	if errors.Is(err, dbapi.ErrNotFound) {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.RowGone)
 	}
 	if err != nil {
-		return nil, fail(wire.CodeInternal)
+		// The code hides the difference on purpose (see above); the line of
+		// the log says which of the two it was.
+		return nil, failWhy(wire.CodeInternal, reason.ProofGone)
 	}
 	return result(p)
 }
@@ -286,16 +289,23 @@ func (d *Dispatcher) uiProof(ctx context.Context, rq *Call) ([]byte, error) {
 // parameter and therefore unsigned, so nothing but the row decides: an app the
 // user may not use answers like one that is not installed, which tells a user
 // without the right nothing about the installation.
-func (d *Dispatcher) appOf(ctx context.Context, rq *Call) (dbapi.App, wire.Code) {
+// The two cases the one code covers are told apart for the LOG only, and the
+// reason of the first does not go onto a screen (reason.Screen): the answer to
+// the shell stays E_NOTFOUND for both, so the sentence of the first paragraph
+// still holds.
+func (d *Dispatcher) appOf(ctx context.Context, rq *Call) (dbapi.App, wire.Code, reason.Reason) {
 	p, ok := rq.Params.(*core.AppParams)
 	if !ok {
-		return dbapi.App{}, wire.CodeProtocol
+		return dbapi.App{}, wire.CodeProtocol, reason.Params
 	}
 	a, err := rq.S.DB.AppGet(ctx, p.App)
-	if err != nil || a.Version == "" || !rq.Rights[a.ID+"/"+core.RightUse] {
-		return dbapi.App{}, wire.CodeNotFound
+	if err != nil || a.Version == "" {
+		return dbapi.App{}, wire.CodeNotFound, reason.AppUnknown
 	}
-	return a, ""
+	if !rq.Rights[a.ID+"/"+core.RightUse] {
+		return dbapi.App{}, wire.CodeNotFound, reason.NoRight
+	}
+	return a, "", reason.None
 }
 
 // totpBegin answers ngc.desktop/totp-begin: a new secret the user reads or
@@ -305,14 +315,16 @@ func (d *Dispatcher) totpBegin(ctx context.Context, rq *Call) ([]byte, error) {
 	id := rq.Live.Verified.Cert().User
 	row, err := rq.S.DB.UserGet(ctx, id)
 	if err != nil {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.UserUnknown)
 	}
 	begin, sealed, err := d.Login.BeginTOTP(row.Name)
 	if err != nil {
-		return nil, fail(wire.CodeInternal)
+		// Nothing of the secret and nothing of the error: the making of the
+		// secret failed, and that is a fault of this server.
+		return nil, failWhy(wire.CodeInternal, reason.Defect)
 	}
 	if !d.totp.put(id, sealed, rq.S.Now()) {
-		return nil, fail(wire.CodeLimit)
+		return nil, failWhy(wire.CodeLimit, reason.FactorBusy)
 	}
 	// The secret travels once, here, because the user has to type or scan it.
 	// It is never logged, and the log of this channel holds app and action
@@ -327,23 +339,25 @@ func (d *Dispatcher) totpBegin(ctx context.Context, rq *Call) ([]byte, error) {
 func (d *Dispatcher) totpConfirm(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.CodeParams)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	id := rq.Live.Verified.Cert().User
 	row, err := rq.S.DB.UserGet(ctx, id)
 	if err != nil {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.UserUnknown)
 	}
 	sealed, ok := d.totp.take(id, rq.S.Now())
 	if !ok {
-		return nil, fail(wire.CodeNotFound)
+		// Nothing of the secret and nothing of the code goes into the line:
+		// what is said is that no begun setup was waiting.
+		return nil, failWhy(wire.CodeNotFound, reason.FactorBusy)
 	}
 	if !d.Login.CheckTOTP(dbapi.User{TOTP: sealed}, p.Code, rq.S.Now()) {
-		return nil, fail(wire.CodeForbidden)
+		return nil, failWhy(wire.CodeForbidden, reason.Factor)
 	}
 	row.TOTP = sealed
 	if err := rq.S.DB.UserPut(ctx, row); err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(struct{}{})
 }
@@ -354,19 +368,19 @@ func (d *Dispatcher) totpConfirm(ctx context.Context, rq *Call) ([]byte, error) 
 func (d *Dispatcher) totpOff(ctx context.Context, rq *Call) ([]byte, error) {
 	p, ok := rq.Params.(*core.CodeParams)
 	if !ok {
-		return nil, fail(wire.CodeProtocol)
+		return nil, failWhy(wire.CodeProtocol, reason.Params)
 	}
 	id := rq.Live.Verified.Cert().User
 	row, err := rq.S.DB.UserGet(ctx, id)
 	if err != nil {
-		return nil, fail(wire.CodeNotFound)
+		return nil, failWhy(wire.CodeNotFound, reason.UserUnknown)
 	}
 	if !d.Login.CheckTOTP(row, p.Code, rq.S.Now()) {
-		return nil, fail(wire.CodeForbidden)
+		return nil, failWhy(wire.CodeForbidden, reason.Factor)
 	}
 	row.TOTP = nil
 	if err := rq.S.DB.UserPut(ctx, row); err != nil {
-		return nil, fail(wire.CodeUnreachable)
+		return nil, failWhy(wire.CodeUnreachable, reason.DB)
 	}
 	return result(struct{}{})
 }
@@ -377,7 +391,7 @@ func (d *Dispatcher) totpOff(ctx context.Context, rq *Call) ([]byte, error) {
 func result(v any) ([]byte, error) {
 	b, err := core.EncodeResult(v)
 	if err != nil {
-		return nil, fail(wire.CodeInternal)
+		return nil, failWhy(wire.CodeInternal, reason.Result)
 	}
 	return b, nil
 }

@@ -98,12 +98,105 @@ test("output from the service is never HTML", async ({ shell }) => {
   expect(await t.frame.locator("img, svg, iframe, object, embed").count()).toBe(0);
 });
 
-test("a cut-off stream is an error", async ({ shell }) => {
+test("a cut-off stream is an error, and it says what the shell said", async ({ shell }) => {
   await shell.evaluate(() => { window.__ngcTest.terminalCut = true; });
   const t = await terminal(shell);
-  await expect(t.frame.getByRole("alert")).toHaveText("Die Verbindung wurde abgeschnitten.");
+  // TWO SENTENCES: what happened, and the reason the shell sent with it. Until
+  // 23.10.2026 the second one was thrown away at three stations in a row, and
+  // the person was left with the first alone (app.js, reason).
+  await expect(t.frame.getByRole("alert"))
+    .toHaveText("Die Verbindung wurde abgeschnitten. Dienst nicht erreichbar.");
   // And nothing more can be typed into a channel that is gone.
   await expect(t.input).toBeDisabled();
+});
+
+test("an open the shell could not make says the shell's own sentence", async ({ shell }) => {
+  await shell.evaluate(() => {
+    window.__ngcTest.openFails = "Diese Anmeldung kann den Auftrag für diese App nicht unterschreiben. Bitte neu anmelden.";
+  });
+  const t = await terminal(shell);
+  // THE WHOLE WAY, in one case: the open throws in the shell
+  // (net/world.js), shell/appframe.js carries the sentence to the app instead
+  // of replacing every failure with "Dienst nicht erreichbar."
+  // (whyOpenFailed), and the app puts it on the screen behind its own
+  // sentence. Measured on 23.10.2026, all three stations threw it away and the
+  // person was left with the first sentence alone - and no red line anywhere,
+  // because nothing had gone wrong uncaught.
+  await expect(t.frame.getByRole("alert")).toHaveText(
+    "Die Verbindung wurde abgeschnitten. "
+    + "Diese Anmeldung kann den Auftrag für diese App nicht unterschreiben. Bitte neu anmelden.",
+  );
+  await expect(t.input).toBeDisabled();
+});
+
+test("a refused open says the sentence of its code, not the words of the error",
+  async ({ shell }) => {
+    await shell.evaluate(() => { window.__ngcTest.openFailsCode = "E_CONFIRM"; });
+    const t = await terminal(shell);
+    // The CODE becomes the sentence - the German text of the contract
+    // (wire.message) - and the words the error itself carried do not travel:
+    // those are for a log, not for a window the person reads.
+    await expect(t.frame.getByRole("alert"))
+      .toHaveText("Die Verbindung wurde abgeschnitten. Bitte erneut bestätigen.");
+    await expect(t.frame.getByRole("alert")).not.toContainText("fake-link");
+  });
+
+test("a refused open also says the reason the shell knows, over the app's window", async ({ shell }) => {
+  await shell.evaluate(() => {
+    window.__ngcTest.openFails = "Nicht bestätigt. Die App wurde nicht geöffnet.";
+  });
+  const t = await terminal(shell);
+  // THE REASON BELONGS TO THE SHELL, and that is the point of this case:
+  // telling the app is not enough. Measured on 23.10.2026, the terminal that
+  // was installed on the Debian machine had been built before there was a
+  // reason to pass on, so it showed its own sentence and nothing else - while
+  // the shell knew the reason all along.
+  //
+  // WHERE it is said moved with docs/gestaltung.md point 4: this reason
+  // belongs to the Terminal, so it stands over the Terminal's own window and
+  // not in the strip at the bottom edge, which is left for what no app owns.
+  // The strip stays empty here, and that is asserted rather than assumed -
+  // otherwise this case would pass on a shell that said it in both places.
+  const win = shell.locator(".win").filter({ has: shell.locator(".titlebar .t", { hasText: "Terminal" }) });
+  await expect(win.locator(".winback [role=alert]")).toHaveText(
+    "Terminal: Nicht bestätigt. Die App wurde nicht geöffnet.",
+  );
+  await expect(shell.locator(".status")).toHaveText("");
+  // AND IT WAITS FOR THE PERSON. That rule did not move with the place: an
+  // error waits and the other two levels take themselves away. Measured on
+  // 23.10.2026 the reason was gone before it had been read, so the popup
+  // still has to be there after longer than the eight seconds those two get.
+  await expect(win.locator(".winback")).toHaveCount(1);
+  // The window stands and the app keeps its own sentence as well: the shell's
+  // words are over it, not instead of it - one button takes them away and the
+  // app's own sentence is underneath.
+  await win.getByRole("button", { name: "Meldung schließen" }).click();
+  await expect(win.locator(".winback")).toHaveCount(0);
+  await expect(t.frame.getByRole("alert")).toContainText("Nicht bestätigt.");
+});
+
+test("an ending with no sentence says the one thing it knows", async ({ shell }) => {
+  await shell.evaluate(() => {
+    window.__ngcTest.terminalCut = true;
+    window.__ngcTest.terminalSaid = "";
+  });
+  const t = await terminal(shell);
+  // No sentence from the shell, no empty space behind the full stop: the app
+  // says what it knows and nothing more.
+  await expect(t.frame.getByRole("alert")).toHaveText("Die Verbindung wurde abgeschnitten.");
+  await expect(t.input).toBeDisabled();
+});
+
+test("the same sentence twice is said once", async ({ shell }) => {
+  await shell.evaluate(() => {
+    window.__ngcTest.terminalCut = true;
+    window.__ngcTest.terminalSaid = "Die Verbindung wurde abgeschnitten.";
+  });
+  const t = await terminal(shell);
+  // The shell may send the very sentence this app would show on its own - a
+  // code of the contract whose German text reads the same. Saying it twice is
+  // one time too many (app.js, reason).
+  await expect(t.frame.getByRole("alert")).toHaveText("Die Verbindung wurde abgeschnitten.");
 });
 
 test("a stream that ends with ok is not an error", async ({ shell }) => {

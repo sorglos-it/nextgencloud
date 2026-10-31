@@ -10,8 +10,15 @@ import (
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 )
 
-// New wraps an open file as a store. It creates nothing.
+// New wraps an open file as a store. It creates nothing. Reads and writes go
+// through the one handle; NewSplit is the shape Open uses.
 func New(db *sql.DB) dbapi.Store { return sqlstore.New(db, sqlstore.SQLite) }
+
+// NewSplit wraps the two handles of OpenRW as a store: writes through write,
+// reads through read.
+func NewSplit(write, read *sql.DB) dbapi.Store {
+	return sqlstore.NewSplit(write, read, sqlstore.SQLite)
+}
 
 // Open opens the file, brings the schema up to date and returns the store.
 // The file belongs to whoever holds the key, so the migrations run here and
@@ -27,13 +34,17 @@ func New(db *sql.DB) dbapi.Store { return sqlstore.New(db, sqlstore.SQLite) }
 // migration lock (ngc_lock) is what keeps two callers of this function apart,
 // and owner is in it so that whoever looks can see which one held it.
 func Open(cfg config.DB, owner string, now int64) (dbapi.Store, error) {
-	db, err := OpenDB(cfg)
+	write, read, err := OpenRW(cfg)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := migrate.Apply(context.Background(), db, sqlstore.SQLite, owner, now); err != nil {
-		db.Close()
+	// The migrations go through the write handle, which has one connection:
+	// they are writes, and migrate.Apply has no retry of its own (point 48),
+	// so nothing is gained by a second one.
+	if _, err := migrate.Apply(context.Background(), write, sqlstore.SQLite, owner, now); err != nil {
+		read.Close()
+		write.Close()
 		return nil, err
 	}
-	return New(db), nil
+	return NewSplit(write, read), nil
 }

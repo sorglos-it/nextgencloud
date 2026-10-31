@@ -39,7 +39,7 @@ func TestCallAsPutsTheUserOnTheWire(t *testing.T) {
 		hop.send(wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: cl})
 	}()
 	body, code := rl.CallAs(context.Background(), hop, core.AppStore, core.ServiceController,
-		core.ActDeactivate, nil, task, client, pr)
+		core.ActDeactivate, nil, task, client, pr, nil)
 	if code != "" {
 		t.Fatalf("code %q, want none", code)
 	}
@@ -106,11 +106,112 @@ func TestCallAsPutsTheUserOnTheWire(t *testing.T) {
 func TestCallAsRefusesWhatIsNoCoreApp(t *testing.T) {
 	rl := newRelay()
 	hop := newHop(wire.MaxTunnelChannels)
-	_, code := rl.CallAs(context.Background(), hop, "vendor.app", "main", "run", nil, nil, nil, nil)
+	_, code := rl.CallAs(context.Background(), hop, "vendor.app", "main", "run", nil, nil, nil, nil, nil)
 	if code != wire.CodeInternal {
 		t.Fatalf("code %q, want %q", code, wire.CodeInternal)
 	}
 	if len(hop.events()) != 0 {
 		t.Fatalf("something travelled although the call was refused: %v", hop.kinds())
+	}
+}
+
+// TestCallAsPutsTheReConfirmationOnTheWire is the second half of what travels
+// with a root task, and it was missing until 20.10.2026: ownOpen wrote the
+// task but not the user's re-confirmation of it.
+//
+// Measured, not assumed: this is the ONE place where an OPEN of the shell is
+// not relayed byte for byte (relay.forward hands Forwarded.Raw over), so a
+// confirmation the API accepted and did not write here reaches no controller.
+// On the running installation the controller's own check then reported
+// confirmPresent=false while the shell had sent one and this API had taken it,
+// and the channel closed with E_CONFIRM while the log line of the task read
+// "ok" (coreapp.Dispatcher.logTask runs only after rights.Check passed).
+//
+// It asks the payload and not the arguments, for the reason the case above
+// gives: what the controller judges is the bytes.
+func TestCallAsPutsTheReConfirmationOnTheWire(t *testing.T) {
+	rl := newRelay()
+	hop := newHop(wire.MaxTunnelChannels)
+	task := &sign.Envelope{Payload: []byte(`{"app":"vendor.app"}`), Sig: bytes.Repeat([]byte{9}, 64)}
+	client := []byte(`{"user":"u1"}`)
+	pr := &proof.Proof{Kind: proof.KindPassword,
+		KeyID: enc.B64.EncodeToString(make([]byte, sign.KeyIDSize)), Sig: []byte("sig")}
+	// A second key ID, so a confirmation that was quietly replaced by the
+	// login proof would not pass as the right one.
+	confirmKey := make([]byte, sign.KeyIDSize)
+	confirmKey[0] = 7
+	confirm := &proof.Proof{Kind: proof.KindPassword,
+		KeyID: enc.B64.EncodeToString(confirmKey), Sig: []byte("confirmed")}
+	go func() {
+		hop.await(t, "open")
+		hop.send(grant(wire.MaxWindow, nil))
+		hop.await(t, "eof")
+		hop.send(wire.Frame{Type: wire.TypeEOF, Channel: 1})
+		cl, _ := json.Marshal(wire.Close{Status: wire.StatusOK})
+		hop.send(wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: cl})
+	}()
+	if _, code := rl.CallAs(context.Background(), hop, core.AppStore, core.ServiceController,
+		core.ActDeactivate, nil, task, client, pr, confirm); code != "" {
+		t.Fatalf("code %q, want none", code)
+	}
+	var open []byte
+	for _, e := range hop.events() {
+		if e.kind == "open" {
+			open = e.payload
+		}
+	}
+	if open == nil {
+		t.Fatalf("no OPEN reached the tunnel")
+	}
+	_, o, err := tunnel.ParseOpen(open)
+	if err != nil {
+		t.Fatalf("the OPEN is none of the contract: %v", err)
+	}
+	if o.Confirm == nil {
+		t.Fatalf("the OPEN carries no re-confirmation; the controller would answer E_CONFIRM")
+	}
+	if o.Confirm.KeyID != confirm.KeyID {
+		t.Fatalf("the OPEN names key %q, want the confirming key %q", o.Confirm.KeyID, confirm.KeyID)
+	}
+	if !bytes.Equal(o.Confirm.Sig, confirm.Sig) {
+		t.Fatalf("the signature of the re-confirmation did not travel as it stands")
+	}
+}
+
+// TestACallWithoutATaskCarriesNoConfirmation holds the other half of the
+// contract this fix touches: wire.Open.Validate takes a confirmation only
+// together with a task, so ownOpen must not write one onto an OPEN that
+// carries none. CallController is the way in that never has a task.
+func TestACallWithoutATaskCarriesNoConfirmation(t *testing.T) {
+	rl := newRelay()
+	hop := newHop(wire.MaxTunnelChannels)
+	go func() {
+		hop.await(t, "open")
+		hop.send(grant(wire.MaxWindow, nil))
+		hop.await(t, "eof")
+		hop.send(wire.Frame{Type: wire.TypeEOF, Channel: 1})
+		cl, _ := json.Marshal(wire.Close{Status: wire.StatusOK})
+		hop.send(wire.Frame{Type: wire.TypeClose, Channel: 1, Payload: cl})
+	}()
+	if _, code := rl.CallController(context.Background(), hop, core.AppUsers,
+		core.ServiceController, core.ActTrust, nil, nil); code != "" {
+		t.Fatalf("code %q, want none", code)
+	}
+	var open []byte
+	for _, e := range hop.events() {
+		if e.kind == "open" {
+			open = e.payload
+		}
+	}
+	if open == nil {
+		t.Fatalf("no OPEN reached the tunnel")
+	}
+	_, o, err := tunnel.ParseOpen(open)
+	if err != nil {
+		t.Fatalf("the OPEN is none of the contract: %v", err)
+	}
+	if o.Task != nil || o.Confirm != nil {
+		t.Fatalf("a call without a user carries task %v and confirmation %v, want neither",
+			o.Task, o.Confirm)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/flynn/noise"
 
+	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/audit"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/guard"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/link"
 	"github.com/sorglos-it/nextgencloud/apps/server-api/classes/state"
@@ -40,6 +41,10 @@ const IdleTimeout = 3 * tunnel.PingInterval * time.Second
 type Server struct {
 	S       *state.State
 	Tunnels *Registry
+
+	// Log takes the one line a pairing writes (Pair). Package server sets it;
+	// a nil one means no line, never a refused pairing.
+	Log *audit.Log
 
 	// Idle is the quiet time one tunnel of this server may have; zero or less
 	// means IdleTimeout. A test sets it to milliseconds instead of waiting.

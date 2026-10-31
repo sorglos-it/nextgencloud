@@ -402,11 +402,22 @@ func TestHardeningEnsureRunAsksForTheTightModes(t *testing.T) {
 	}
 }
 
-// 12. The mode of a data directory: 0700 for the directory of all apps and 0700
-// for the app's own, asked for at the making and again afterwards. Nobody but
-// the app's user may enter it - it is where everything the app keeps lies, and
-// the encryption below it protects a stolen disk, not a neighbour on this
-// machine.
+// 12. The two modes of EnsureData, and they are NOT the same number: 0711 for
+// the directory of all apps, 0700 for the app's own.
+//
+// The difference is the whole of this case. The directory above has to be
+// ENTERED by every app's user - it is the home of that user, and podman keeps
+// the image store of the app in there - so 0700 there stops podman at the
+// first look at its own directory and the activation is taken back whole
+// (measured on 20.10.2026 on the Debian machine: EACCES on
+// newfstatat("/var/lib/ngc/apps/org.sorglos.terminal")). Below it nobody but
+// the app's user may enter at all: that is where everything the app keeps
+// lies, and the encryption under it protects a stolen disk, not a neighbour on
+// this machine.
+//
+// So the case reads each path against its own number, and not "every mode call
+// asked for 0700" - which is what it said before and what made the wrong
+// number pass.
 func TestHardeningEnsureDataAsksForTheTightMode(t *testing.T) {
 	root := filepath.ToSlash(filepath.Join(t.TempDir(), "apps"))
 	oldData, oldAdd, oldPolicy := paths.appData, paths.addKey, paths.setPolicy
@@ -429,15 +440,29 @@ func TestHardeningEnsureDataAsksForTheTightMode(t *testing.T) {
 		t.Logf("EnsureData ended with %v - the mode calls below are still the case", err)
 	}
 	want := []string{
-		"mkdirAll " + root + " -rwx------",
+		"mkdirAll " + root + " -rwx--x--x",
+		"chmod " + root + " -rwx--x--x",
 		"mkdir " + root + "/org.sorglos.terminal -rwx------",
 	}
 	if len(m.calls) < len(want) || !slices.Equal(m.calls[:len(want)], want) {
 		t.Fatalf("EnsureData asked for\n%q\nwant it to begin with\n%q", m.calls, want)
 	}
+	// And every call after those three, whichever of them was reached, carries
+	// the number of the path it names: nothing of this call may ever widen the
+	// app's own directory, and nothing may ever narrow the one above it again.
 	for _, c := range m.calls {
-		if strings.HasPrefix(c, "chmod ") && !strings.HasSuffix(c, " -rwx------") {
-			t.Fatalf("EnsureData asked for %q", c)
+		// "what path mode", as modeLog.note writes it. The paths of this case
+		// are a TempDir and an app id and carry no space.
+		f := strings.Fields(c)
+		if len(f) != 3 {
+			t.Fatalf("the recorder wrote %q, which is not \"what path mode\"", c)
+		}
+		path, mode := f[1], f[2]
+		if path == root && mode != "-rwx--x--x" {
+			t.Fatalf("EnsureData asked for %q - the directory above every app must stay enterable", c)
+		}
+		if path != root && mode != "-rwx------" {
+			t.Fatalf("EnsureData asked for %q - the app's own directory must stay its own", c)
 		}
 	}
 	if err == nil {

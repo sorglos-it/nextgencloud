@@ -76,7 +76,17 @@ type RestoreConfig struct {
 	// serve.RunService, which is what operation uses; a test puts its own in
 	// so no container is needed.
 	Run func(ctx context.Context, in serve.CallInput) wire.Close
-	Log *slog.Logger // nil: slog.Default()
+	// EnsureRun makes the runtime directory the engine needs for this app's
+	// container, and tightens the directory above it. nil: runtime.RunForApp,
+	// which LOOKS THE APP'S USER UP and makes none - an app id without a user
+	// is an app that is not installed here, and it stays off.
+	//
+	// It is a function and not a straight call for the same reason Unlock is
+	// one: the cases of this package run with no /run, no app users and no
+	// root. Its error means "the directory could not be made", which leaves
+	// the app off and logged, like the other three.
+	EnsureRun func(ctx context.Context, app string) error
+	Log       *slog.Logger // nil: slog.Default()
 }
 
 // Restore brings the apps of this server back up, in the order the state hands
@@ -87,12 +97,15 @@ type RestoreConfig struct {
 //     that ran out leaves the app off, which is what tunnel.StateUnlicensed
 //     says of it in the next status.
 //  2. its data directory is unlocked.
-//  3. its container is started, if it is not running already.
-//  4. the start action of its manifest (store.Manifest.Start) is run, with
+//  3. the runtime directory of its container is made (runtime.RunForApp). The
+//     tmpfs took it with the last restart, and the engine cannot answer
+//     without it - see the block at that call for what the missing step cost.
+//  4. its container is started, if it is not running already.
+//  5. the start action of its manifest (store.Manifest.Start) is run, with
 //     service.Call{Start: true, User: ""} - a call of this server and of no
 //     user. Its result goes into the log and nowhere else.
 //
-// Step 4 runs whether or not step 3 had to start anything. This is the boot
+// Step 5 runs whether or not step 4 had to start anything. This is the boot
 // path: a container that is already up was brought up by this machine starting,
 // and its start action has not run yet. The manifest calls Start "the action
 // the controller runs after every container start", and a restore of a machine
@@ -142,6 +155,47 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 		return
 	}
 	name := runtime.UserName(a.ID)
+	// BEFORE the engine is asked anything, and that order is the whole of this
+	// step. config.RunDir is a tmpfs and the unit of this service hands it to
+	// systemd as RuntimeDirectory, so after every restart of the machine or of
+	// this service the directory above is new and the app's own is GONE. The
+	// engine needs both to answer at all: rootless podman reads its
+	// configuration out of XDG_RUNTIME_DIR, so the first call of every app
+	// after a restart fell over the missing directory - and it fell over it in
+	// Running, which is one line above where the directory would have been
+	// made. Measured on the Debian VM on 23.10.2026, as the app's user, with
+	// exactly the arguments Podman.Running passes:
+	//
+	//	lstat /run/ngc/ngc-terminal-439982dd: permission denied      exit 1
+	//
+	// and with the mode of the directory above put right by hand, the same call
+	// one step further on:
+	//
+	//	lstat /run/ngc/ngc-terminal-439982dd: no such file or directory
+	//
+	// That was a closed circle, and it is the point of this step: Running could
+	// not answer without the directory, and the directory was made nowhere on
+	// this path - EnsureRun had exactly one caller, the activation
+	// (install/activate.go). So the error went into the log, this function gave
+	// up one line later, and Start was never reached. Every installed app
+	// stayed off after every restart, for good, until somebody activated it
+	// anew. Nothing of it was visible in the status either: appState turns this
+	// same error into "nothing to say" and the Reporter then leaves the app out
+	// of the report altogether, so an admin saw an app that looks like one that
+	// was never installed here.
+	//
+	// It also puts the mode of the directory above right, on every restore and
+	// not only on an activation (runtime.EnsureRun: 0711, so an app may walk
+	// through to its own without reading the names of the others). That half
+	// matters because the mode does not come from this program: the unit writes
+	// it, in another repository, and it writes 0700. As long as this call runs
+	// first, that number can no longer keep the apps down - and it is still
+	// worth putting right where it is written.
+	if err := c.ensureRun(ctx, a.ID); err != nil {
+		log.Warn("the runtime directory of an app could not be made, it stays off",
+			"app", a.ID, "err", err)
+		return
+	}
 	up, err := c.Engine.Running(ctx, name)
 	if err != nil {
 		log.Warn("the engine does not say whether an app runs, it stays off", "app", a.ID, "err", err)
@@ -154,6 +208,24 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 		}
 	}
 	c.start(ctx, log, a, name)
+}
+
+// ensureRun makes the runtime directory of an app, through the field if one was
+// wired and through runtime.RunForApp otherwise. The default sits here and not
+// in Restore for the same reason the one of Run sits in start: a caller that
+// wires nothing gets the behaviour of the operating program, and the cases of
+// this package put their own in without having to know the default exists.
+//
+// runtime.RunForApp answers the path it made, and nothing here wants it: the
+// engine builds the same path from the same name (runtime.RunDirOf), and a
+// second place that carries it around would be a second place that could
+// disagree about it.
+func (c RestoreConfig) ensureRun(ctx context.Context, app string) error {
+	if c.EnsureRun != nil {
+		return c.EnsureRun(ctx, app)
+	}
+	_, err := runtime.RunForApp(ctx, app)
+	return err
 }
 
 // start runs the start action of the manifest, if there is one.

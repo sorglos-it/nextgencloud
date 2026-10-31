@@ -11,6 +11,14 @@
 # The script is held to the rule it enforces: it refuses to print a number it
 # cannot stand behind (empty file, no case at all, fewer cases than the floor)
 # and says so instead.
+#
+# AND IT PRINTS WHY A CASE FAILED, not only its name. Until 20.10.2026 it
+# named the test and nothing else, and the stream it reads was the only place
+# the reason existed - the -race and root jobs pipe go test -json into a file
+# that no step ever shows. A red run that does not say why cannot be told
+# apart from a load-sensitive wobble, and that is the one question a red run
+# has to answer. The output records of a failing test are kept and printed
+# under its name.
 set -euo pipefail
 
 log=${1:-}
@@ -20,7 +28,31 @@ title=${2:-run}
 floor=${NGC_COUNT_FLOOR:-200}
 
 [ -n "$log" ] || { echo "ci-count: usage: ci-count.sh <go test -json file> [title]" >&2; exit 2; }
-[ -s "$log" ] || { echo "ci-count: $log is empty - nothing ran, and that is not a result" >&2; exit 2; }
+
+# MISSING and EMPTY are two different findings, and saying "empty" for both is
+# what cost three days. Measured over all 182 runs of Linux-Pruefung (23.10.2026):
+# 82 red runs in the check job, and in 42 of them check.sh itself was GREEN while
+# this script said "is empty - nothing ran". The file was never written at all --
+# the writer in check.sh lived on a branch from 20.10. and reached main only on
+# 23.10. 17:20. The message was true and useless: it described the file, not the
+# cause, and the cause was one step away.
+#
+# So check.sh truncates the file BEFORE its test run (see the writer there).
+# After that the three cases are distinct and each names where to look:
+#   file missing  -> the producing step never got far enough; the cause is in THAT step
+#                    (check.sh here, the go test step in the -race and root jobs)
+#   file empty    -> the run happened and produced no stream
+#   file non-empty-> count it
+# All three stay RED. "nothing ran" must never pass as a result, and a counter
+# that goes green on empty input would be worse than the state this replaces.
+if [ ! -e "$log" ]; then
+	echo "ci-count: $log does not exist - the run that should have written it never got that far." >&2
+	echo "ci-count: that is NOT a count of zero and NOT a green run. The finding is in the step BEFORE" >&2
+	echo "ci-count: this one - check.sh (it stops at a structural check, go vet or a build before its" >&2
+	echo "ci-count: tests) or, in the -race and root jobs, the go test step itself. Read that step." >&2
+	exit 2
+fi
+[ -s "$log" ] || { echo "ci-count: $log is empty - the run wrote no stream at all, and that is not a result" >&2; exit 2; }
 
 awk -v title="$title" -v floor="$floor" '
 	function name() {
@@ -31,11 +63,38 @@ awk -v title="$title" -v floor="$floor" '
 		if (match($0, /"Package":"[^"]*"/)) return substr($0, RSTART + 11, RLENGTH - 12)
 		return ""
 	}
+	# unesc turns the JSON string of an Output record back into text. Only
+	# the four escapes go test really emits are handled; anything else stays
+	# as it stands, which is honest about what was not decoded.
+	function unesc(v) {
+		gsub(/\\n/, "\n", v)
+		gsub(/\\t/, "\t", v)
+		gsub(/\\"/, "\"", v)
+		gsub(/\\\\/, "\\", v)
+		return v
+	}
+	function outtext() {
+		i = index($0, "\"Output\":\"")
+		if (i == 0) return ""
+		v = substr($0, i + 10)
+		# awk has no non-greedy match: /"Output":".*"/ ate the member AFTER
+		# the value and printed ","OutputType":"frame into the text, measured
+		# 20.10.2026. So the end is found by hand - either the next member or
+		# the end of the object.
+		j = index(v, "\",\"")
+		if (j > 0) v = substr(v, 1, j - 1)
+		else sub(/"}[[:space:]]*$/, "", v)
+		return unesc(v)
+	}
 	{
 		t = name(); p = pkg()
 		top = (index(t, "/") == 0)
+		# Kept for every case, because which one fails is known only at the
+		# end. One run of this repo is a few MB of text; that is the price of
+		# being able to say why.
+		if ($0 ~ /"Action":"output"/ && t != "") said[t] = said[t] outtext()
 		if ($0 ~ /"Action":"pass"/)  { if (t == "") { pkgok++ }   else { pass++;  if (top) toppass++ } }
-		if ($0 ~ /"Action":"fail"/)  { if (t == "") { pkgbad++; badpkg[p] = 1 } else { fail++; failed[t "  (" p ")"] = 1 } }
+		if ($0 ~ /"Action":"fail"/)  { if (t == "") { pkgbad++; badpkg[p] = 1 } else { fail++; k = t "  (" p ")"; failed[k] = 1; failtext[k] = said[t] } }
 		if ($0 ~ /"Action":"skip"/)  { if (t == "") { pkgnone++ } else { skip++; if (top) topskip++; skipped[t "  (" p ")"] = 1 } }
 	}
 	END {
@@ -45,7 +104,13 @@ awk -v title="$title" -v floor="$floor" '
 			pass, fail, skip, toppass, topskip
 		printf "packages: %d ok, %d failed, %d without test files\n", pkgok, pkgbad, pkgnone
 
-		if (fail > 0) { print "\nFAILED:"; for (k in failed) print "  " k }
+		if (fail > 0) {
+			print "\nFAILED - with what the test itself said:"
+			for (k in failed) {
+				print "  " k
+				if (k in failtext && failtext[k] != "") printf "%s", failtext[k]
+			}
+		}
 		if (pkgbad > 0) { print "\nfailed packages (a build error lands here, with no case of its own):"; for (k in badpkg) print "  " k }
 		if (skip > 0) {
 			print "\nSKIPPED - a skipped case is not a case that ran:"

@@ -5,6 +5,7 @@
   "login.nopasswordkeys": "Este navegador no puede iniciar sesión con contraseña. Inicia sesión con una clave de acceso.",
   "login.locked": "Demasiados intentos fallidos. Vuelva a intentarlo más tarde.",
   "login.locked.left": "Demasiados intentos fallidos. Quedan {seconds} segundos.",
+  "login.poweredby": "funciona con NGC {version}",
   "login.totp.ask": "Introduzca el código de su aplicación de autenticación.",
   "setup.code.incomplete": "El código de un solo uso está incompleto.",
   "setup.code.nomatch": "El código de un solo uso no corresponde a esta instalación. Compruebe el código y vuelva a intentarlo.",

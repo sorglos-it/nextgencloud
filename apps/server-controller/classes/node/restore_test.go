@@ -94,24 +94,37 @@ func (e *restoreEngine) Remove(context.Context, string) error { e.note("remove")
 // restoreStand is one machine coming back up: a local state, an engine, and
 // the two seams Restore needs beside them.
 type restoreStand struct {
-	t        *testing.T
-	st       *state.Store
-	eng      *restoreEngine
-	cfg      RestoreConfig
-	unlocked []string
-	ran      []serve.CallInput
-	unlock   map[string]error // what Unlock answers for an app
-	paid     map[string]bool  // apps whose licence has run out
-	licErr   map[string]error // apps whose licence could not be read
+	t         *testing.T
+	st        *state.Store
+	eng       *restoreEngine
+	cfg       RestoreConfig
+	unlocked  []string
+	ran       []serve.CallInput
+	madeRun   []string         // apps whose runtime directory was made
+	unlock    map[string]error // what Unlock answers for an app
+	paid      map[string]bool  // apps whose licence has run out
+	licErr    map[string]error // apps whose licence could not be read
+	runDirErr map[string]error // apps whose runtime directory could not be made
 }
 
 func newRestoreStand(t *testing.T) *restoreStand {
 	t.Helper()
 	s := &restoreStand{t: t, st: newState(t), eng: newRestoreEngine(),
-		unlock: map[string]error{}, paid: map[string]bool{}, licErr: map[string]error{}}
+		unlock: map[string]error{}, paid: map[string]bool{}, licErr: map[string]error{},
+		runDirErr: map[string]error{}}
 	s.cfg = RestoreConfig{
 		State:  s.st,
 		Engine: s.eng,
+		// Wired in every case, and it has to be: without it the default
+		// (runtime.RunForApp) would look an app user up on the machine
+		// running the cases and make a directory under /run. These cases
+		// are about the ORDER and the refusals, not about a real /run -
+		// that half is measured where it belongs, on Linux and as root
+		// (runtime.TestEnsureRunTightensTheDirectoryAboveItToo).
+		EnsureRun: func(_ context.Context, app string) error {
+			s.madeRun = append(s.madeRun, app)
+			return s.runDirErr[app]
+		},
 		Unlock: func(_ context.Context, app string) error {
 			s.unlocked = append(s.unlocked, app)
 			return s.unlock[app]
@@ -235,16 +248,106 @@ func TestRestoreUnlocksTheDataBeforeTheContainerStarts(t *testing.T) {
 		order = append(order, "unlock "+app)
 		return nil
 	}
+	// Into the same list, so this case reads the whole order of one app and
+	// not three quarters of it.
+	s.cfg.EnsureRun = func(_ context.Context, app string) error {
+		order = append(order, "run "+app)
+		return nil
+	}
 	s.eng = newRestoreEngine()
 	s.cfg.Engine = &orderEngine{e: s.eng, order: &order}
 	s.put(firstApp, true, true)
 	if err := Restore(context.Background(), s.cfg); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"unlock " + firstApp, "running " + runtime.UserName(firstApp),
+	want := []string{"unlock " + firstApp, "run " + firstApp,
+		"running " + runtime.UserName(firstApp), "start " + runtime.UserName(firstApp)}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("the order was %v, want %v", order, want)
+	}
+}
+
+// The runtime directory is made BEFORE the engine is asked anything, and this
+// case is about that one position in the list.
+//
+// It is not tidiness. config.RunDir is a tmpfs handed to systemd as the unit's
+// RuntimeDirectory, so after every restart the directory above is new and the
+// app's own is gone - and rootless podman reads its configuration out of
+// XDG_RUNTIME_DIR, so Running cannot answer without it. Measured on the Debian
+// VM on 23.10.2026, as the app's user and with the arguments Podman.Running
+// passes: "lstat /run/ngc/<user>: permission denied", exit 1.
+//
+// That closed a circle: Running fell over the missing directory, one() gave up
+// at its error one line later, and Start was never reached - while the only
+// caller of EnsureRun was the activation. Every installed app stayed off after
+// every restart until somebody activated it anew, and the status did not even
+// show it as off: appState turns this error into "nothing to say" and the
+// Reporter leaves the app out of the report.
+//
+// So the case reads the position and not merely the call. With the step
+// anywhere behind Running it would be green and the circle would still be
+// there.
+func TestRestoreMakesTheRuntimeDirectoryBeforeItAsksTheEngine(t *testing.T) {
+	s := newRestoreStand(t)
+	var order []string
+	s.cfg.EnsureRun = func(_ context.Context, app string) error {
+		order = append(order, "run "+app)
+		return nil
+	}
+	s.eng = newRestoreEngine()
+	s.cfg.Engine = &orderEngine{e: s.eng, order: &order}
+	s.put(firstApp, true, false)
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"run " + firstApp, "running " + runtime.UserName(firstApp),
 		"start " + runtime.UserName(firstApp)}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("the order was %v, want %v", order, want)
+	}
+}
+
+// An app whose runtime directory cannot be made stays off, and the engine is
+// not asked about it at all. The second half is the one worth holding: asking
+// an engine that has no directory to read is what produced the useless line in
+// the log, and a caller that goes on anyway would produce it again.
+func TestRestoreAsksNoEngineWithoutARuntimeDirectory(t *testing.T) {
+	s := newRestoreStand(t)
+	s.runDirErr[firstApp] = errors.New("no /run")
+	s.put(firstApp, true, true)
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.eng.log(); len(got) != 0 {
+		t.Fatalf("the engine was asked %v, want nothing", got)
+	}
+	if len(s.ran) != 0 {
+		t.Fatalf("%d start actions ran, want none", len(s.ran))
+	}
+	// The data was unlocked before it: that step is about the keys in the
+	// kernel and has nothing to do with /run, so it keeps its place.
+	if !reflect.DeepEqual(s.unlocked, []string{firstApp}) {
+		t.Fatalf("unlocked %v, want just the one app", s.unlocked)
+	}
+}
+
+// Without a wired EnsureRun the default is runtime.RunForApp. The case does not
+// run it - it needs root and a real /run - it only holds that the nil case does
+// not quietly SKIP the step, which is how this bug would come back: a default
+// that does nothing looks exactly like a passing test.
+func TestRestoreHasNoDefaultThatSkipsTheRuntimeDirectory(t *testing.T) {
+	s := newRestoreStand(t)
+	s.cfg.EnsureRun = nil
+	s.put(firstApp, true, false)
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	// runtime.RunForApp looks the app's user up and makes none, so on a
+	// machine where this app is not installed it refuses - and that refusal
+	// is the proof the default was reached. A default that skipped the step
+	// would have let the engine be asked.
+	if got := s.eng.log(); len(got) != 0 {
+		t.Fatalf("the engine was asked %v, so the default made no runtime directory and did not refuse either", got)
 	}
 }
 
@@ -287,6 +390,9 @@ func TestRestoreCarriesOnAfterOneAppFailed(t *testing.T) {
 		},
 		"the data stays locked": func(s *restoreStand) {
 			s.unlock[firstApp] = errors.New("no fscrypt")
+		},
+		"the runtime directory cannot be made": func(s *restoreStand) {
+			s.runDirErr[firstApp] = errors.New("no /run")
 		},
 		"the engine says nothing": func(s *restoreStand) {
 			s.eng.runErr[runtime.UserName(firstApp)] = errors.New("no podman")

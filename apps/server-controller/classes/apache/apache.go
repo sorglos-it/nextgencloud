@@ -107,6 +107,37 @@ type balancer struct {
 	APIs         []config.WebAPI
 }
 
+// The three lines of templates/apache-apis.conf.tmpl that the measurement of
+// 24.10.2026 put there (book points 90 and 91), with the reasoning here
+// rather than in a file an operator finds on a server:
+//
+//   - connectiontimeout=2 bounds the DIAL of one member on its own. Without
+//     it the dial inherits timeout=65, so a member whose machine is gone is
+//     waited on for over a minute before the balancer looks at the next one.
+//     Two seconds is chosen against a measurement: a TCP dial inside this
+//     installation took 0,101 ms at best and 4,129 ms at worst over 30 dials
+//     (25.10.2026), so two seconds is hundreds of times the worst of them and
+//     takes nothing from a member that is merely slow - the ANSWER still has
+//     timeout=65.
+//
+//   - Header Retry-After on a 503. When no member is left Apache answers 503
+//     itself, bare; a database that is busy already answers 503 with
+//     Retry-After: 5 and a reason (point 48). The header makes the two say
+//     the same thing to a client. 503 only, and "always" does not overwrite a
+//     value an API set itself.
+//
+//   - LogLevel proxy:info. Measured 24.10.2026: grep -c on proxy|balancer in
+//     /var/log/apache2/error.log was 0 while nine of forty logins failed. The
+//     file meant for the cause held no line about it.
+//
+// NOT set, and that is a decision and not an omission: failonstatus=500. It
+// would take a member out of service on a 500 and so turn the naked 500 of
+// point 90 into a retry on the healthy member - but this API answers its OWN
+// faults with 500 (E_INTERNAL, apps/server-api/classes/httpapi/fault.go), so
+// failonstatus would pull a healthy API out of the balancer over a damaged
+// row and put an error page in place of its honest body. The symptom is worth
+// less than that. What is left of point 90's 500 needs the `::` record gone
+// from the names (point 80); that lies in the net and not here.
 var balancerTmpl = template.Must(template.New("apache-apis.conf").Parse(templates.ApacheAPIs))
 
 // Render builds the balancer file for apis. It returns nil, and so writes

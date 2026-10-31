@@ -158,7 +158,8 @@ func (f *fakeSender) record(s sent) wire.Code {
 }
 
 func (f *fakeSender) Transfer(_ context.Context, node, action string, params json.RawMessage,
-	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	head core.Transfer, file io.Reader, tk *sign.Envelope, client []byte,
+	pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	b, err := io.ReadAll(file)
 	if err != nil {
 		return nil, wire.CodeUnreachable
@@ -168,7 +169,7 @@ func (f *fakeSender) Transfer(_ context.Context, node, action string, params jso
 }
 
 func (f *fakeSender) Call(_ context.Context, node, action string, params json.RawMessage,
-	tk *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	tk *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	return nil, f.record(sent{node: node, action: action, params: bytes.Clone(params),
 		hadUser: tk != nil || client != nil || pr != nil})
 }

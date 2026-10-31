@@ -193,34 +193,59 @@ func (s *Server) plan(d access.Decision) (appPlan, *wire.Close) {
 // ensure makes sure the container of the app runs. A container that could not
 // be started is the service unreachable, which is what service.Result names
 // for a program that could not be started at all.
-func (s *Server) ensure(ctx context.Context, name string) *wire.Close {
+func (s *Server) ensure(ctx context.Context, app, name string) (*wire.Close, string) {
+	// THE RUNTIME DIRECTORY FIRST, AND BEFORE THE FIRST QUESTION TO THE
+	// ENGINE. /run/ngc/<name> is where rootless podman keeps what runs for
+	// this container, it is a tmpfs, and nothing of it survives a boot
+	// (runtime, run.go). Until this call existed the one place that made it
+	// was the activation of the app (install/activate.go), so after every
+	// restart of the machine EVERY podman call of EVERY installed app failed
+	// on a directory that was not there - and an app stayed unreachable until
+	// somebody activated it again.
+	//
+	// Measured on 22.10.2026 on the Debian machine, which had rebooted at
+	// 04:44: /run/ngc held nothing but itself, while the user and the data
+	// directory of org.sorglos.terminal were both there. podman as the app's
+	// user then says "lstat /run/ngc/ngc-terminal-439982dd: no such file or
+	// directory" and ends with a status of its own, which is Running below
+	// answering an error, which was E_UNREACHABLE with no line anywhere.
+	if s.d.Prepare != nil {
+		if err := s.d.Prepare(ctx, app); err != nil {
+			return refuse(wire.CodeUnreachable), ReasonRunDir
+		}
+	}
 	up, err := s.d.Engine.Running(ctx, name)
 	if err != nil {
-		return refuse(wire.CodeUnreachable)
+		return refuse(wire.CodeUnreachable), ReasonContainer
 	}
 	if up {
-		return nil
+		return nil, ""
 	}
 	if err := s.d.Engine.Start(ctx, name); err != nil {
-		return refuse(wire.CodeUnreachable)
+		return refuse(wire.CodeUnreachable), ReasonContainer
 	}
-	return nil
+	return nil, ""
 }
 
 // runApp runs the service of the app behind a handshake that stands.
 func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session,
 	d access.Decision, first wire.E2EMessage) error {
+	// The one line this channel may leave, whichever station writes it
+	// (reason.go, once).
+	o := &once{}
 	p, cl := s.plan(d)
 	if cl != nil {
-		return s.answer(ctx, ch, sess, *cl)
+		o.say(s, d.App.ID, ReasonPlan, *cl)
+		return s.answer(ctx, ch, o, d.App.ID, sess, *cl)
 	}
 	// Here the licence of the app belongs, between the handshake that stands
 	// and the container that is started: an app whose licence has run out
 	// ends with E_LICENSE and reaches no container at all. Task 17 brings the
 	// licence and this is the one place it goes; until then no app channel is
 	// refused for one, and no E_LICENSE leaves this package.
-	if cl := s.ensure(ctx, p.container); cl != nil {
-		return s.answer(ctx, ch, sess, *cl)
+	if cl, reason := s.ensure(ctx, d.App.ID, p.container); cl != nil {
+		o.say(s, d.App.ID, reason, *cl)
+		return s.answer(ctx, ch, o, d.App.ID, sess, *cl)
 	}
 	// The input hangs on a clock of its own, and it is the clock of the
 	// action: a shell that neither ends its input nor sends more would
@@ -282,7 +307,8 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	// writing it. Nothing was sealed past that limit, so this end still
 	// travels inside the session.
 	if out.tooLarge {
-		return s.answer(ctx, ch, sess, wire.Error(wire.CodeTooLarge))
+		o.say(s, d.App.ID, ReasonTooLarge, wire.Error(wire.CodeTooLarge))
+		return s.answer(ctx, ch, o, d.App.ID, sess, wire.Error(wire.CodeTooLarge))
 	}
 	if out.err != nil {
 		// One inner message was sealed and did not get out - the credit ran
@@ -300,11 +326,40 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 		// wrong number breaks the channel for good, while a CLOSE always
 		// gets out, because it costs no credit.
 		if end.Status == wire.StatusOK {
-			end = wire.Error(wire.CodeInternal)
+			// A program that ended well while the clock was already out is
+			// not an internal fault, and it was reported as one: measured
+			// 23.10.2026 under -race and load, 2 of 150 runs of
+			// TestAPeerThatHoldsItsCreditDoesNotHoldTheChannel came back
+			// E_INTERNAL instead of E_TIMEOUT (V1.2 point 70). A probe at
+			// this line printed the whole difference:
+			//
+			//   148x  outErr=context deadline exceeded  end=E_TIMEOUT
+			//     2x  outErr=context deadline exceeded  end=ok
+			//
+			// Both times inCtx.Err() was the deadline. So the clock HAD run
+			// out and the send of the sealed message died of it; only
+			// RunService answered ok, because the program happened to exit
+			// cleanly before the deadline reached it. Which of the two
+			// observers wins is a race, and the comment on inCtx above
+			// predicted this symptom for the day two clocks disagree.
+			//
+			// The way out is not a third clock: it is to stop asking
+			// RunService what the output already knows. The failure of the
+			// send carries its own reason, so that reason is what goes into
+			// the CLOSE - and a send that failed for anything else is still
+			// the internal fault it always was.
+			if errors.Is(out.err, context.DeadlineExceeded) || errors.Is(inCtx.Err(), context.DeadlineExceeded) {
+				end = wire.Error(wire.CodeTimeout)
+			} else {
+				end = wire.Error(wire.CodeInternal)
+			}
 		}
-		return s.end(ch, end)
+		return s.cutApp(ch, o, d.App.ID, ReasonCut, end)
 	}
-	return s.answer(ctx, ch, sess, end)
+	if end.Status != wire.StatusOK {
+		o.say(s, d.App.ID, ReasonService, end)
+	}
+	return s.answer(ctx, ch, o, d.App.ID, sess, end)
 }
 
 // answer puts the outcome of the call into the E2EEnd of this side and ends
@@ -315,10 +370,11 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 // Only where the end itself could not be sent does the CLOSE carry the error.
 // Then the shell got no E2EEnd, and a side that sees the CLOSE of the
 // transport before it reports an error of its own (wire, "End to end").
-func (s *Server) answer(ctx context.Context, ch *link.Channel, sess *e2e.Session, cl wire.Close) error {
+func (s *Server) answer(ctx context.Context, ch *link.Channel, o *once, app string,
+	sess *e2e.Session, cl wire.Close) error {
 	ct, err := sess.End(cl)
 	if err != nil {
-		return s.end(ch, wire.Error(wire.CodeInternal))
+		return s.cutApp(ch, o, app, ReasonInternal, wire.Error(wire.CodeInternal))
 	}
 	// The end of this side needs credit like everything else, and a peer that
 	// gives none must not keep this channel open for it: after this wait the
@@ -328,10 +384,10 @@ func (s *Server) answer(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	wait, cancel := context.WithTimeout(ctx, s.lastWait())
 	defer cancel()
 	if err := ch.SendWhole(wait, ct); err != nil {
-		return s.end(ch, wire.Error(wire.CodeInternal))
+		return s.cutApp(ch, o, app, ReasonInternal, wire.Error(wire.CodeInternal))
 	}
 	if err := ch.EOF(); err != nil {
-		return s.end(ch, wire.Error(wire.CodeInternal))
+		return s.cutApp(ch, o, app, ReasonInternal, wire.Error(wire.CodeInternal))
 	}
 	return s.end(ch, wire.Close{Status: wire.StatusOK})
 }

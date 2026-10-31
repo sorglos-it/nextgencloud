@@ -7,6 +7,7 @@ import (
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/chain"
 	"github.com/sorglos-it/nextgencloud/shared/core"
+	"github.com/sorglos-it/nextgencloud/shared/trust"
 	"github.com/sorglos-it/nextgencloud/shared/wire"
 )
 
@@ -29,7 +30,12 @@ import (
 // over a store that cannot write: E_VERIFY reads "Unterschrift ungültig." to
 // him. Where that answer can be wrong, and why nothing here can tell, stands
 // at the E_VERIFY of this function.
-func (s *Server) trust(ctx context.Context, _ access.Decision, in []byte) (any, *wire.Close) {
+// The list of the channel is the one thing this action does NOT read: it
+// answers out of chain.Keeper, which is what that list is a snapshot of, and a
+// snapshot cannot say what the keeper holds after this very call applied
+// something to it.
+func (s *Server) trust(ctx context.Context, _ *trust.List, _ access.Decision,
+	in []byte) (any, *wire.Close) {
 	seq, err := s.d.Chain.Apply(ctx, in)
 	switch {
 	case err == nil:

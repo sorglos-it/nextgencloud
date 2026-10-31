@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-controller/classes/access"
@@ -23,15 +24,33 @@ import (
 type fakeUpdater struct {
 	called string
 	err    error
+	// list is the trust list the last call was handed. A case reads it to
+	// hold that the list of the CHANNEL reaches the updater, which is the
+	// whole reason this interface takes one.
+	list *trust.List
+	// read is what a stage read out of its reader before it answered.
+	read []byte
 }
 
-func (u *fakeUpdater) Install(context.Context, access.Decision) ([]byte, error) {
-	u.called = "install"
+func (u *fakeUpdater) Stage(_ context.Context, list *trust.List, _ access.Decision,
+	r io.Reader) ([]byte, error) {
+	u.called = "stage"
+	u.list = list
+	u.read, _ = io.ReadAll(r)
 	return []byte("{}"), u.err
 }
 
-func (u *fakeUpdater) System(context.Context, access.Decision) ([]byte, error) {
+func (u *fakeUpdater) Install(_ context.Context, list *trust.List,
+	_ access.Decision) ([]byte, error) {
+	u.called = "install"
+	u.list = list
+	return []byte("{}"), u.err
+}
+
+func (u *fakeUpdater) System(_ context.Context, list *trust.List,
+	_ access.Decision) ([]byte, error) {
 	u.called = "system"
+	u.list = list
 	return []byte("{}"), u.err
 }
 
@@ -78,7 +97,7 @@ func TestTheTargetDecidesWhichHalfOfTheUpdaterRuns(t *testing.T) {
 			// (core.InstallParams.Validate), and the fork must not need them.
 			p = core.InstallParams{Target: c.target}
 		}
-		v, cl := s.install(context.Background(), installDecision(t, p), nil)
+		v, cl := s.install(context.Background(), nil, installDecision(t, p), nil)
 		if cl != nil {
 			t.Errorf("%s: the channel ended %+v", name, *cl)
 			continue
@@ -131,7 +150,7 @@ func TestInstallAndSystemEachRefuseTheOthersTarget(t *testing.T) {
 // the code of its own faults - never with one that blames the API.
 func TestAnInstallWithoutAnUpdaterIsThisServersFault(t *testing.T) {
 	s := New(Deps{})
-	_, cl := s.install(context.Background(), installDecision(t, core.InstallParams{Target: trust.AutoSystem}), nil)
+	_, cl := s.install(context.Background(), nil, installDecision(t, core.InstallParams{Target: trust.AutoSystem}), nil)
 	if cl == nil || cl.Code != wire.CodeInternal {
 		t.Fatalf("the channel ended %+v, want %s", cl, wire.CodeInternal)
 	}
@@ -144,7 +163,7 @@ func TestInstallParamsThatAreNoneEndTheChannelAsTheSendersFault(t *testing.T) {
 	s := New(Deps{Updater: u})
 	d := access.Decision{Core: true, Action: installAction(t)}
 	d.Opened.Open.Params = json.RawMessage(`{"target":"nothing of the contract"}`)
-	_, cl := s.install(context.Background(), d, nil)
+	_, cl := s.install(context.Background(), nil, d, nil)
 	if cl == nil || cl.Code != wire.CodeVerify {
 		t.Fatalf("the channel ended %+v, want %s", cl, wire.CodeVerify)
 	}
@@ -165,7 +184,7 @@ func TestInstallRefusesADecisionForAnotherAction(t *testing.T) {
 	}
 	d := installDecision(t, core.InstallParams{Target: trust.AutoSystem})
 	d.Action = other
-	_, cl := s.install(context.Background(), d, nil)
+	_, cl := s.install(context.Background(), nil, d, nil)
 	if cl == nil || cl.Code != wire.CodeInternal {
 		t.Fatalf("the channel ended %+v, want %s", cl, wire.CodeInternal)
 	}
@@ -194,7 +213,7 @@ func TestEveryFailureOfAnInstallHasItsCode(t *testing.T) {
 	} {
 		u := &fakeUpdater{err: c.err}
 		s := New(Deps{Updater: u})
-		_, cl := s.install(context.Background(), installDecision(t, core.InstallParams{Target: trust.AutoSystem}), nil)
+		_, cl := s.install(context.Background(), nil, installDecision(t, core.InstallParams{Target: trust.AutoSystem}), nil)
 		if cl == nil || cl.Code != c.want {
 			t.Errorf("%s: the channel ended %+v, want %s", name, cl, c.want)
 		}
@@ -203,7 +222,7 @@ func TestEveryFailureOfAnInstallHasItsCode(t *testing.T) {
 	// once: the nearest wall is the one that counts.
 	u := &fakeUpdater{err: errors.Join(update.ErrForbidden, errors.New("and a second word"))}
 	s := New(Deps{Updater: u})
-	_, cl := s.install(context.Background(), installDecision(t, core.InstallParams{Target: trust.AutoSystem}), nil)
+	_, cl := s.install(context.Background(), nil, installDecision(t, core.InstallParams{Target: trust.AutoSystem}), nil)
 	if cl == nil || cl.Code != wire.CodeForbidden {
 		t.Fatalf("a joined error ended %+v, want %s", cl, wire.CodeForbidden)
 	}
@@ -211,16 +230,129 @@ func TestEveryFailureOfAnInstallHasItsCode(t *testing.T) {
 
 // The install action is one this build carries out now. A server built without
 // an updater still answers E_INTERNAL for it, which is what it answered before
-// this task - so nothing of what the cases of this package hold changed for a
-// controller that has none.
+// the updater was wired - so nothing of what the cases of this package hold
+// changed for a controller that has none.
 func TestTheInstallActionIsServedNow(t *testing.T) {
 	s := New(Deps{})
 	if _, ok := s.acts[installKey]; !ok {
 		t.Fatal("this build does not carry out the install action")
 	}
-	if _, ok := s.acts[name{core.AppStore, core.ServiceController, core.ActStage}]; ok {
-		t.Fatal("this build carries out the stage action, which it does not")
+	// stage is a STREAM and never an act: its input is a file
+	// (core.FlowTransfer), and an act would have to hold it in memory first.
+	if _, ok := s.acts[stageKey]; ok {
+		t.Fatal("the stage action stands among the acts, where a file would be read into memory")
 	}
+}
+
+// The stage action is carried out exactly when this server was built with an
+// updater, and the map says so either way.
+//
+// This is the assurance of the wiring itself, and it is the one that was
+// missing: with no entry at all a stage channel fell through Server.core to
+// the acts lookup and ended E_INTERNAL without the updater ever being asked.
+// An update round of an API ran into that at its FIRST node, every hour, after
+// downloading the file - "the round stopped at a node" with E_INTERNAL beside
+// it. Measured on the six-machine installation on 24.10.2026, three rounds in
+// a row at db-1.
+func TestTheStageActionIsServedOnlyWithAnUpdater(t *testing.T) {
+	if _, ok := New(Deps{}).streams[stageKey]; ok {
+		t.Error("a server without an updater carries out the stage action")
+	}
+	if _, ok := New(Deps{Updater: &fakeUpdater{}}).streams[stageKey]; !ok {
+		t.Error("a server WITH an updater does not carry out the stage action")
+	}
+}
+
+// A stage channel reaches the updater, hands it the file as it arrives, and
+// answers the empty object.
+//
+// The list it is handed is the one the CHANNEL was decided on. That is the
+// whole reason serve.Updater takes one: a Manager of package update is built
+// on a list as a value, and a version that changed between the decision and
+// the work would check the file against one list and the channel against
+// another.
+func TestAStageChannelRunsTheUpdaterOnTheListOfItsChannel(t *testing.T) {
+	w := newWorld(t)
+	u := &fakeUpdater{}
+	w.rebuild(func(d *Deps) { d.Updater = u })
+	file := bytes.Repeat([]byte{0x3c}, 2000)
+	ended := w.tunnel(t, func(a *apiSide) {
+		credit, _ := a.open(1, stageOpenWithParams(t))
+		if credit < int64(len(file)) {
+			t.Fatalf("the first GRANT is %d bytes, too little for the %d of this case",
+				credit, len(file))
+		}
+		a.data(1, file)
+		a.eof(1)
+		out, cl := a.result(1)
+		if string(out) != "{}" {
+			t.Errorf("result = %q, want the empty object", out)
+		}
+		if cl.Status != wire.StatusOK {
+			t.Errorf("CLOSE = %+v, want ok", cl)
+		}
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+	if u.called != "stage" {
+		t.Fatalf("the updater was asked for %q, want the stage", u.called)
+	}
+	if !bytes.Equal(u.read, file) {
+		t.Errorf("the updater read %d bytes, want the %d of the file", len(u.read), len(file))
+	}
+	if u.list != w.keep.List() {
+		t.Error("the updater got another trust list than the channel was decided on")
+	}
+}
+
+// A controller without an updater refuses a stage channel as this program
+// wired wrong, and reads nothing: which halves a server was built with is
+// nothing an API decides, and a channel that cannot be served costs this
+// server no byte of the file.
+func TestAStageChannelWithoutAnUpdaterIsRefused(t *testing.T) {
+	w := newWorld(t)
+	ended := w.tunnel(t, func(a *apiSide) {
+		a.send(wire.Frame{Type: wire.TypeOpen, Channel: 1, Payload: stageOpenWithParams(t)})
+		wantCode(t, a.closed(1), wire.CodeInternal)
+		a.shut(1)
+		a.bye()
+	})
+	if err := waitFor(t, ended); err != nil {
+		t.Fatalf("Run = %v, want an orderly end after bye", err)
+	}
+}
+
+// An install is handed the list of its channel as well. The two halves are
+// held together here rather than apart: an updater that got the list for a
+// stage and not for an install would be built on two different lists inside
+// one round.
+func TestAnInstallGetsTheListOfItsChannel(t *testing.T) {
+	u := &fakeUpdater{}
+	s := New(Deps{Updater: u})
+	list := &trust.List{Seq: 7}
+	if _, cl := s.install(context.Background(), list,
+		installDecision(t, core.InstallParams{Target: trust.AutoSystem}), nil); cl != nil {
+		t.Fatalf("the channel ended %+v, want a result", cl)
+	}
+	if u.list != list {
+		t.Error("the updater got another trust list than the channel was decided on")
+	}
+}
+
+// stageOpenWithParams is the OPEN of ngc.store/controller/stage WITH the params
+// a stage needs. stageOpen beside it (serve_test.go) carries none, because the
+// case it serves never gets as far as reading them. It carries no task and
+// no user: a stage is core.WithoutUser, so its params stand in the OPEN
+// itself, which is also where update.Manager reads them from.
+func stageOpenWithParams(t testing.TB) []byte {
+	t.Helper()
+	params := json.RawMessage(mustJSON(t, core.StageParams{
+		Target: trust.AutoAPI, Version: "0.2.2"}))
+	inner := mustJSON(t, wire.Open{App: core.AppStore, Service: core.ServiceController,
+		Action: core.ActStage, Params: params, Window: wire.DefaultWindow})
+	return mustJSON(t, tunnel.Open{Open: inner, Window: wire.MaxWindow})
 }
 
 // noReports takes the update reports of package update and drops them: what a

@@ -57,6 +57,22 @@
   const READY = "Befehl eingeben und mit der Eingabetaste abschicken.";
   const ENDED = "Die Verbindung ist beendet. Zum Weiterarbeiten das Fenster schließen und neu öffnen.";
   const CUT = "Die Verbindung wurde abgeschnitten.";
+  // THE REASON IS SHOWN BESIDE IT WHERE THE SHELL SENDS ONE, and since
+  // 23.10.2026 it does (shell/appframe.js, whyOpenFailed). Why that line
+  // exists at all is worth having written down here, where the sentence is
+  // read: measured on the Debian machine that day, this app said CUT and
+  // nothing else while the controller's journal, the end-to-end channel and
+  // the app frame had each thrown the reason away in turn - and the browser
+  // console held nothing, because nothing had gone wrong uncaught. One
+  // sentence of ours that says what to do beats three stations that say
+  // nothing.
+  //
+  // WHAT MAY STAND THERE is what the shell sends, and the shell sends its own
+  // text: the German sentence of a code of the contract, or one of its own
+  // ("Bitte neu anmelden", "Nicht bestätigt"). It lands on textContent like
+  // every other byte this app shows (see write), and it is bounded, so a
+  // sentence that ran away cannot push the page apart.
+  const MAX_SAID = 200;
   // After a connection that was cut the alert says what happened, so the line
   // under the field only has to say what to do next - the same thing twice is
   // one thing too many to read.
@@ -270,7 +286,7 @@
       }
       if (text !== "") write(text);
     };
-    s.onClose = (status) => {
+    s.onClose = (status, said) => {
       stream = null;
       input.disabled = true;
       // THE RESULT COUNTS ONLY WITH "ok". Anything else is a conversation that
@@ -278,7 +294,7 @@
       if (status === "ok") say(ENDED);
       else {
         say(AGAIN);
-        fail(CUT);
+        fail(reason(said));
       }
     };
     // The size before anything else: a shell that laid its first line out for
@@ -296,6 +312,19 @@
     say(AGAIN);
     fail(CUT);
   });
+
+  // reason is CUT, with the sentence of the shell behind it where there is
+  // one. Two sentences and not one joined text: the first says what happened,
+  // the second what to do about it.
+  function reason(said) {
+    if (typeof said !== "string") return CUT;
+    const t = said.trim().slice(0, MAX_SAID);
+    // The shell's sentence for a cut-off channel is sometimes the same
+    // sentence this app would show on its own; saying it twice is one time too
+    // many.
+    if (t === "" || t === CUT) return CUT;
+    return CUT + " " + t;
+  }
 
   // ---- what the person does ------------------------------------------------
 

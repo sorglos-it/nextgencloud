@@ -50,13 +50,13 @@ func (sn *sender) Node(node string) (tunnel.Hello, bool) {
 // file on it.
 func (sn *sender) Transfer(ctx context.Context, node, action string, params json.RawMessage,
 	head core.Transfer, file io.Reader, task *sign.Envelope, client []byte,
-	pr *proof.Proof) ([]byte, wire.Code) {
+	pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	t, ok := sn.Tunnels.Get(node)
 	if !ok || t == nil {
 		return nil, wire.CodeUnreachable
 	}
 	return sn.Relay.Transfer(ctx, t, core.AppStore, core.ServiceController, action, params,
-		head, file, task, client, pr)
+		head, file, task, client, pr, confirm)
 }
 
 // Call opens a core action of flow call on node.
@@ -67,13 +67,13 @@ func (sn *sender) Transfer(ctx context.Context, node, action string, params json
 // carry the actions of core.WithoutUser, which these two are not. Before
 // CallAs there was no way to send them at all.
 func (sn *sender) Call(ctx context.Context, node, action string, params json.RawMessage,
-	task *sign.Envelope, client []byte, pr *proof.Proof) ([]byte, wire.Code) {
+	task *sign.Envelope, client []byte, pr, confirm *proof.Proof) ([]byte, wire.Code) {
 	t, ok := sn.Tunnels.Get(node)
 	if !ok || t == nil {
 		return nil, wire.CodeUnreachable
 	}
 	return sn.Relay.CallAs(ctx, t, core.AppStore, core.ServiceController, action, params,
-		task, client, pr)
+		task, client, pr, confirm)
 }
 
 // coreRelay adapts relay.Relay to coreapp.Relay. The two differ in one place:

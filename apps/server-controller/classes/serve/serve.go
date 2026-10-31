@@ -21,10 +21,20 @@
 // refusal is written as the CLOSE of the channel instead, and what must be
 // watched all the same is counted (HandshakeFailures, StoreFailures).
 //
-// No line of this package is written per channel. A local fault an operator
-// has to see — the trust list that cannot be kept — writes once and is counted
-// from then on (trust.go), because how often a channel meets that fault is the
-// API's to choose and how often it is written must not be.
+// No line of this package is written per channel BEFORE the first inner
+// message of a shell. A local fault an operator has to see — the trust list
+// that cannot be kept — writes once and is counted from then on (trust.go),
+// because how often a channel meets that fault is the API's to choose and how
+// often it is written must not be.
+//
+// Behind that first message the rule turns around, and since 22.10.2026 it
+// does: an app channel that ends other than ok writes ONE line with the
+// reason (reason.go). What changed is not the rule but who the channel
+// belongs to — past its first inner message a channel is a real shell of an
+// installed app, every way it can end there is a fault of this machine, and
+// before that line existed the person in the browser read "Die Verbindung
+// wurde abgeschnitten." while the journal of this controller held nothing at
+// all (measured on 21.10.2026 on the Debian machine).
 //
 // What this build carries out is ngc.users/controller/trust (trust.go) and
 // the app channels of this controller from end to end (app.go): the handshake,
@@ -150,6 +160,20 @@ type Deps struct {
 	TrustChanged func()
 	// Now is the clock of the checks, in seconds. nil: time.Now().Unix().
 	Now func() int64
+	// Prepare makes everything ready that the container of an app needs
+	// before the engine is asked about it, and it is called for every app
+	// channel: today that is the runtime directory of the container
+	// (runtime.RunForApp). It has to be callable again at any time and for a
+	// container that already runs.
+	//
+	// It stands here and not in runtime.Engine because making a directory and
+	// handing it to another user needs root, which this controller has and
+	// the engine deliberately does not use (runtime, run.go).
+	//
+	// nil: nothing is prepared. That is for a case with a stand-in engine; a
+	// controller that wires nothing here is a controller whose apps die with
+	// the next boot of the machine.
+	Prepare func(ctx context.Context, app string) error
 	// Log is where this package writes. nil: slog.Default(). Nothing a peer
 	// brings about is written here more than once, and almost all of it not at
 	// all (see the doc of this package).
@@ -157,9 +181,20 @@ type Deps struct {
 }
 
 // action is what carries out one core action of this controller: it gets the
-// decision access made and the input that arrived before the EOF of the API,
-// and answers either a result to encode or the CLOSE the channel ends with.
-type action func(ctx context.Context, d access.Decision, in []byte) (any, *wire.Close)
+// decision access made, the input that arrived before the EOF of the API, and
+// the trust list the channel was decided on, and answers either a result to
+// encode or the CLOSE the channel ends with.
+//
+// The list is here for the same reason it is in stream below, and it is worth
+// saying once: what an action hands its work to is BUILT on a list, and the
+// one it has to be built on is the one access.Check decided this channel
+// against - not whatever chain.Keeper holds in the instant the work starts.
+// The keeper replaces the list version by version under this server, so the
+// two can differ inside one channel. An action that does not need it ignores
+// it (trust.go); install does need it, which is why it is passed and not
+// reached for.
+type action func(ctx context.Context, list *trust.List, d access.Decision,
+	in []byte) (any, *wire.Close)
 
 // stream is what carries out one core action whose input is a file: instead of
 // the input it gets the reader that hands it out as it arrives, and the trust
@@ -266,6 +301,9 @@ func New(d Deps) *Server {
 	s.streams = map[name]stream{}
 	if d.Installer != nil {
 		s.streams[activateKey] = s.activate
+	}
+	if d.Updater != nil {
+		s.streams[stageKey] = s.stage
 	}
 	return s
 }
@@ -392,12 +430,15 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, list *trust.List,
 		// over before it costs this server a byte.
 		//
 		// The same state has two codes, and that is worth knowing while it
-		// lasts: with a trust list a stage or license channel gets here and
-		// ends E_INTERNAL, without one it never gets past access.firstChain
-		// and ends E_UNREACHABLE. An install channel does NOT reach this
-		// line any more: it stands in Server.acts since task 19, and an
-		// activate channel stands in Server.streams since this one. Both mean
-		// "this build does not carry that action out".
+		// lasts: with a trust list a license channel gets here and ends
+		// E_INTERNAL, without one it never gets past access.firstChain and
+		// ends E_UNREACHABLE. An install channel does NOT reach this line any
+		// more: it stands in Server.acts since task 19, an activate channel
+		// in Server.streams since the task after it, and a STAGE channel
+		// since the updater was wired - until then it ended here, which is
+		// what an update round of an API ran into at its first node, every
+		// hour, after downloading the file (update.go, Server.stage). All of
+		// them mean "this build does not carry that action out".
 		// Once the tasks that bring them are in,
 		// the line above is gone and with it the difference; until then the
 		// second code is the honest one of the two, because without a list
@@ -415,7 +456,7 @@ func (s *Server) core(ctx context.Context, ch *link.Channel, list *trust.List,
 	if cl != nil {
 		return s.end(ch, *cl)
 	}
-	v, cl := run(ctx, d, in)
+	v, cl := run(ctx, list, d, in)
 	if cl != nil {
 		return s.end(ch, *cl)
 	}

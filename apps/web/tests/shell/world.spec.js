@@ -140,7 +140,25 @@ async function plantService(shell, [user, password]) {
           trust: { controllerKey: () => ctl.noise },
           sessionDH: h.sessionDH,
         }),
+        // THE SAME ADAPTER WITH THE SESSION IN IT, which is what realWorld
+        // hands over (net/world.js). It is a second one and not a replacement
+        // of the first, because "this adapter cannot sign a task" is a case of
+        // its own: the two differ in exactly one field.
+        signing: adapterFor(h.link, {
+          trust: { controllerKey: () => ctl.noise, current: () => ({ list }) },
+          sessionDH: h.sessionDH,
+          session: h.session,
+        }),
       };
+    };
+    // What the app channels of this session carried: the three numbers the
+    // mock counts (refused for want of a task, opened with one, with a
+    // confirmation). Asked of the mock and not of the page, so no case has to
+    // believe a flag the page set about its own work.
+    window.__ngcMockState = async () => {
+      const res = await fetch("/api/v1/mock?ask=task", { cache: "no-store", credentials: "same-origin" });
+      const [taskAsked, taskSeen, confirmSeen] = (await res.text()).split(" ").map(Number);
+      return { taskAsked, taskSeen, confirmSeen };
     };
     // What the API saw. It is asked and not read: the mock answers one
     // character, so there is nothing to parse.
@@ -386,6 +404,60 @@ test.describe("the adapter", () => {
       expect(got.neverOpened).toBe(true);
       expect(got.noRow).toBe(true);
       expect(got.opened).toBe(5);
+    });
+
+  // THE CONFIRMATION ON A FlowIn ROW, which is the upload and nothing else.
+  // contracts/core.js has ACT_UPLOAD as FlowIn and core.critical says upload is
+  // critical, so it is the one action of the table that MUST be able to carry a
+  // re-confirmation - and the case above only ever sent one down the FlowCall
+  // branch. net/channel.js's sendInBytes grew the parameter for it on
+  // 18.10.2026; what is measured here is that the caller hands it over, because
+  // a confirmation dropped between the two is an E_CONFIRM from the API with
+  // nothing on this side to show for it.
+  //
+  // WHY THE CASE ABOVE COULD NOT SEE IT: it sends the confirmation on
+  // ngc.store/controller/uninstall, a FlowCall row, which goes through
+  // callBytes. The FlowIn branch is a second piece of code, and a second piece
+  // of code needs a second measurement.
+  //
+  // THE ROW IS LOOKED UP, not written out: core.critical is asked whether
+  // upload really is the critical FlowIn row, so a contract that moved it makes
+  // this case say so instead of quietly measuring a row that no longer matters.
+  test("a confirmation travels on the FlowIn row as well, which is the upload",
+    async ({ shell }) => {
+      await plant(shell);
+      const got = await shell.evaluate(async () => {
+        const core = await import("/assets/js/contracts/core.js");
+        const { adapterFor } = await import("/assets/js/net/world.js");
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const rec = window.__ngcRecorder();
+        const link = adapterFor(rec);
+        const row = core.lookup(core.APP_STORE, core.SERVICE_API, core.ACT_UPLOAD);
+        await link.call(core.APP_STORE, core.SERVICE_API, core.ACT_UPLOAD, null, {
+          taskBytes: utf8('{"t":9}'),
+          confirmBytes: utf8('{"c":9}'),
+          stream: new Blob([utf8("ein paket")]).stream(),
+        });
+        const sent = rec.opens[rec.opens.length - 1];
+        return {
+          // The row really is the FlowIn one that wants a confirmation; if the
+          // contract ever moves that, these three say which part moved.
+          flow: row.flow, critical: core.critical(row),
+          task: sent.task, confirm: sent.confirm, data: sent.data, ended: sent.ended,
+        };
+      });
+      expect(got.flow).toBe("in");
+      expect(got.critical).toBe(true);
+      // The signed task AND the confirmation of it, both in the OPEN. The task
+      // is asserted beside the confirmation on purpose: a branch that forwarded
+      // neither would otherwise look the same as one that forwarded only the
+      // task, and those are two different defects.
+      expect(got.task).toBe('{"t":9}');
+      expect(got.confirm).toBe('{"c":9}');
+      // And the body still travelled as DATA: the confirmation did not displace
+      // what the FlowIn row is for.
+      expect(got.data).toEqual(["ein paket"]);
+      expect(got.ended).toBe(true);
     });
 
   test("the node of an app's own service arrives, and the refusal names the piece that is missing",
@@ -835,7 +907,7 @@ test.describe("the real session", () => {
       expect(got.closed2).toBe(null);
     });
 
-  test("a step the controller wants confirmed comes back as a code, and nobody acts on it yet",
+  test("a step the controller wants confirmed, with no session that could sign it",
     async ({ shell }) => {
       await plantService(shell, [USER_NAME, PASSWORD]);
       const got = await shell.evaluate(async () => {
@@ -846,9 +918,15 @@ test.describe("the real session", () => {
         // E_CONFIRM, as the answer to the OPEN, and no service is started
         // (measured on the controller side, plan 3 task 11: access.Check ->
         // task.Check refuses without a signed task once the app needs root or
-        // trust.List.NeedsConfirm says yes). This case is here to pin what the
-        // SHELL does with it today, so the task that builds the confirmation has
-        // a measured starting point instead of a guess.
+        // trust.List.NeedsConfirm says yes). What this case pins is that the
+        // code REACHES the caller: until 23.10.2026 it did not - a CLOSE before
+        // the controller's own inner end was always E_PROTOCOL, however the
+        // CLOSE itself read (net/channel.js, Channel.truncated) - and the one
+        // code the shell has to act on was the one that could not get through.
+        //
+        // The action "needsconfirm" of this world is refused whatever comes
+        // with it, so what is measured here is the code and nothing else; the
+        // case below is the one where a signed task gets through.
         const caught = async (fn) => {
           try {
             await fn();
@@ -869,24 +947,130 @@ test.describe("the real session", () => {
         h.link.close();
         return { onCall, onOpen, count, confirm: wire.CODES.CONFIRM, said: wire.message(wire.CODES.CONFIRM) };
       });
-      // WHAT ARRIVES, and it is the finding of this case rather than a happy
-      // assurance: on an end-to-end channel the REFUSAL CODE DOES NOT SURVIVE.
-      // A CLOSE that arrives before the controller's own inner end is a channel
-      // that was cut off (net/channel.js, Channel.truncated), and cut-off data
-      // is E_PROTOCOL - so E_CONFIRM, the one code the shell would have to act
-      // on, reaches the adapter's caller as E_PROTOCOL. net/channel.js belongs
-      // to another session; the task report says so and hands it over.
+      // WHAT ARRIVES, and it is two findings in one line. The refusal was
+      // RECOGNISED - before 23.10.2026 a CLOSE before the controller's own
+      // inner end was always E_PROTOCOL, however the CLOSE read, so E_CONFIRM
+      // could not be told from a broken channel and this is what says it now
+      // can. And the shell then tried to sign a task and had nothing to sign
+      // with, because THIS adapter was built without a session: what the
+      // person gets is that sentence and not a code, which is the whole point
+      // of the sentences in net/world.js.
       expect(got.onCall).toEqual({
-        name: "ChannelError", code: "E_PROTOCOL", said: "Ungültige Nachricht.",
+        name: "WorldError", code: "",
+        said: "Diese Anmeldung kann den Auftrag für diese App nicht unterschreiben. Bitte neu anmelden.",
       });
       expect(got.onOpen).toEqual(got.onCall);
       // Whatever the code, the channel is not left behind.
       expect(got.count).toBe(0);
-      // And the contract does have the code and a sentence for it, so there is
-      // something to act on once it gets through.
+      // And the contract does have the code and a sentence for it; the case
+      // below is where both get through and a task goes out.
       expect(got.confirm).toBe("E_CONFIRM");
       expect(got.said).toBe("Bitte erneut bestätigen.");
     });
+
+  test("an app that needs a signed task is opened with one, and the person is asked",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      // THE OPEN IS STARTED AND NOT AWAITED HERE, because the person is asked
+      // in the middle of it: the question is a modal dialog in the same page,
+      // so an evaluate that waited for the open would never come back and the
+      // dialog would never be answered. The promise is parked on window and
+      // taken up again below - which is also the order it happens in for a
+      // person: the window opens, the question comes, the service starts.
+      await shell.evaluate(async () => {
+        const utf8 = (t) => new TextEncoder().encode(t);
+        const { h, signing: link, node } = await window.__ngcAppLink();
+        window.__ngcHeld = h;
+        // "needstask" is the action of this world that is refused WITHOUT a
+        // task and runs WITH one - the real case of an app whose manifest says
+        // needs:["root"] (tests/mock/api.js, ACT_TASK).
+        window.__ngcOpening = link.open("org.sorglos.terminal", "terminal", "needstask",
+          utf8('{"cols":80}'), { node });
+        // A rejection nobody is waiting for yet is an unhandled rejection, and
+        // the page fixture fails a case over one. It is taken up below.
+        window.__ngcOpening.catch(() => {});
+      });
+      // The question, answered the way every other case of this suite answers
+      // it: the password of this world, out of the world and not written here
+      // a second time.
+      const box = shell.getByRole("dialog", { name: "Bitte bestätigen" });
+      await expect(box).toBeVisible();
+      await box.locator("input[type=password]").fill(PASSWORD);
+      await box.getByRole("button", { name: "Bestätigen", exact: true }).click();
+      await expect(box).toHaveCount(0);
+      const got = await shell.evaluate(async () => {
+        const c = window.__ngcCollect.collect(await window.__ngcOpening);
+        await c.until(() => c.pieces.length > 0);
+        const asked = await window.__ngcMockState();
+        window.__ngcHeld.link.close();
+        return { pieces: c.pieces, asked };
+      });
+      // The service really started, so the SECOND open came off: nothing of
+      // this world answers before a handshake that stands, and the handshake
+      // of the second open is made over a prologue that hashes the task.
+      expect(got.pieces).toEqual(["willkommen$ "]);
+      // One refused open, then one with a task. The first is the price this
+      // way pays and it is measured, not estimated.
+      expect(got.asked.taskAsked).toBe(1);
+      expect(got.asked.taskSeen).toBe(1);
+      // And the question was put to the person: this world's trust list wants
+      // the heaviest kind of step confirmed, and the proof travelled with the
+      // task.
+      expect(got.asked.confirmSeen).toBe(1);
+    });
+
+  test("an app channel is opened with no task at all where the server asks for none",
+    async ({ shell }) => {
+      await plantService(shell, [USER_NAME, PASSWORD]);
+      const got = await shell.evaluate(async () => {
+        const utf8 = (s) => new TextEncoder().encode(s);
+        const { h, signing: link, node } = await window.__ngcAppLink();
+        const c = window.__ngcCollect.collect(
+          await link.open("org.sorglos.terminal", "terminal", "greet", utf8('{"cols":80}'), { node }),
+        );
+        await c.until(() => c.pieces.length > 0);
+        const asked = await window.__ngcMockState();
+        h.link.close();
+        return { pieces: c.pieces, asked };
+      });
+      // The ordinary way is untouched: one open, no task, no question, and the
+      // service speaks. A shell that signed a task for every app channel would
+      // fail this case.
+      expect(got.pieces).toEqual(["willkommen$ "]);
+      expect(got.asked.taskAsked ?? 0).toBe(0);
+      expect(got.asked.taskSeen ?? 0).toBe(0);
+      expect(got.asked.confirmSeen ?? 0).toBe(0);
+    });
+
+  test("params beside a task are refused before anything leaves", async ({ shell }) => {
+    await plant(shell);
+    const got = await shell.evaluate(async () => {
+      const { openE2E } = await import("/assets/js/net/channel.js");
+      const utf8 = (t) => new TextEncoder().encode(t);
+      // A link that would record an OPEN if one ever reached it. Nothing may:
+      // the refusal stands before the handshake, so no key and no server are
+      // needed for this case - and that is the point of where it stands.
+      const opens = [];
+      const link = { open: async (o) => { opens.push(o); throw new Error("never"); } };
+      const caught = async (fn) => {
+        // The MESSAGE and not the name: b64.BadInput carries no name of its
+        // own (class BadInput extends Error {}), so every one of them reads
+        // "Error" - measured here, which is why this case says what it says.
+        try { await fn(); return "took it"; } catch (e) { return e?.message ?? "?"; }
+      };
+      const both = await caught(() => openE2E(link, {
+        app: "org.sorglos.terminal", service: "terminal", action: "shell",
+        params: utf8('{"cols":80}'), taskBytes: utf8("{}"), node: "ctl-1",
+        controllerKey: new Uint8Array(32), sessionDH: null,
+      }));
+      return { both, opens: opens.length };
+    });
+    // The two answers this door must not pick between are params it sends
+    // against the contract and params it hashes and drops (net/channel.js).
+    expect(got.both).toBe("channel: params beside a task");
+    // And nothing went out: the refusal is before the first frame.
+    expect(got.opens).toBe(0);
+  });
 
   test("a notice of the real link reaches every listener as the bytes it is", async ({ shell }) => {
     const got = await shell.evaluate(async () => {

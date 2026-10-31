@@ -31,7 +31,7 @@ func (st *Stores) Deactivate(ctx context.Context, rq DeactivateRequest) (wire.Co
 		return wire.CodeInternal, err
 	}
 	if _, code := st.Send.Call(ctx, rq.Node, core.ActDeactivate, params,
-		rq.Task, rq.Client, rq.Proof); code != "" {
+		rq.Task, rq.Client, rq.Proof, rq.Confirm); code != "" {
 		return code, nil
 	}
 	row.Active, row.Updated = false, st.S.Now()
@@ -89,7 +89,7 @@ func (st *Stores) Uninstall(ctx context.Context, rq UninstallRequest) (wire.Code
 		return wire.CodeInternal, err
 	}
 	if _, code := st.Send.Call(ctx, rq.Node, core.ActUninstall, params,
-		rq.Task, rq.Client, rq.Proof); code != "" {
+		rq.Task, rq.Client, rq.Proof, rq.Confirm); code != "" {
 		return code, nil
 	}
 	if row.Version != "" {
