@@ -125,6 +125,30 @@ test("Escape closes the menu, and the search starts empty the next time", async 
   expect(await shell.evaluate(() => document.activeElement.id)).toBe("smsearch");
 });
 
+// A colour the user picks has to reach the app that is ALREADY open, not only
+// the next one. It is here and not in calc.spec.js because the colour is what
+// it is about; the calculator is only the app that happens to be at hand.
+//
+// MEASURED, and it is why the line in applyAccent exists: before that line the
+// shell went to #e14f8a and this frame stayed on #2f7de1. The app's frame has
+// an origin of its own and cannot read the shell's stylesheet, so the only way
+// in is the message appframe.js sends on a theme change - and that message
+// carries the accent too. An accent that calls no listener never leaves.
+test("a colour picked while an app is open reaches that app's frame", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const frame = shell.frameLocator(".appframe");
+  await expect(frame.locator("body")).toBeVisible();
+  const inFrame = () => frame.locator("body").evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
+  expect(await inFrame()).toBe("#2f7de1");
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Farbe Pink", exact: true }).click();
+  expect(await accent(shell)).toBe("#e14f8a");
+  await expect.poll(inFrame).toBe("#e14f8a");
+});
+
 // The six swatches carry the only thing a user can aim at - there is no colour
 // picker - so their names are measured in ALL FIVE languages and not only in
 // the one the suite otherwise runs in. A key that stands in four files and is

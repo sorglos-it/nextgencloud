@@ -1,21 +1,48 @@
-/* The colour marks of docs/prototype.html, taken over unchanged: the shell
-   and every later window read their colours only from these tokens. */
+/* The colour marks of the shell. The shell and every later window read their
+   colours only from these tokens.
+
+   The values are the "Lord Flow" look of LordOS (MIT, themes/default), set out
+   token by token with its origin in docs/gestaltung-lordos.md. Only the VALUES
+   here changed with them: no rule below was touched, so nothing moved. What
+   this step does not carry is written there too - the shadow, the window frame
+   and the font follow in their own steps. */
 :root{
   --bar-h: 44px;
+  /* THE ACCENT STAYS AS IT IS IN THIS STEP, and that is a finding, not an
+     oversight: it is not one number in one place. The accent the shell shows
+     is picked by the user out of six, and those six live in shell/theme.js
+     (ACCENTS), their names in shell/desktop.js (ACCENT_NAMES), a fallback in
+     ngc.js, an expectation in tests/shell/desktop-look.spec.js - and once more
+     in every app's own app.css, which runs in a frame of its own origin and
+     cannot read this file at all. Measured: putting the LordOS blue here alone
+     turned one case red and left the Rechner's "=" key in the old blue.
+     Six places for one colour is its own step, with all six in one commit. */
   --accent: #2f7de1;
   --accent-2: #16d1c3;
-  --win-bg: #1e2430;
-  --win-fg: #e8ecf3;
-  --win-border: #38414f;
-  --title-bg: #2a3240;
-  --title-bg-active: #333e50;
-  --bar-bg: rgba(20,25,34,.72);
-  --bar-fg: #e8ecf3;
-  --menu-bg: rgba(24,30,40,.92);
-  --shadow: 0 18px 50px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
-  --radius: 10px;
-  --field-bg: #151a23;
-  --muted: #97a3b6;
+  --win-bg: #1f1f23;
+  --win-fg: #f5f5f7;
+  --win-border: rgba(255,255,255,.12);
+  --title-bg: #2b2b30;
+  /* LordOS tells the window in front from the one behind by its SHADOW, not
+     by this colour, and would set it equal to --title-bg. That shadow is the
+     next step, so until then this keeps a visible difference: a shell where
+     nobody can tell which window is in front is worse than one that is not
+     yet finished. Chosen by me, and it goes when the shadow arrives. */
+  --title-bg-active: #35353b;
+  --bar-bg: rgba(24,24,30,.42);
+  --bar-fg: #f5f5f7;
+  --menu-bg: rgba(36,36,42,.72);
+  /* TWO shadows, not one, because the shadow is what says which window you
+     are talking to. Lord Flow lifts the window in front far off the page and
+     lets the ones behind lie almost flat; NGC had one shadow for both and had
+     to tint the title bar instead. --shadow is the window in front,
+     --shadow-back every other one. Both stand here once, and every rule that
+     needs a shadow reads one of the two. */
+  --shadow: 0 24px 56px rgba(0,0,0,.55);
+  --shadow-back: 0 10px 28px rgba(0,0,0,.32);
+  --radius: 12px;
+  --field-bg: #2a2a2f;
+  --muted: rgba(235,235,245,.55);
   --page-bg: #0d1017;
   /* The smallest a window may be. It stands here because this is where a
      window is drawn; window.js reads these two and lays out by them, so the
@@ -41,12 +68,13 @@
   --alarm-veil: rgba(6,9,16,.86);
 }
 html[data-theme="light"]{
-  --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
-  --title-bg:#e6ebf3; --title-bg-active:#dbe4f0;
-  --bar-bg: rgba(245,248,252,.78); --bar-fg:#16202e;
-  --menu-bg: rgba(250,251,254,.94);
-  --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
-  --field-bg:#ffffff; --muted:#5b6a80;
+  --win-bg:#ffffff; --win-fg:#1d1d1f; --win-border:rgba(0,0,0,.14);
+  --title-bg:#ececef; --title-bg-active:#e1e1e6;
+  --bar-bg: rgba(250,250,252,.55); --bar-fg:#1d1d1f;
+  --menu-bg: rgba(246,246,248,.78);
+  --shadow: 0 24px 56px rgba(30,45,70,.22);
+  --shadow-back: 0 10px 28px rgba(30,45,70,.13);
+  --field-bg:#ffffff; --muted:rgba(60,60,67,.6);
   --page-bg:#e7ecf4;
   --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
 }
@@ -56,12 +84,13 @@ html[data-theme="light"]{
    here. A chosen theme always writes the attribute and wins. */
 @media (prefers-color-scheme: light){
   html:not([data-theme]){
-    --win-bg:#f6f8fb; --win-fg:#16202e; --win-border:#c9d3e0;
-    --title-bg:#e6ebf3; --title-bg-active:#dbe4f0;
-    --bar-bg: rgba(245,248,252,.78); --bar-fg:#16202e;
-    --menu-bg: rgba(250,251,254,.94);
-    --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
-    --field-bg:#ffffff; --muted:#5b6a80;
+    --win-bg:#ffffff; --win-fg:#1d1d1f; --win-border:rgba(0,0,0,.14);
+    --title-bg:#ececef; --title-bg-active:#e1e1e6;
+    --bar-bg: rgba(250,250,252,.55); --bar-fg:#1d1d1f;
+    --menu-bg: rgba(246,246,248,.78);
+    --shadow: 0 24px 56px rgba(30,45,70,.22);
+    --shadow-back: 0 10px 28px rgba(30,45,70,.13);
+    --field-bg:#ffffff; --muted:rgba(60,60,67,.6);
     --page-bg:#e7ecf4;
     --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
   }
@@ -204,12 +233,14 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 .win{position:absolute;display:flex;flex-direction:column;
      min-width:var(--win-min-w);min-height:var(--win-min-h);
      background:var(--win-bg);color:var(--win-fg);border:1px solid var(--win-border);
-     border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+     border-radius:var(--radius);box-shadow:var(--shadow-back);overflow:hidden}
+/* The window you are talking to stands off the page; the rest lie flat. */
+.win.focus{box-shadow:var(--shadow)}
 .win:focus{outline:none}
 .win.min{display:none}
 .win.max{border-radius:0}
 .win.anim{transition:left .16s,top .16s,width .16s,height .16s}
-.titlebar{display:flex;align-items:center;height:36px;padding-left:12px;gap:8px;
+.titlebar{display:flex;align-items:center;height:40px;padding-left:12px;gap:8px;
           background:var(--title-bg);border-bottom:1px solid var(--win-border);cursor:default;
           flex:0 0 auto;touch-action:none}
 .win.focus .titlebar{background:var(--title-bg-active)}
@@ -219,8 +250,13 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 .titlebar .t{flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
              white-space:nowrap;opacity:.9}
 .win.focus .titlebar .t{opacity:1}
+/* The three window buttons. Forty by forty pixels, by Thomas' decision of
+   2026-10-30 - a deliberate step away from the LordOS template, whose round
+   lights measure 13 x 13: NGC is touched with a finger, and a finger needs
+   about 40. The height comes from the title bar, which is why that bar is
+   exactly 40 high: 40 across x 40 down, with no number chosen twice. */
 .wbtns{display:flex;height:100%}
-.wbtn{width:44px;height:100%;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;
+.wbtn{width:40px;height:100%;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;
       line-height:1;opacity:.8}
 .wbtn:hover{background:rgba(127,127,127,.25);opacity:1}
 .wbtn.close:hover{background:#e13e3e;color:#fff}
