@@ -143,6 +143,15 @@ class Desktop {
 
     bar.append(this.startBtn, this.tasks, tray);
     root.append(bar);
+
+    // The dock. It is built here with the bar because both are frame of the
+    // shell and neither belongs to a window. It stays empty - and therefore
+    // invisible, #dock:empty - until the list of apps has come back.
+    this.dock = el("div", null);
+    this.dock.id = "dock";
+    this.dock.setAttribute("role", "toolbar");
+    this.dock.setAttribute("aria-label", "Dock");
+    root.append(this.dock);
     this.tick();
     // Every 15 seconds, as in the prototype. The clock shows no seconds, so
     // this is only about how long a minute may look stale: a quarter of one,
@@ -576,6 +585,7 @@ class Desktop {
     // that has not loaded yet.
     this.loaded = true;
     this.renderIcons();
+    this.renderDock();
     this.renderMenu("");
   }
 
@@ -583,6 +593,39 @@ class Desktop {
   // roughly a hundred apps the last of them are behind that edge and cannot
   // be clicked - which is all right: the way to an app among a hundred is the
   // search in the start menu, not a wall of icons to read through.
+  // The dock holds the same apps the desktop icons do, out of the same
+  // this.appList: a second source would be a second list to keep right, and
+  // the one that is wrong is the one nobody looks at.
+  //
+  // It carries no names, only icons - that is what a dock is - so each button
+  // gets the app's name as its label, which is what a screen reader reads and
+  // what a test can aim at.
+  renderDock() {
+    clear(this.dock);
+    for (const a of this.appList) {
+      const b = button("dapp", null, a.name);
+      b.dataset.app = a.id;
+      b.title = a.name;
+      b.append(this.glyph(a));
+      if (a.state !== "ok") b.classList.add("off");
+      b.addEventListener("click", () => this.openApp(a.id));
+      this.dock.append(b);
+    }
+    this.markDock();
+  }
+
+  // The dot under an app that is open. It is read off this.windows, the one
+  // register of open windows, and not off a count this side keeps: a second
+  // count is a second thing that can be wrong. A minimised window still
+  // counts as open, because it is.
+  markDock() {
+    if (!this.dock) return;
+    const open = new Set([...this.windows.values()].map((w) => w.appID));
+    for (const b of this.dock.querySelectorAll(".dapp")) {
+      b.classList.toggle("on", open.has(b.dataset.app));
+    }
+  }
+
   renderIcons() {
     clear(this.icons);
     this.renderEmpty();
