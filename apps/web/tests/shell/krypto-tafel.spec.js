@@ -268,23 +268,37 @@ async function settled(shell) {
   return screen(shell);
 }
 
-// The login attempt is over when the mask stops working - the same measure
-// shell/login.spec.js uses, and it waits for a STATE and not for a time.
+// THE ATTEMPT IS OVER WHEN IT HAS AN ENDING, and the ending is one of three:
+// a desktop, a sentence the person can read, or a shell message. Nothing else
+// counts, and that is the whole repair.
+//
+// WHAT IT USED TO DO AND WHY THAT WAS WRONG. It copied the measure of
+// shell/login.spec.js loginState(): "working" means every button of the mask
+// is disabled and no alert has text. That holds in chromium, where both
+// buttons are live and go dead together while the attempt runs - and it is
+// FALSE in firefox, where "Anmelden" is disabled for good because the engine
+// makes no password key. There `every(b => b.disabled)` is false while the
+// passkey button is still live, so the state read "idle" IMMEDIATELY after the
+// click and the probe took its figures mid-attempt. Measured: the firefox case
+// ran in 1.3 s, and the screen it printed showed the passkey button mid-press,
+// which reads as "the login did not go through".
+//
+// THE CONTROL DID NOT CATCH IT, and that is the lesson worth more than the
+// bug: chromium reached a desktop on both routes, so the control was green
+// while the wait condition was broken for exactly the variant chromium does
+// not have - a permanently disabled button. A control only covers the
+// assumptions the control's own variant shares. Where a condition depends on
+// the variant, it has to be written so it does not.
 async function attemptOver(shell) {
-  await expect.poll(async () => {
-    const s = await shell.evaluate(() => {
-      const box = document.querySelector("form.loginbox");
-      if (box !== null) {
-        const off = [...box.querySelectorAll("button")].every((b) => b.disabled);
-        const said = box.querySelector('[role="alert"]');
-        return off && (said === null || said.textContent === "") ? "working" : "idle";
-      }
-      if (document.querySelector("#taskbar") !== null) return "idle";
-      if (document.querySelector("#root .msg") !== null) return "idle";
-      return "working";
-    });
-    return s !== "working";
-  }, { message: "the login attempt is over", timeout: 60_000 }).toBe(true);
+  await expect.poll(async () => shell.evaluate(() => {
+    if (document.querySelector("#taskbar") !== null) return "desktop";
+    if (document.querySelector("#root .msg") !== null) return "message";
+    const box = document.querySelector("form.loginbox");
+    const said = box === null ? null : box.querySelector('[role="alert"]');
+    if (said !== null && said.textContent !== "") return "said something";
+    return "working";
+  }), { message: "the login attempt ended in one of its three endings", timeout: 60_000 })
+    .not.toBe("working");
 }
 
 // ---- the two cases --------------------------------------------------------
