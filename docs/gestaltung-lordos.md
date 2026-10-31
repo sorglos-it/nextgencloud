@@ -121,18 +121,33 @@ Spalte **Quelle**: `LordOS` = aus `themes/default/tokens.js`, Zeile für Zeile a
 
 ### Die Akzentfarben, die der Benutzer wählen darf
 
+**Entschieden von Thomas am 30.10.2026, wörtlich:**
+
+> FARBEN: bleiben, wie sie sind. Die sechs NGC-Farben — Blau, Türkis, Pink, Orange, Violett, Grün —
+> werden NICHT durch die LordOS-Palette ersetzt. Werte unverändert. Damit ist der Akzent-Schritt vom
+> Tisch: nimm aus LordOS nur Form, Flächen, Ränder, Abstände, Schatten, Ecken — keine Farbwerte.
+
+Es bleiben also die sechs, die NGC hat, mit den Werten, die NGC hat:
+
 | Name | Wert | Quelle |
 |---|---|---|
-| Blau (Vorgabe) | `#0a84ff` | LordOS `accents.azul` |
-| Violett | `#bf5af2` | LordOS `accents.violeta` |
-| Rosa | `#ff375f` | LordOS `accents.rosa` |
-| Orange | `#ff9f0a` | LordOS `accents.naranja` |
-| Grün | `#30d158` | LordOS `accents.verde` |
-| Grau | `#8e8e93` | LordOS `accents.grafito` |
+| Blau (Vorgabe) | `#2f7de1` | NGC, `shell/theme.js` |
+| Türkis | `#16d1c3` | NGC |
+| Pink | `#e14f8a` | NGC |
+| Orange | `#f0a020` | NGC |
+| Violett | `#8b5cf6` | NGC |
+| Grün | `#22c55e` | NGC |
 
-Heute steht in NGC `--accent: #2f7de1` und `--accent-2: #16d1c3`. Beide werden ersetzt: `--accent`
-durch das Blau oben, `--accent-2` fällt weg, sobald nachgesehen ist, wo es noch gelesen wird. Die
-sechs Namen werden übersetzt, die Werte nicht.
+Die LordOS-Palette (`accents.azul` `#0a84ff`, `violeta` `#bf5af2`, `rosa` `#ff375f`, `naranja`
+`#ff9f0a`, `verde` `#30d158`, `grafito` `#8e8e93`) steht hier nur noch als Quellenangabe. **Sie wird
+nicht eingebaut.** Was aus LordOS kommt, ist Form, Fläche, Rand, Abstand, Schatten, Ecke.
+
+Die sechs Namen ziehen aus `shell/desktop.js` in die fünf Sprachdateien um — **Namen unverändert,
+Werte unverändert**. Das ist ein Umzug, keine Änderung.
+
+Damit entfällt der Akzent-Schritt, der in Abschnitt 2 als eigener Schritt für sechs Stellen stand.
+Die sechs Stellen bleiben ein Befund über das Repo; eine Farbe, die durch alle sechs muss, gibt es
+nicht mehr.
 
 ### Flächen und Schrift
 
@@ -167,11 +182,30 @@ wird gleich `--title-bg` gesetzt; sie fällt weg, wenn nachgesehen ist, wo sie n
 
 ### Die drei Knöpfe der Titelzeile
 
+**Erst eine Korrektur dieses Blattes, gemessen am 30.10.2026.** Hier stand, NGC habe die drei runden
+Lichter von LordOS, 13 × 13 Pixel. **Das hatte NGC nie.** Die drei Knöpfe sind `.wbtn` in
+`shell.css`, sie tragen Text und kein Licht, und sie waren **44 breit und 36 hoch**. Ein Blatt, das
+eine Vorlage beschreibt, die im eigenen Code nicht vorkommt, hätte den Umbau auf eine Annahme
+gestellt.
+
+**Entschieden von Thomas am 30.10.2026, wörtlich:**
+
+> FENSTERKNÖPFE: 40 px. Nicht 13 px. Das ist eine Entscheidung gegen die LordOS-Vorlage, also als
+> Abweichung mit Begründung (Finger) ins Blatt.
+
+**Abweichung von LordOS, mit Begründung.** LordOS zeichnet drei runde Lichter von 13 × 13 Pixeln;
+das ist eine Maus-Größe. NGC wird mit dem Finger bedient, und ein Finger braucht ungefähr 40. Also
+40 × 40.
+
+Die 40 steht **einmal**: in der Breite von `.wbtn`. Die Höhe kommt aus der Titelzeile, und die
+Titelzeile steht darum auf genau 40. Zwei Zahlen 40 hinzuschreiben wäre dieselbe Entscheidung an
+zwei Stellen.
+
 | | Wert | Quelle |
 |---|---|---|
-| Schließen | `#ff5f57` | LordOS `Window.jsx` |
-| Kleiner | `#febc2e` | LordOS `Window.jsx` |
-| Größer | `#28c840` | LordOS `Window.jsx` |
+| Größe | **40 × 40 px** | Thomas, 30.10.2026 — Abweichung von LordOS (13 × 13) |
+| Form | Text, kein rundes Licht | NGC, wie gehabt |
+| Schließen / Kleiner / Größer in Farbe | **nicht übernommen** | LordOS `Window.jsx`: `#ff5f57`, `#febc2e`, `#28c840` — Farbwerte, und Farbwerte kommen nach Thomas' Entscheidung 3 nicht aus LordOS |
 
 ---
 
@@ -297,12 +331,49 @@ an Thomas' Antwort zum Handy hängt.
 
 Aus LordOS `docs/DOCK.md` (`DOCK_DEFAULTS`) und `components/Dock.jsx`.
 
+### Die Größe: entschieden, dann gerechnet
+
+**Entschieden von Thomas am 30.10.2026, wörtlich:**
+
+> DOCK: kleiner als LordOS. Die Zahl ist nicht gesetzt — nimm die größte, bei der auf 360 px Breite
+> genug Zeichen Platz haben, und schreib die Rechnung daneben. Keine Zahl ohne Messung.
+
+Gerechnet, mit dem Raster aus Abschnitt 4: 8 Pixel zwischen zwei Zeichen, 8 Pixel Polster an jeder
+Seite. Für `n` Zeichen der Größe `S`:
+
+    Breite = 16 + n · S + 8 · (n − 1)
+
+| Größe `S` | passt auf 360 px | gerechnet |
+|---|---|---|
+| 54 (LordOS) | 5 Zeichen | 16 + 270 + 32 = 318 — bei 6 wären es 380 |
+| 48 | 6 Zeichen | 16 + 288 + 40 = 344 — bei 7 wären es 400 |
+| **40** | **7 Zeichen** | 16 + 280 + 48 = 344 — bei 8 wären es 392 |
+
+**Die Zahl ist 40 px**, und sie ist die Untergrenze und das Ergebnis zugleich:
+
+- Sie ist die **größte**, die sieben Zeichen auf ein Handy von 360 Pixeln bringt.
+- Sie ist **nicht gewählt**: 40 ist dieselbe Fingergröße, die Thomas am selben Tag für die
+  Fensterknöpfe entschieden hat. Kleiner als 40 geht nicht, ohne diese Entscheidung zu brechen.
+- Sie ist **kleiner als LordOS** (54), wie verlangt.
+
+Damit steht die 40 in diesem Blatt für zweierlei dasselbe: Fensterknopf und Dock-Zeichen. Es ist
+eine Zahl, nicht zwei — die Größe einer Fingerspitze.
+
+Die Lupe behält das Verhältnis von LordOS statt einer zweiten eigenen Zahl: 86 ÷ 54 = 1,59, also
+**64 px** unter dem Zeiger (40 × 1,6).
+
+**Was hier noch nicht entschieden ist:** was „genug" über sieben hinaus heißt, wenn NGC mehr Apps
+bekommt, als ins Dock passen. Das Dock ist dann eine Auswahl und keine Liste — die Frage gehört zum
+Dock-Schritt, nicht hierher. Heute hat NGC zwei Apps.
+
+### Was LordOS vorgibt
+
 | | Vorgabe | Bereich | Quelle |
 |---|---|---|---|
 | Lage | unten | unten, links, rechts | LordOS |
-| Größe je Zeichen | **54 px** (`--dock-size`) | 36–80 | LordOS |
+| Größe je Zeichen | ~~54 px~~ **40 px** (`--dock-size`) | 36–80 | Thomas, 30.10.2026 (gerechnet, s. o.) |
 | Lupe | ein | ein / aus | LordOS |
-| Größtes Zeichen unter dem Zeiger | **86 px** (`--dock-magnify`) | bis 128 | LordOS |
+| Größtes Zeichen unter dem Zeiger | ~~86 px~~ **64 px** (`--dock-magnify`) | bis 128 | 40 × 1,6, Verhältnis aus LordOS |
 | Von selbst verstecken | aus | ein / aus | LordOS |
 | Die letzten benutzten Apps | aus (dann 3, nach einer Trennlinie) | | LordOS |
 | Fläche, Rand | `--dock-bg`, 1 px `--dock-border` | | LordOS |
@@ -310,7 +381,8 @@ Aus LordOS `docs/DOCK.md` (`DOCK_DEFAULTS`) und `components/Dock.jsx`.
 
 So arbeitet es, aus LordOS abgelesen:
 
-- **Lupe:** Das Zeichen unter dem Zeiger wächst von 54 auf 86 Pixel, die Nachbarn weniger. Bei
+- **Lupe:** Das Zeichen unter dem Zeiger wächst von 40 auf 64 Pixel, die Nachbarn weniger (in
+  LordOS 54 auf 86; das Verhältnis ist dasselbe). Bei
   „Bewegung verringern" bleibt sie aus.
 - **Ziehen:** Ein Zug beginnt erst nach **6 Pixeln** — ein Klick verschiebt also nie etwas. Die
   Nachbarn weichen in **150 ms** aus. Die Lupe hält an, solange gezogen wird.
@@ -430,7 +502,7 @@ Bei `@media (prefers-reduced-motion: reduce)` wird `--motion: 0ms`, und die Lupe
 ## 13. Was dieses Blatt nicht entscheidet
 
 - **Die Zeichen der Apps.** Eigener Auftrag, eigene Sitzung, eigener Satz SVGs. Dieses Blatt sagt
-  nur, wie groß sie im Dock stehen (54, unter dem Zeiger 86).
+  nur, wie groß sie im Dock stehen (40, unter dem Zeiger 64 — Abschnitt 8).
 - **Die Tapeten.** Die elf aus `assets/wallpapers/` sind Marke und fallen weg (Punkt 1). Die vier
   Verläufe sind frei, brauchen aber keine Datei: ob NGC sie als `linear-gradient` nachbaut oder
   eigene bekommt, ist eine Frage für den Bau-Auftrag.
