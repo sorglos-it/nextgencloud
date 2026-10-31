@@ -178,10 +178,75 @@ ist hier behoben.
 
 ## 4. Fähigkeitstafel je Engine
 
-> **Noch nicht gemessen.** Ein Lauf braucht einen Platz von der Leitsitzung, und am
-> 31.10.2026 stand `(Get-NetTCPConnection -State TimeWait).Count` bei **19 528** –
-> über der Obergrenze von 10 000 aus dem Auftrag. Die Sonde liegt fahrbereit in
-> `apps/web/tests/shell/krypto-tafel.spec.js`.
+**Die Selbstprüfung der Sonde ist in allen drei Engines leer** (AES-GCM `generateKey`,
+SHA-256 `digest`, `isSecureContext`). Die Sonde hat also die Engines gemessen und nicht
+sich selbst. Ohne diese Zeile wäre die webkit-Spalte unten nicht lesbar: eine Spalte aus
+lauter „nein" ist genau das, was eine kaputte Sonde erzeugt.
+
+Gemessen am 31.10.2026, `apps/web/tests/shell/krypto-tafel.spec.js`, Playwright 1.55.1,
+Arbeitsbaum `D:\claude\working\ngc-krypto-grenzen` auf der lokalen Platte D:. Befehl:
+
+```
+cd apps\web\tests
+$env:NGC_WEB_TEST_PORT = "8201"; npx playwright test shell/krypto-tafel.spec.js
+```
+
+6 bestanden, 0 rot, 0 übersprungen, Ausstiegscode 0, 48 Sekunden.
+TIME_WAIT 13:55:21 = **705** vor dem Lauf, 13:56:09 = **1 907** danach (+1 202).
+Zum Vergleich: ein voller Satz über drei Engines hinterlässt rund 17 000.
+
+**„Folge" ist eine eigene Spalte und keine Fußnote.** Wer eine Tafel liest, liest Zellen.
+Eine Zelle, die nur deshalb „nein" sagt, weil eine frühere Stufe keinen Schlüssel
+geliefert hat, ist **keine fehlende Fähigkeit** – sie ist ungemessen. In webkit sind das
+18 der 22 Nein, und ohne diese Trennung stünde in jedem Bericht „webkit kann 22 Dinge
+nicht".
+
+| Zelle | chromium 140 | firefox 141 | webkit 26 |
+|---|---|---|---|
+| **Selbstprüfung** AES-GCM, SHA-256, sicherer Kontext | ja | ja | ja |
+| Ed25519 `generateKey` | ja | ja | **nein: NotSupportedError** |
+| Ed25519 `importKey pkcs8` | ja | ja | **nein: NotSupportedError** |
+| Ed25519 `exportKey jwk` **eines eingeführten Schlüssels** | ja | **nein: OperationError** | Folge (TypeError) |
+| Ed25519 `exportKey jwk` **eines selbst erzeugten Schlüssels** | ja | **ja** | Folge (TypeError) |
+| Ed25519 `exportKey pkcs8` / `raw` / `spki` | ja | ja | Folge (TypeError) |
+| Ed25519 `importKey raw` / `spki` | ja | ja | Folge (TypeError) |
+| Ed25519 `sign` | ja | ja | Folge (TypeError) |
+| Ed25519 prüft eine **richtige** Signatur als wahr | ja | ja | Folge (TypeError) |
+| Ed25519 weist eine **falsche** Signatur ab | ja | ja | Folge (TypeError) |
+| X25519 `generateKey` | ja | ja | **nein: NotSupportedError** |
+| X25519 `importKey pkcs8` | ja | ja | **nein: NotSupportedError** |
+| X25519 `exportKey jwk` **eines eingeführten Schlüssels** | ja | **nein: OperationError** | Folge (TypeError) |
+| X25519 `exportKey jwk` **eines selbst erzeugten Schlüssels** | ja | **ja** | Folge (TypeError) |
+| X25519 `exportKey pkcs8` / `raw` / `spki` | ja | ja | Folge (TypeError) |
+| X25519 `importKey raw` / `spki` | ja | ja | Folge (TypeError) |
+| X25519 `deriveBits`, beide Seiten gleich | ja | ja | **nein: NotSupportedError** |
+| P-256 `generateKey` | ja | ja | **ja** |
+| P-256 `exportKey jwk` | ja | ja | **ja** |
+| P-256 `sign` und `verify` | ja | ja | **ja** |
+| **Summe** | 25 ja, 0 nein | **23 ja, 2 nein** | **3 ja, 22 nein (davon 18 Folge)** |
+
+### Was die Tafel sagt, in drei Sätzen
+
+**firefox: es ist keine fehlende Fähigkeit, sondern eine Frage der HERKUNFT des
+Schlüssels.** Die zwei Nein sind derselbe Aufruf, `exportKey("jwk")` – und derselbe
+Aufruf geht an einem selbst erzeugten Schlüssel, bei beiden Kurven. firefox kann
+`generateKey`, `sign`, `verify`, `deriveBits` mit Gleichheit beider Seiten, `importKey`
+roh, als spki und als pkcs8, `exportKey` roh, als spki und als pkcs8. Diese
+Unterscheidung entscheidet, was Abschnitt 7 überhaupt erwägen darf: **eine fehlende
+Fähigkeit muss man umgehen, eine Herkunftsfrage kann man ändern.** Und der Name sagt
+schon, wo sie sitzt – `proof.publicFromSeed` führt einen Schlüssel *aus einer Saat ein*,
+also genau die Herkunft, die firefox nicht exportiert.
+
+**webkit: ein einziges fehlendes Stück, nicht zweiundzwanzig.** Die vier echten Nein
+sind viermal dieselbe Sache – die CFRG-Kurven gibt es nicht, darum fällt `generateKey`
+und `importKey pkcs8` für beide Kurven mit `NotSupportedError`. Die 18 `TypeError`
+dahinter sind Folgen: die Zelle hatte keinen Schlüssel, den sie exportieren konnte.
+Genau diese 18 Zellen verdeckt `sessionKeyGaps` mit seinem Abbruch.
+
+**webkit kann P-256 vollständig** – erzeugen, als jwk ausgeben, signieren und prüfen.
+Es ist also nicht „ein Browser ohne Krypto", sondern ein Browser ohne **diese zwei
+Kurven**. Das ist der Grund, warum Abschnitt 7 den Passkey-Weg für webkit überhaupt
+erwägt (Weg 1c).
 
 Die Sonde ist ein **Messgerät und kein Prüfschritt**: sie behauptet über keine Engine
 etwas, kann darum an keiner rot werden, und eine Engine, die sich morgen ändert, ändert

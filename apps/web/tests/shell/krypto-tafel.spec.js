@@ -31,7 +31,7 @@
 // What it prints is the finding. Delete it when the table in
 // docs/krypto-grenzen-browser.md is filled and nobody needs to measure again.
 
-import { test, expect } from "../fixtures/page.js";
+import { test, expect, standInOn } from "../fixtures/page.js";
 import { USER_NAME, PASSWORD, PASSKEY_NAME } from "../fixtures/logins.js";
 import { putSoftwareAuthenticator } from "../fixtures/passkey.js";
 
@@ -256,6 +256,18 @@ async function screen(shell) {
   });
 }
 
+// THE BOOT IS OVER, and reading before it is why the first run of this file
+// measured nothing. screen() answers "nothing" while the shell is still
+// starting - and "nothing" in all three engines, chromium included, looked
+// exactly like a finding. So: wait for a state, never read straight after a
+// navigation.
+async function settled(shell) {
+  await expect.poll(async () => (await screen(shell)).where,
+    { message: "the boot has ended in one of its endings", timeout: 60_000 })
+    .not.toBe("nothing");
+  return screen(shell);
+}
+
 // The login attempt is over when the mask stops working - the same measure
 // shell/login.spec.js uses, and it waits for a STATE and not for a time.
 async function attemptOver(shell) {
@@ -300,47 +312,87 @@ test("die Fähigkeiten dieser Engine, Zelle für Zelle", async ({ shell }, info)
   console.log(`TAFELJSON ${info.project.name} ${JSON.stringify(table)}`);
 });
 
+// THE STAND-IN, for the same reason shell/login.spec.js sets it in a
+// beforeEach: since task 17b the shell takes the REAL session, and the mock
+// API answers five actions where a desktop needs two dozen. Without it a
+// login fails in the ENGINE THAT CAN DO EVERYTHING - measured, first run of
+// this file: chromium reached "NGC konnte nicht geladen werden." and that was
+// my fixture, not NGC. It is named here and in every line this file prints,
+// because a figure from a run with a stand-in is a figure about a stand-in.
+test.beforeEach(async ({ shell }) => {
+  await standInOn(shell);
+});
+
 test("kommt eine Anmeldung durch - Passwort und Passkey getrennt", async ({ shell }, info) => {
   const e = info.project.name;
-  console.log(`ANMELDUNG ${e} | Tore | ${JSON.stringify(await gates(shell))}`);
+  const g = await gates(shell);
+  console.log(`ANMELDUNG ${e} | Tore | ${JSON.stringify(g)}`);
 
-  // THE SHELL AS IT COMES UP, with no stand-in and nothing helped along. This
-  // is the screen a person meets.
-  console.log(`ANMELDUNG ${e} | Schirm beim Start | ${JSON.stringify(await screen(shell))}`);
+  // The screen a person meets, read AFTER the boot has ended. The stand-in is
+  // set, so this is the mask of a page whose session is faked - which changes
+  // nothing about which of the three endings the boot takes, because all three
+  // gates are measured before any session exists.
+  const start = await settled(shell);
+  console.log(`ANMELDUNG ${e} | Schirm beim Start | ${JSON.stringify(start)}`);
 
   // 1. THE PASSWORD ROUTE. anna has a password key and no passkey.
   //
   // It presses the button only if the button can be pressed: a disabled
   // button is itself the answer, and clicking it would measure playwright's
   // patience instead of the shell.
-  const pw = { attempted: false };
-  const before = await screen(shell);
-  if (before.where === "mask" && before.passwordField === "AN") {
+  let pwAttempted = false;
+  if (start.where === "mask" && start.passwordField === "AN") {
     await shell.getByLabel("Benutzername").fill(USER_NAME);
     await shell.getByLabel("Passwort").fill(PASSWORD);
     const go = shell.getByRole("button", { name: "Anmelden", exact: true });
     if (!(await go.isDisabled())) {
-      pw.attempted = true;
+      pwAttempted = true;
       await go.click();
       await attemptOver(shell);
     }
   }
-  console.log(`ANMELDUNG ${e} | Passwort | versucht=${pw.attempted} | ${JSON.stringify(await screen(shell))}`);
+  const afterPw = await screen(shell);
+  console.log(`ANMELDUNG ${e} | Passwort | versucht=${pwAttempted} | ${JSON.stringify(afterPw)}`);
+
+  // THE CONTROL, and its absence is what made the first run of this file
+  // worthless. An engine whose three gates all answer true can do everything
+  // NGC asks of a browser, so it MUST reach a desktop. If it does not, the
+  // fixture is broken - and then the other two engines were read against
+  // nothing, which is how "firefox cannot log in" would get written down about
+  // a mistake of mine. Same discipline as the AES-GCM control in part A, one
+  // screen further down, where it was missing the first time.
+  // IT NAMES WHAT IT SAW, and not just "broken": the whole screen, the
+  // buttons and the notes. A control that only says "broken" sends the next
+  // round off with no clue, and a measuring slot costs somebody else their
+  // place in the queue.
+  const allGatesOpen = g.browserFits === true && g.passwordLoginFits === true && g.passkeyFits === true;
+  if (allGatesOpen && afterPw.where !== "desktop") {
+    console.log(`ANMELDUNG ${e} | VORRICHTUNG KAPUTT, KEINE AUSSAGE - alle drei Tore offen, ` +
+      `aber kein Schreibtisch. Versucht=${pwAttempted}. Schirm beim Start: ` +
+      `${JSON.stringify(start)} | Schirm danach: ${JSON.stringify(afterPw)}`);
+    return;
+  }
 
   // 2. THE PASSKEY ROUTE, with the software authenticator of
   // fixtures/passkey.js - the one that works on every engine, because it is
   // JavaScript and not the browser's own WebAuthn stack. clara has a passkey
   // and no password.
   //
-  // A FRESH PAGE, because the attempt above may have left a desktop standing.
+  // THE ORDER MATTERS AND IT IS WHY THIS MEASURED NOTHING THE FIRST TIME:
+  // putSoftwareAuthenticator works through addInitScript, so it takes effect
+  // for the NEXT document - it has to be set BEFORE the navigation, and the
+  // navigation has to be waited out before the mask is read.
+  //
   // At localhost and not 127.0.0.1: WebAuthn wants a name, not an address.
   const here = new URL(shell.url());
   await putSoftwareAuthenticator(shell, PASSKEY_NAME);
   await shell.goto(`http://localhost:${here.port}/`);
+  // Cleared AFTER the move, because what is cleared is the store of THIS
+  // origin: a browser that has never seen this installation.
   await shell.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
   await shell.goto(`http://localhost:${here.port}/`);
 
-  const atMask = await screen(shell);
+  const atMask = await settled(shell);
   console.log(`ANMELDUNG ${e} | Schirm vor Passkey | ${JSON.stringify(atMask)}`);
   let pkAttempted = false;
   if (atMask.where === "mask") {
@@ -352,5 +404,14 @@ test("kommt eine Anmeldung durch - Passwort und Passkey getrennt", async ({ shel
       await attemptOver(shell);
     }
   }
-  console.log(`ANMELDUNG ${e} | Passkey | versucht=${pkAttempted} | ${JSON.stringify(await screen(shell))}`);
+  const afterPk = await screen(shell);
+  console.log(`ANMELDUNG ${e} | Passkey | versucht=${pkAttempted} | ${JSON.stringify(afterPk)}`);
+
+  // The same control for the passkey route: in an engine with all three gates
+  // open, clara's passkey has to reach a desktop too. A "no" there is a
+  // broken authenticator, not a finding about any engine.
+  if (allGatesOpen && afterPk.where !== "desktop") {
+    console.log(`ANMELDUNG ${e} | AUTHENTIKATOR KAPUTT, KEINE AUSSAGE ZUM PASSKEY-WEG - ` +
+      `${afterPk.where} "${afterPk.message}"`);
+  }
 });
