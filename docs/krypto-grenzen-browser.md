@@ -29,8 +29,24 @@ Die Notiz dort hält zusätzlich fest, **wie teuer dieses Muster schon einmal wa
 sechsundzwanzig Aufträge lang wurde „firefox startet auf dieser Maschine nicht" als
 Umgebungstatsache weitergegeben, niemand hat firefox gemessen, und dann lief ein Satz
 versehentlich ohne Engine-Filter – **157 rote Fälle**. Am 31.10.2026 wiederholt sich
-genau das: der gemeldete Satzlauf fuhr zwei Engines, und die am stärksten betroffene
-war wieder nicht dabei (Abschnitt 8, Punkt 5).
+dieselbe Figur, nur andersherum: ein Satzlauf über **zwei** Engines, und die am
+stärksten betroffene fehlt (Abschnitt 8, Punkt 5).
+
+**Daraus folgt der Satz, der das nächste Mal verhindert.** Dass ein Lauf alle drei
+Engines fährt, ist keine Verbesserung am Rand und kein Gründlichkeitsluxus, den man
+weglassen darf, weil es schneller geht – es ist die Behebung eines Fehlers, der hier
+schon einmal **157 Fälle** gekostet hat. Wer die dritte Engine weglässt, misst nicht
+weniger genau, sondern **in der Engine gar nicht**, und ein Grün aus zwei Engines sagt
+über die dritte nichts. Ein übersprungener Fall heißt nicht „der Browser kann es nicht",
+sondern „wir wissen nicht, ob er es kann" – und eine fehlende Engine heißt nicht einmal
+das.
+
+Dazu die billige Gegenmaßnahme, die am 31.10.2026 einen Platz gerettet hat und ab jetzt
+vor jedem Lauf gilt: **die Fahrbereitschaftsprüfung.** `npx playwright test --list` auf
+die gemeinte Datei startet keinen Browser, bindet keinen Port und braucht keine Sekunde
+eines Platzes – und sie nennt die Fallzahl **je Engine** und einen Ausstiegscode. Hier:
+6 Fälle, 3 Engines, Ausstieg 0. Wer ohne sie auf einen freien Platz losfährt, erfährt
+erst im Platz, dass die Vorrichtung fehlt (Abschnitt 4, Tabelle).
 
 **Die Lehre: vor der Messung die Datei lesen, die die Antwort schon enthalten könnte.**
 Das ist dieselbe Figur, die `messen.md` unter „eine Abwesenheit belegt man mit Orten,
