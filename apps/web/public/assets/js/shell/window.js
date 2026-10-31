@@ -217,6 +217,10 @@ export class Win {
     this.desktop.layer.append(this.el);
     this.desktop.tasks.append(this.tab);
     this.desktop.windows.set(this.id, this);
+    // The dock's dot is set from the register, and the register changed in the
+    // line above. Here and in close() are the only two places it changes, so
+    // these are the only two places that have to say so.
+    this.desktop.markDock?.();
     this.focus();
     return this;
   }
@@ -308,6 +312,7 @@ export class Win {
     this.el.remove();
     this.tab.remove();
     this.desktop.windows.delete(this.id);
+    this.desktop.markDock?.();
     if (this.desktop.focused === this) this.desktop.focused = null;
     this.desktop.focusTopmost();
   }

@@ -15,6 +15,22 @@
   /* The blur behind the band and behind a menu, LordOS --blur. One number, so
      the two surfaces that float cannot drift apart - they were 18 and 22. */
   --blur: 24px;
+  /* THE DOCK. 40 is Thomas' decision of 2026-10-30, and it is computed, not
+     chosen: with the 8 px grid a dock is 16 + n*S + 8*(n-1) wide, so at 360 px
+     - a phone held upright - 54 (LordOS) fits five icons, 48 fits six and 40
+     fits seven. 40 is the largest that puts seven on a phone, and at the same
+     time the floor, because 40 is the same finger size decided that day for
+     the window buttons. The sum is written out in docs/gestaltung-lordos.md
+     section 8.
+     Under the pointer 64, which keeps LordOS's own ratio (86/54 = 1.59)
+     instead of inventing a second number. */
+  --dock-size: 40px;
+  --dock-magnify: 64px;
+  /* ONE duration and ONE curve for every movement in the shell, so that
+     "reduce motion" bites in one place. 180 ms is LordOS SLIDE_MS; the curve
+     is chosen - LordOS draws its movements in C and names none. */
+  --motion: 180ms;
+  --ease: cubic-bezier(.25,.1,.25,1);
   /* THE ACCENT STAYS AS IT IS IN THIS STEP, and that is a finding, not an
      oversight: it is not one number in one place. The accent the shell shows
      is picked by the user out of six, and those six live in shell/theme.js
@@ -208,6 +224,35 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
    weight so it is still the part the eye finds first. */
 #clock{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:13px}
 #clock b{font-weight:600}
+
+/* ---------- Dock ----------
+   It lies BELOW the band, the start menu and every window (sheet section 8:
+   menu, control centre and launcher are always above the dock), and windows
+   may pass under it - which is what macOS does and what Lord Flow does. The
+   desktop's own area is therefore unchanged: the dock floats, it does not
+   take room away. */
+#dock{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:99998;
+      display:flex;align-items:flex-end;gap:8px;padding:8px;max-width:calc(100vw - 16px);
+      background:var(--menu-bg);border:1px solid var(--win-border);border-radius:var(--radius);
+      backdrop-filter:blur(var(--blur)) saturate(150%);box-shadow:var(--shadow)}
+#dock:empty{display:none}
+.dapp{position:relative;display:flex;align-items:center;justify-content:center;
+      width:var(--dock-size);height:var(--dock-size);flex:0 0 auto;padding:0;border:0;
+      border-radius:9px;cursor:pointer;background:none;color:inherit;
+      transition:width var(--motion) var(--ease),height var(--motion) var(--ease)}
+/* The magnifier. Only under the pointer or the keyboard's focus, and the
+   neighbours keep their size - growing them too needs a measurement of its
+   own, and this step does not claim it. */
+.dapp:hover,.dapp:focus-visible{width:var(--dock-magnify);height:var(--dock-magnify)}
+.dapp .g{display:flex;align-items:center;justify-content:center;width:100%;height:100%;
+         border-radius:9px;color:#fff;
+         background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.dapp .g .ico{width:74%;height:74%}
+.dapp.off{opacity:.55}
+/* The dot that says the app is open. It sits UNDER the icon, outside it, so a
+   magnified icon does not cover it. */
+.dapp.on::after{content:"";position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);
+                width:4px;height:4px;border-radius:50%;background:var(--bar-fg);opacity:.75}
 
 /* ---------- Startmenü ---------- */
 #startmenu{position:fixed;top:calc(var(--bar-h) + 6px);left:8px;width:min(420px,calc(100vw - 16px));
@@ -583,3 +628,12 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .stand .standgo{padding:3px 9px;font-size:.85rem;border-radius:7px;
   border:1px solid var(--win-border);background:none;color:inherit;cursor:pointer}
 .stand .standgo:hover{color:var(--fg)}
+
+/* "Reduce motion" bites in ONE place: the duration goes to zero, and with it
+   every transition that reads --motion. The magnifier in the dock is switched
+   off as well and not merely made instant - sheet section 11 says so, and a
+   jump from 40 to 64 with no duration is a flicker, not a calmer screen. */
+@media (prefers-reduced-motion: reduce){
+  :root{ --motion: 0ms; }
+  .dapp:hover,.dapp:focus-visible{width:var(--dock-size);height:var(--dock-size)}
+}
