@@ -361,13 +361,49 @@ Passwort-Anmeldung) und `noise.publicOf`.
 Kein Krypto-Problem, ein Messproblem – und nach `messen.md` das gefährlichere der
 beiden, weil ein übersprungener Fall wie ein bestandener aussieht.
 
+**Welcher Haken je Datei der richtige ist**, bestimmt danach, was die Datei wirklich
+tut – gelesen am 31.10.2026, nicht geraten:
+
+| Datei | Was sie an Krypto wirklich tut | Richtiger Haken |
+|---|---|---|
+| `contracts/proof.spec.js` | `publicFromSeed` 10×, `privateFromSeed` 3×, ein PKCS#8 | `skipWithoutSeedKeys` |
+| `contracts/session.spec.js` | `publicFromSeed` 10×, `privateFromSeed` 5×, dazu Signaturen | `skipWithoutSeedKeys` |
+| `shell/users.spec.js` | `publicFromSeed` 1×, `privateFromSeed` 1× | `skipWithoutSeedKeys` |
+| `contracts/sign.spec.js` | nur Signaturen prüfen | `skipWithoutSignatures` |
+| `contracts/task.spec.js` | `signTask` 8×, prüfen 10× | `skipWithoutSignatures` |
+| `contracts/catalog.spec.js` | `verifyCatalog` | `skipWithoutSignatures` |
+| `contracts/core.spec.js` | `parseUIProof`, `parseResult`, `parseTask` | `skipWithoutSignatures` |
+| `contracts/trust.spec.js` | `parseList`, `open`, `parseSigned` | `skipWithoutSignatures` |
+| `contracts/tunnel.spec.js` | `trust.open`, `checkCode` | `skipWithoutSignatures` |
+| `shell/store.spec.js` | `parseSigned`, `parseList`, `parseEnvelope` | `skipWithoutSignatures` |
+| `shell/trustlist.spec.js` | Signaturen, aber in einem `beforeAll` mit eigener Seite | `signatureGap` im `beforeAll`, nicht der Haken |
+
 | Weg | Kosten | Schaden |
 |---|---|---|
-| **3a. Die elf Kopien auf die Haken aus `fixtures/page.js` umstellen**, je Datei auf den, der dem entspricht, was die Datei wirklich tut. | Elf Dateien, je zwei Zeilen; je Datei eine Entscheidung, welcher Haken der richtige ist | **Der Haken kann zu streng werden** – genau der Fehler, den `fixtures/page.js:94` schon einmal bezahlt hat (zehn grüne firefox-Fälle still abgeschaltet, eine Sicherheitsprüfung darunter). Darum **je Datei einzeln** und mit einer Zahl vorher und nachher, nicht in einem Zug |
-| **3b. So lassen.** | Nichts | In firefox laufen Fälle an, die an `exportKey` sterben, und ihr Rot sieht nach einem Fehler im Code aus. Das ist der Zustand, aus dem der Auftrag kommt |
+| **3a. Die elf Kopien auf die Haken aus `fixtures/page.js` umstellen**, je Datei nach der Tabelle oben. | Elf Dateien, je zwei Zeilen; `trustlist.spec.js` braucht eine eigene Lösung, weil es in einem `beforeAll` auf einer eigenen Seite verzweigt statt zu überspringen | **Der Haken kann zu streng werden** – genau der Fehler, den `fixtures/page.js:94` schon einmal bezahlt hat (zehn grüne firefox-Fälle still abgeschaltet, eine Sicherheitsprüfung darunter). Darum **je Datei einzeln** und mit einer Zahl vorher und nachher, nicht in einem Zug |
+| **3b. So lassen.** | Nichts | Der Zustand, aus dem der Auftrag kommt, mit der Falle unten |
+
+**Was 3a wirklich bringt, und was nicht – ehrlich gerechnet.** An den heutigen Zahlen
+ändert es wenig, und das gehört hierhin, damit niemand einen großen Gewinn erwartet:
+
+- **In webkit ändert sich das Ergebnis gar nicht**, nur der Satz. Der lockere Haken sagt
+  dort richtig Nein (`importKey("raw")` fällt mit der Kurve), der richtige Haken auch –
+  aber der richtige nennt die **gemessene** Lücke, während heute Sätze wie „no Ed25519 in
+  this engine's Web Crypto" dastehen, die über firefox falsch wären.
+- **In firefox laufen die acht Signatur-Dateien heute und sind grün**, zu Recht:
+  `signatureGap` ist in firefox **leer**, firefox kann Signaturen vollständig. Der
+  Wechsel schaltet dort also nichts ab – was wichtig ist, weil das genau der Schaden
+  wäre.
+- **Der eigentliche Gewinn ist eine Falle, die noch nicht zugeschlagen hat.** Die drei
+  Dateien, die `publicFromSeed` benutzen, sind heute teils nur vom lockeren Haken
+  bewacht. Der sagt in firefox **ja**. Ein neuer Fall in `proof.spec.js` oder
+  `session.spec.js`, der die Saat-Stufe anfasst, wird in firefox also **rot** – und sein
+  Rot sieht wie ein Fehler im Code aus, nicht wie eine Grenze des Browsers. Genau so
+  sind die 157 roten Fälle vom 01.10.2026 entstanden.
 
 **Empfehlung: 3a, aber datei‑ und schrittweise, mit der Fallzahl je Engine vor und nach
-jedem Schritt.** Nicht als ein PR.
+jedem Schritt** – und mit dieser Begründung, nicht mit einer Zahl, die es nicht gibt.
+Nicht als ein PR.
 
 ---
 
