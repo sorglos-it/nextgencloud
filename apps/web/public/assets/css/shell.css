@@ -208,6 +208,27 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 #startbtn:hover{filter:brightness(1.12)}
 #startbtn.open{filter:brightness(.9)}
 #startbtn .logo{font-size:16px}
+
+/* The name of the app in front, and its menu. 700 is the sheet's weight for
+   it (LordOS): in a menu band the app's own name is the one entry that is not
+   a command, so weight is what tells it from the rest. It is HIDDEN while no
+   window is in front - NGC has no Finder that is always running, and a menu
+   named after nothing is a menu that opens onto nothing. */
+#appbtn{display:none;align-items:center;height:22px;padding:0 9px;border:0;border-radius:5px;
+        background:none;color:inherit;font:inherit;font-weight:700;cursor:pointer;
+        max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 0 auto}
+#appbtn.there{display:flex}
+#appbtn:hover,#appbtn.open{background:rgba(127,127,127,.26)}
+#appdrop{position:fixed;top:calc(var(--bar-h) + 2px);width:260px;background:var(--menu-bg);
+         backdrop-filter:blur(var(--blur)) saturate(150%);border:1px solid var(--win-border);
+         border-radius:8px;box-shadow:var(--shadow);z-index:100001;display:none;padding:4px;
+         color:var(--win-fg)}
+#appdrop.open{display:block}
+#appdrop button{display:flex;width:100%;align-items:center;height:26px;padding:0 9px;border:0;
+                border-radius:5px;background:none;color:inherit;font:inherit;font-size:13px;
+                text-align:left;cursor:pointer}
+#appdrop button:hover{background:rgba(127,160,220,.20)}
+#appdrop button:disabled{opacity:.45;cursor:default;background:none}
 #tasks{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden}
 .task{display:flex;align-items:center;gap:7px;height:22px;max-width:190px;padding:0 9px;
       border-radius:5px;cursor:pointer;flex:0 1 auto;min-width:0;font:inherit;

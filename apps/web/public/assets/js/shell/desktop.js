@@ -131,11 +131,34 @@ class Desktop {
     this.startBtn.id = "startbtn";
     const logo = el("span", "logo", "⊞");
     logo.setAttribute("aria-hidden", "true");
-    this.startBtn.append(logo, el("span", null, "Start"));
+    // ONLY THE MARK, no word any more: in a band of 28 the word took the room
+    // the app's name needs, and macOS and Lord Flow both put a mark alone at
+    // the far left.
+    //
+    // THE NAME HAS TO BE WRITTEN OUT NOW, and that is MEASURED, not foreseen.
+    // The name of this button was never a label - it came out of the word
+    // "Start" standing in it. Taking the word away took the name with it: the
+    // first run after that had aria-label null and 62 red cases, because 89
+    // places aim at this button by the name "Start". The mark itself says
+    // nothing a screen reader can read, so without this line the way into the
+    // app list has no name at all.
+    this.startBtn.setAttribute("aria-label", "Start");
+    this.startBtn.append(logo);
     this.startBtn.setAttribute("aria-expanded", "false");
     this.startBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.toggleMenu();
+    });
+
+    // The name of the app in front, with its menu. It stands right of the mark,
+    // where macOS and Lord Flow put it.
+    this.appBtn = button(null, null, null);
+    this.appBtn.id = "appbtn";
+    this.appBtn.setAttribute("aria-expanded", "false");
+    this.appBtn.setAttribute("aria-haspopup", "menu");
+    this.appBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleAppMenu();
     });
 
     this.tasks = el("div", null);
@@ -151,7 +174,7 @@ class Desktop {
     this.clock.id = "clock";
     tray.append(themeBtn, this.clock);
 
-    bar.append(this.startBtn, this.tasks, tray);
+    bar.append(this.startBtn, this.appBtn, this.tasks, tray);
     root.append(bar);
 
     // The dock. It is built here with the bar because both are frame of the
@@ -162,6 +185,14 @@ class Desktop {
     this.dock.setAttribute("role", "toolbar");
     this.dock.setAttribute("aria-label", "Dock");
     root.append(this.dock);
+
+    // The app menu hangs off the shell and not off the band: the band clips
+    // what is wider than itself, and a menu is wider than its button.
+    this.appDrop = el("div", null);
+    this.appDrop.id = "appdrop";
+    this.appDrop.setAttribute("role", "menu");
+    root.append(this.appDrop);
+    this.markBar();
     this.tick();
     // Every 15 seconds, as in the prototype. The clock shows no seconds, so
     // this is only about how long a minute may look stale: a quarter of one,
@@ -443,9 +474,23 @@ class Desktop {
     // does it, and the only way out that needs no explaining.
     document.addEventListener("pointerdown", (e) => {
       if (!this.menu.contains(e.target) && !this.startBtn.contains(e.target)) this.toggleMenu(false);
+      // The app menu goes the same way, and by the same rule: a click outside
+      // it closes it. Two menus that close by two different rules are two
+      // things to learn.
+      if (!this.appDrop.contains(e.target) && !this.appBtn.contains(e.target)) {
+        this.toggleAppMenu(false);
+      }
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && this.menu.classList.contains("open")) this.toggleMenu(false);
+      if (e.key !== "Escape") return;
+      if (this.menu.classList.contains("open")) this.toggleMenu(false);
+      if (this.appDrop.classList.contains("open")) {
+        this.toggleAppMenu(false);
+        // The focus goes back to the button that opened it, or it is left
+        // nowhere - which in a browser means the page, and then the next Tab
+        // starts over at the top.
+        this.appBtn.focus();
+      }
     });
     window.addEventListener("resize", () => {
       for (const w of this.windows.values()) w.keepInView();
@@ -624,6 +669,15 @@ class Desktop {
     this.markDock();
   }
 
+  // markBar is the ONE hook the windows call when something about them
+  // changes. Both things it refreshes - the dot in the dock and the name in
+  // the band - answer the same question, "which app is open and which is in
+  // front", so two hooks would be two chances to show two different answers.
+  markBar() {
+    this.markDock();
+    this.markApp();
+  }
+
   // The dot under an app that is open. It is read off this.windows, the one
   // register of open windows, and not off a count this side keeps: a second
   // count is a second thing that can be wrong. A minimised window still
@@ -634,6 +688,64 @@ class Desktop {
     for (const b of this.dock.querySelectorAll(".dapp")) {
       b.classList.toggle("on", open.has(b.dataset.app));
     }
+  }
+
+  // The name in the band is the title of the window in front, read off that
+  // window. NOT off a copy kept here: the title can change while the window
+  // stands (Win.setTitle), and a second copy is the one that goes stale.
+  //
+  // No window in front means no name and no menu. The button is hidden, not
+  // emptied: an empty button of 9 px padding is a thing a mouse can still
+  // hit, and it opens onto nothing.
+  markApp() {
+    if (!this.appBtn) return;
+    const w = this.focused && !this.focused.min ? this.focused : null;
+    if (!w) {
+      this.appBtn.classList.remove("there");
+      this.toggleAppMenu(false);
+      text(this.appBtn, "");
+      this.appBtn.setAttribute("aria-label", "");
+      return;
+    }
+    const title = w.el.querySelector(".t").textContent;
+    this.appBtn.classList.add("there");
+    // The title goes in as TEXT. An app's name comes out of a manifest on a
+    // server, and the Store's own list holds one that is markup.
+    text(this.appBtn, title);
+    this.appBtn.setAttribute("aria-label", title);
+  }
+
+  // The menu of the app in front. Its entries are built when it OPENS and not
+  // kept: they say what can be done with the window as it stands right now -
+  // a maximised window offers to come back, a minimised one is not in front at
+  // all - and an entry built earlier would say what was true earlier.
+  toggleAppMenu(open) {
+    if (!this.appDrop) return;
+    const o = open === undefined ? !this.appDrop.classList.contains("open") : open;
+    this.appDrop.classList.toggle("open", o);
+    this.appBtn.classList.toggle("open", o);
+    this.appBtn.setAttribute("aria-expanded", o ? "true" : "false");
+    if (!o) { clear(this.appDrop); return; }
+    // Under the button, and never off the right edge of a narrow screen.
+    const r = this.appBtn.getBoundingClientRect();
+    this.appDrop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 268)) + "px";
+    const w = this.focused;
+    clear(this.appDrop);
+    const item = (label, enabled, run) => {
+      const b = button(null, label, null);
+      b.setAttribute("role", "menuitem");
+      b.disabled = !enabled;
+      b.addEventListener("click", () => { this.toggleAppMenu(false); run(); });
+      this.appDrop.append(b);
+    };
+    if (!w) return;
+    item("Minimieren", true, () => w.minimize());
+    item(w.max ? "Wiederherstellen" : "Maximieren", true, () => w.toggleMax());
+    // Arranging is about ALL the windows, not this one, so it is offered only
+    // when there is more than one to arrange.
+    const open2 = [...this.windows.values()].filter((x) => !x.min).length;
+    item("Fenster anordnen", open2 > 1, () => this.tile());
+    item("Schließen", true, () => w.close());
   }
 
   renderIcons() {

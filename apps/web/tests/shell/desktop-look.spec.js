@@ -213,3 +213,64 @@ test("a hostile app name reaches the dock as text and not as markup", async ({ s
   expect(await evil.getAttribute("aria-label")).toBe("<img src=x onerror=alert(1)>Böse");
   expect(await dock.locator("img").count()).toBe(0);
 });
+
+// The name of the app in front, in the band, and its menu.
+test("the band names the app in front, and forgets it again", async ({ shell }) => {
+  const btn = shell.locator("#appbtn");
+  // Nothing in front, nothing named: NGC has no app that is always running.
+  await expect(btn).toBeHidden();
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await expect(btn).toBeVisible();
+  await expect(btn).toHaveText("Rechner");
+
+  // A minimised window is not in front, so there is nothing to name.
+  await shell.locator(".wbtn.mini").first().click();
+  await expect(btn).toBeHidden();
+  await shell.locator(".task").first().click();
+  await expect(btn).toHaveText("Rechner");
+
+  // MEASURED, and it cost a wrong order in Win.close: the band went on naming
+  // a window that was gone, because markBar ran while desktop.focused still
+  // pointed at it. It runs after focusTopmost now.
+  await shell.locator(".wbtn.close").first().click();
+  await expect(btn).toBeHidden();
+});
+
+test("the app menu says what can be done with the window as it stands", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const drop = shell.locator("#appdrop");
+  await shell.locator("#appbtn").click();
+  await expect(drop).toBeVisible();
+  // Arranging is about ALL the windows, so with one window it is off.
+  await expect(drop.locator("button")).toHaveText(
+    ["Minimieren", "Maximieren", "Fenster anordnen", "Schließen"]);
+  await expect(drop.locator("button", { hasText: "Fenster anordnen" })).toBeDisabled();
+
+  // Escape closes it and gives the keyboard back to the button that opened it.
+  await shell.keyboard.press("Escape");
+  await expect(drop).toBeHidden();
+  expect(await shell.evaluate(() => document.activeElement.id)).toBe("appbtn");
+
+  // A maximised window offers to come back instead of to grow.
+  await shell.locator(".wbtn.maxi").first().click();
+  await shell.locator("#appbtn").click();
+  await expect(drop.locator("button").nth(1)).toHaveText("Wiederherstellen");
+  await drop.locator("button", { hasText: "Schließen" }).click();
+  await expect(drop).toBeHidden();
+  await expect(shell.locator(".win")).toHaveCount(0);
+});
+
+// The mark alone has no name of its own, and 89 places in this suite aim at
+// this button by the name "Start". It is written out as a label since the word
+// came out of the band - MEASURED: without the label it was null, and 62 cases
+// went red in one run.
+test("the start button keeps its name without carrying the word", async ({ shell }) => {
+  const b = shell.locator("#startbtn");
+  expect(await b.getAttribute("aria-label")).toBe("Start");
+  expect((await b.textContent()).trim()).toBe("⊞");
+  await shell.getByRole("button", { name: "Start" }).click();
+  await expect(shell.locator("#startmenu")).toHaveClass(/open/);
+});
