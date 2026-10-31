@@ -19,6 +19,19 @@ nicht selbst gelesen hatte: erst „WebKit kann gar kein Ed25519" (Vermutung), d
 (auch falsch – es sind zehn über sechs Lücken, und daneben ein zweites System aus elf
 lockeren Kopien).
 
+**Und es stand nicht nur im Repo.** Dieselbe Messung liegt seit dem 25.09./01.10.2026
+auch im Gedächtnis dieses Rechners, Wort für Wort: firefox kann `sign`, `verify`,
+`deriveBits`, `generateKey` und `importKey` für beide Kurven und genau eines nicht,
+`exportKey("jwk")` eines per `importKey("pkcs8")` eingeführten Schlüssels; webkit kennt
+die Kurven gar nicht. Zwei unabhängige Quellen, beide ungelesen.
+
+Die Notiz dort hält zusätzlich fest, **wie teuer dieses Muster schon einmal war**:
+sechsundzwanzig Aufträge lang wurde „firefox startet auf dieser Maschine nicht" als
+Umgebungstatsache weitergegeben, niemand hat firefox gemessen, und dann lief ein Satz
+versehentlich ohne Engine-Filter – **157 rote Fälle**. Am 31.10.2026 wiederholt sich
+genau das: der gemeldete Satzlauf fuhr zwei Engines, und die am stärksten betroffene
+war wieder nicht dabei (Abschnitt 8, Punkt 5).
+
 **Die Lehre: vor der Messung die Datei lesen, die die Antwort schon enthalten könnte.**
 Das ist dieselbe Figur, die `messen.md` unter „eine Abwesenheit belegt man mit Orten,
 nicht mit Suchern" führt – dort war eine frühere, gelungene Messung für einen Irrtum
@@ -153,6 +166,20 @@ ist hier behoben.
 > 31.10.2026 stand `(Get-NetTCPConnection -State TimeWait).Count` bei **19 528** –
 > über der Obergrenze von 10 000 aus dem Auftrag. Die Sonde liegt fahrbereit in
 > `apps/web/tests/shell/krypto-tafel.spec.js`.
+
+Die Sonde ist ein **Messgerät und kein Prüfschritt**: sie behauptet über keine Engine
+etwas, kann darum an keiner rot werden, und eine Engine, die sich morgen ändert, ändert
+nur ihre Ausgabe. Das ist der Grund, warum sie dauerhaft im Repo stehen darf.
+
+Was ein Lauf auf diesem Rechner braucht, gemessen am 31.10.2026 **vor** dem Lauf, damit
+kein Platz fürs Einrichten draufgeht:
+
+| Posten | Stand |
+|---|---|
+| `apps/web/tests/node_modules` | **Je Worktree eigen.** Ein frischer Worktree hat keines; `npm install` dort, 3 Pakete in 4 s aus dem Zwischenspeicher. Weder global noch im Hauptcheckout liegt Playwright |
+| Browser | **Geteilt** in `C:\Users\User\playwright-browsers` über die Benutzervariable `PLAYWRIGHT_BROWSERS_PATH`. Alle drei liegen: `chromium-1193`, `firefox-1490`, `webkit-2203`, passend zu Playwright 1.55.1 – kein Download |
+| `D:\claude\package.json` | **Gibt es nicht mehr**, und `D:\claude\node_modules` auch nicht. Die alte ESM-Falle („`type: commonjs` fängt die Suche ab") ist damit aus zwei unabhängigen Gründen weg: diese Datei ist fort, und `apps/web/package.json` trägt `"type": "module"`. Sonde grün, Ausstieg 0 |
+| Port | `NGC_WEB_TEST_PORT=8201`. Auf der Vorgabe 8099 findet ein zweiter Lauf einen schon antwortenden Server und prüft dann **den anderen Arbeitsbaum, ohne es zu sagen** (`playwright.config.js:10-16`) |
 
 Warum eine eigene Sonde und nicht `sessionKeyGaps`: die Lücken dort sind **Ketten**
 und brechen bei der ersten gefallenen Stufe ab. Sie sagen darum die **erste** Grenze,
