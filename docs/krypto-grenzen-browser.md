@@ -402,11 +402,51 @@ Nach Rangfolge **Sicherheit > Stabilität > Geschwindigkeit**.
 |---|---|---|
 | **1a. Nichts bauen, nur richtig sagen.** Das Tor `browserFits()` bleibt, der Satz `boot.tooold` wird so geschrieben, dass er den Browser und die fehlende Fähigkeit benennt und einen Browser empfiehlt, der sie hat – in allen fünf Sprachen. | Ein Sprachschlüssel je Sprache, ein Fall | **Kein Schaden.** Ein Mensch in webkit kommt nicht hinein, erfährt aber richtig, warum, und kann handeln. Sicherheit unverändert. Das ist der Stand heute, nur mit einem besseren Satz |
 | **1b. Ed25519 und X25519 aus `vendor/`** nachladen, wenn die Engine sie nicht hat, und die Krypto über diese Bibliothek führen. | Ein neues Modul (Anfrage beim Koordinator), `THIRD-PARTY.md`, Vektorentests gegen `shared/testdata/`, Bau- und Ladeweg, Fälle für den Rückfallpfad | **Zwei Wege im Programm**, und nach `messen.md` braucht der schnelle Weg eine Gegenprobe gegen den langsamen **im Prüfsatz**. Dazu: Schlüssel im JavaScript-Heap statt in der Engine, also ein Sicherheitsrückschritt gegenüber Web-Crypto. Teuer und riskant |
-| **1c. Den Passkey-Weg auch dort öffnen.** `p256FromDocument` ist in webkit LEER – P-256 ist vorhanden. Ein Passkey-Login braucht auf dieser Seite keine CFRG-Kurve. | Zu messen: hängt die Sitzung nach der Anmeldung doch an X25519? Nach `fixtures/page.js:429` verlangt `passkeyGap` auch `ed25519` und `x25519` – dann trägt der Weg nicht | **Hängt an der Messung.** Wenn die Sitzungsschlüssel X25519 brauchen, hilft P-256 nur bis zur Anmeldung und nicht weiter. **Erst messen, dann bewerten** – das ist der Grund, warum Abschnitt 4 vor Abschnitt 7 kommt |
+| **1c. Den Passkey-Weg auch dort öffnen.** P-256 ist in webkit vollständig vorhanden, der Anmelde-BEWEIS wäre dort also machbar. | – | **GEMESSEN UND WIDERLEGT, siehe unten. Dieser Weg trägt nicht.** |
 
-**Empfehlung: 1a jetzt, 1c messen, 1b nicht.** 1b verstößt gegen keine Regel, wenn das
-Modul aus `vendor/` kommt – aber es verdoppelt den Krypto-Weg für eine Engine, deren
-Grenze (Abschnitt 6) nicht einmal belegt eine Grenze echter Nutzer ist.
+#### Weg 1c ist gemessen und widerlegt
+
+Gemessen am 31.10.2026, Lauf 8, `apps/web/tests/shell/krypto-tafel.spec.js`, Teil C.
+
+**Wie, und warum nicht in webkit:** in webkit weist `browserFits()` vor der Maske ab,
+also ist dort nichts dahinter erreichbar und die Frage nicht stellbar. Darum umgekehrt:
+einer Engine, die **alles** kann, werden die zwei Kurven weggenommen und P-256 gelassen
+– das ist genau die Gestalt von webkit –, und dann wird gefragt. Derselbe Griff, den
+`shell/engines.spec.js` für die Saat-Stufe benutzt: die Engine wird **weniger** fähig
+gemacht, das ist der geprüfte Zustand und schaltet keine Prüfung ab.
+
+**Die Nachbildung ist belegt, nicht angenommen:** nach dem Eingriff antwortet die Engine
+auf `Ed25519 generateKey` und `X25519 generateKey` mit `NotSupportedError` und kann
+P-256 weiter vollständig – dieselbe Tafel wie webkit 26. Und `browserFits()` weist
+daraufhin ab, genau wie im echten webkit. Stimmt die Gestalt nicht, druckt der Fall
+„VORRICHTUNG KAPUTT, KEINE AUSSAGE" und keine Zahl.
+
+**Zwei getrennte Befunde, und sie dürfen nicht in einen Satz:**
+
+1. **Das Tor.** `browserFits()` weist ab, bevor eine Maske kommt – der Mensch erreicht
+   den Passkey-Knopf nie. Das ist eine **Entscheidung**, die NGC trifft, und sie wäre
+   änderbar.
+2. **Die Sitzung.** `auth/keys.js newSessionKeys()`, direkt aufgerufen und **ohne Tor
+   davor**, scheitert ohne die zwei Kurven: `NotSupportedError`. Der Code erzeugt immer
+   beide – „Ed25519 signs tasks, X25519 carries the Noise session and every end-to-end
+   channel" (`keys.js:29`). Das ist **keine** Entscheidung, die ein Tor ändert.
+
+**Also: Weg 1c trägt nicht.** P-256 reicht für den Beweis und nicht für die Sitzung, die
+danach läuft. Der Kommentar in `fixtures/page.js:429`, der für `passkeyGap` auch
+`ed25519` und `x25519` verlangt, ist damit bestätigt.
+
+**Und eine Lehre über diese Messung selbst.** Lauf 7 hat „Weg 1c trägt nicht" gedruckt
+und **nichts dergleichen gemessen**: er war am Tor abgewiesen worden und hatte damit die
+**frühere Wand** gemessen – der älteste Eintrag in `messen.md`, und er wäre als Befund
+hinausgegangen. Erst Lauf 8 fragt die gemeinte Stelle direkt und am Tor vorbei. Dass das
+Ergebnis beider Läufe dasselbe Wort trägt, macht den Unterschied nicht kleiner: das eine
+war geraten, das andere gemessen.
+
+**Empfehlung: 1a jetzt, 1b nicht, 1c ist erledigt.** 1b verstößt gegen keine Regel, wenn
+das Modul aus `vendor/` kommt – aber es verdoppelt den Krypto-Weg für eine Engine, deren
+Grenze (Abschnitt 6) nicht einmal belegt eine Grenze echter Nutzer ist. Mit 1c gefallen
+bleibt für webkit **nur** 1a (richtig sagen) oder 1b (Bibliothek aus `vendor/`) – ein
+dritter Weg ist nicht in Sicht.
 
 ### Lücke 2 – firefox: `exportKey("jwk")` eines eingeführten PKCS#8-Schlüssels
 
@@ -479,7 +519,7 @@ Nicht als ein PR.
 
 1. ~~Die vier verdeckten Zellen der webkit-Zeile~~ – **gemessen**, Abschnitt 4.
 2. ~~Kommt eine Anmeldung in firefox über Passkey durch (E4)?~~ – **ja, gemessen**, Abschnitt 5.
-3. Trägt Weg 1c, oder brauchen die Sitzungsschlüssel in webkit doch X25519? **Noch offen.** Die Tafel sagt, dass webkit P-256 vollständig kann, also wäre der Passkey-BEWEIS dort machbar; ob die Sitzung DANACH ohne X25519 auskommt, ist nicht gemessen. `fixtures/page.js:429` verlangt für `passkeyGap` auch `x25519` – wenn das stimmt, trägt 1c nicht. Das ist die nächste Messung.
+3. ~~Trägt Weg 1c?~~ – **nein, gemessen**, Abschnitt 7. `newSessionKeys()` scheitert ohne die zwei Kurven, unabhängig vom Tor.
 4. Hat ein echtes Safari die Kurven? **Auf diesem Rechner nicht messbar** (Abschnitt 6).
 5. Der gemeldete Satzlauf vom 31.10.2026 (chromium 302/137/2, webkit 147/0/134) hat
    **firefox nicht dabei**, obwohl `apps/web/tests/playwright.config.js` alle drei

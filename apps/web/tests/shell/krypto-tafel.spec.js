@@ -468,3 +468,135 @@ test("kommt eine Anmeldung durch - Passwort und Passkey getrennt", async ({ shel
       `${afterPk.where} "${afterPk.message}"`);
   }
 });
+
+// ---- part C: does the passkey route carry without the CFRG curves? --------
+//
+// THE QUESTION, and it is route 1c of docs/krypto-grenzen-browser.md: webkit
+// has P-256 in full and lacks Ed25519 and X25519. A passkey login signs its
+// assertion with P-256, so the PROOF is within reach there. The question is
+// what comes AFTER the proof - whether the session the login opens can be
+// opened at all without the two curves.
+//
+// WHY IT IS MEASURED ON CHROMIUM AND NOT ON WEBKIT. On webkit browserFits()
+// refuses before the mask, so nothing downstream can be reached and the
+// question cannot be asked there. So the question is turned round: take the
+// curves away from an engine that HAS them and keep its P-256, which is
+// exactly webkit's shape, and see whether a passkey login still gets in. The
+// same trick shell/engines.spec.js uses for the seed step - it makes the
+// engine LESS able, which is the state under test and switches no check off.
+//
+// WHAT THE CODE SAYS, read first so this measurement can contradict it:
+// auth/keys.js newSessionKeys() generates an Ed25519 pair AND an X25519 pair
+// unconditionally, for every session, passkey or password - "Ed25519 signs
+// tasks, X25519 carries the Noise session and every end-to-end channel". If
+// that is the whole story, route 1c cannot carry. A desktop appearing anyway
+// would mean the reading is wrong, and that would be the better outcome.
+async function withoutCFRG(page) {
+  await page.addInitScript(() => {
+    const gen = crypto.subtle.generateKey.bind(crypto.subtle);
+    const imp = crypto.subtle.importKey.bind(crypto.subtle);
+    const gone = (name) => name === "Ed25519" || name === "X25519";
+    // NotSupportedError and not a plain throw: that is the error webkit 26
+    // answers, measured in part A, and an engine that refuses differently
+    // might take a different branch.
+    const no = () => Promise.reject(new DOMException("measurement: no CFRG curves here", "NotSupportedError"));
+    crypto.subtle.generateKey = function (algo, ...rest) {
+      return gone(algo?.name || algo) ? no() : gen(algo, ...rest);
+    };
+    crypto.subtle.importKey = function (format, data, algo, ...rest) {
+      return gone(algo?.name || algo) ? no() : imp(format, data, algo, ...rest);
+    };
+  });
+}
+
+test("traegt der Passkey-Weg ohne die CFRG-Kurven (Weg 1c)", async ({ shell }, info) => {
+  const e = info.project.name;
+  const g0 = await gates(shell);
+  // Only an engine that can do EVERYTHING can answer this: the thing being
+  // measured is the effect of taking two curves away, and that needs an engine
+  // they can be taken away FROM. In the others the answer would be their own
+  // gap and not the dependency.
+  test.skip(!(g0.browserFits === true && g0.passwordLoginFits === true && g0.passkeyFits === true),
+    `diese Engine kann nicht alles, hier ist die Abhaengigkeit nicht messbar - ${JSON.stringify(g0)}`);
+
+  await withoutCFRG(shell);
+  await putSoftwareAuthenticator(shell, PASSKEY_NAME);
+  const here = new URL(shell.url());
+  await shell.goto(`http://localhost:${here.port}/`);
+  await shell.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+  await shell.goto(`http://localhost:${here.port}/`);
+
+  // THE FIXTURE CHECKS THAT IT WORKED, before anything is read off it: the
+  // engine must now look like webkit - no CFRG curves, P-256 intact. A run in
+  // which the patch did not take would measure an untouched chromium and call
+  // it a finding (messen.md: a measuring script checks its own preparation,
+  // and it checks the EFFECT, not the preparation).
+  const shape = await capabilities(shell);
+  const asWebkit = shape["Ed25519 generateKey"] === "NotSupportedError"
+    && shape["X25519 generateKey"] === "NotSupportedError"
+    && shape["P-256 sign and verify"] === "";
+  if (!asWebkit) {
+    console.log(`WEG1C ${e}: VORRICHTUNG KAPUTT, KEINE AUSSAGE - die Engine sieht nicht wie webkit aus: ` +
+      `Ed25519 generateKey="${shape["Ed25519 generateKey"]}", X25519 generateKey="${shape["X25519 generateKey"]}", ` +
+      `P-256="${shape["P-256 sign and verify"]}"`);
+    return;
+  }
+  console.log(`WEG1C ${e} | Engine nachgebaut: keine CFRG-Kurven, P-256 da`);
+
+  const gates1 = await gates(shell);
+  console.log(`WEG1C ${e} | Tore jetzt | ${JSON.stringify(gates1)}`);
+
+  const atStart = await settled(shell);
+  console.log(`WEG1C ${e} | Schirm | ${JSON.stringify(atStart)}`);
+
+  let attempted = false, end = "nicht versucht";
+  if (atStart.where === "mask") {
+    await shell.getByLabel("Benutzername").fill(PASSKEY_NAME);
+    const button = shell.getByRole("button", { name: "Mit Passkey anmelden" });
+    if ((await button.count()) > 0 && !(await button.isDisabled())) {
+      attempted = true;
+      const before = await screen(shell);
+      await button.click();
+      end = await attemptOver(shell, before);
+    }
+  }
+  const after = await screen(shell);
+  console.log(`WEG1C ${e} | Passkey ohne CFRG | versucht=${attempted} | Ende=${end} | ${JSON.stringify(after)}`);
+
+  // THE STEP WITHOUT WHICH THE WHOLE CASE MEASURES THE WRONG WALL.
+  //
+  // Run 7 printed "route 1c does not carry" and had measured no such thing:
+  // browserFits() refused before the mask, exactly as it does on real webkit,
+  // so the run never reached the question. That is messen.md's oldest entry -
+  // a case turned away before the line it means measures the EARLIER wall -
+  // and it nearly went out as a finding.
+  //
+  // Route 1c asks what happens AFTER the proof, so the question has to be put
+  // to the thing itself: auth/keys.js newSessionKeys(), called directly, with
+  // the curves gone. No gate in front of it. If it throws, no session can be
+  // opened without the two curves and 1c cannot carry whatever the gate does;
+  // if it returns keys, the reading of the code is wrong and 1c is worth
+  // building. This is the intermediate check that proves the way to the line
+  // is open.
+  const session = await shell.evaluate(async () => {
+    try {
+      const keys = await import("/assets/js/auth/keys.js");
+      const k = await keys.newSessionKeys();
+      return { ok: true, what: `sign.publicRaw ${k?.sign?.publicRaw?.length} bytes, dh ${k?.dh ? "da" : "fehlt"}` };
+    } catch (err) {
+      return { ok: false, what: `${(err && err.name) || "threw"}: ${(err && err.message) || ""}` };
+    }
+  });
+  console.log(`WEG1C ${e} | newSessionKeys() ohne CFRG | ${JSON.stringify(session)}`);
+
+  // Two separate findings, and they must not be rolled into one sentence: what
+  // the GATE does, and what the SESSION can do. The gate is a decision NGC
+  // makes and could change; the session is what the curves are actually needed
+  // for, and no gate changes that.
+  console.log(`WEG1C ${e} | ERGEBNIS Tor | ${gates1.browserFits === false
+    ? "browserFits() weist ab, bevor eine Maske kommt - der Mensch kommt nicht zum Passkey-Knopf"
+    : "browserFits() laesst durch"}`);
+  console.log(`WEG1C ${e} | ERGEBNIS Sitzung | ${session.ok
+    ? "WEG 1C WAERE MOEGLICH: newSessionKeys() geht ohne die zwei Kurven - dann ist nur das Tor im Weg"
+    : "WEG 1C TRAEGT NICHT: newSessionKeys() scheitert ohne die zwei Kurven, unabhaengig vom Tor"}`);
+});
