@@ -607,3 +607,61 @@ export async function startTrust({ anchor, installation, link, onAlarm } = {}) {
   }
   return store;
 }
+
+// openerFor builds the openTrust auth/login.js needs: a function that opens
+// the chain against this anchor and answers with the NEWEST version, not the
+// oldest one.
+//
+// WHY IT LIVES HERE and not in auth/login.js: the anchor is the page's own
+// server's word (anchorFor above), and everything that holds a chain against
+// an anchor is in this file. login.js is handed the opened list and checks a
+// certificate against it; it has no business knowing what an anchor is.
+//
+// ONE STORE PER MASK, built once and closed over, so the second walk below is
+// a step forward from the first and not a fresh start: bootstrap carries on
+// from the version in force where the anchor is the same one (see #bootstrap),
+// and a trust list may never take a step backwards.
+//
+// { again: true } is the one retry login.js makes when verifyAPI found no
+// issuer for the certificate -- a node that joined the list after the first
+// walk. It is the SAME bootstrap, so the versions it pulls forward are held
+// against the anchor exactly like the first ones. Nothing here decides to
+// believe anything the chain did not prove.
+//
+// A chain that does not hold raises the alarm inside the store and throws
+// TrustBroken. login.js lets that through: it is an ordinary Error, so the
+// mask draws its one sentence, and the alarm is already on the screen above
+// it with the words that say what happened.
+export function openerFor({ anchor, installation, onAlarm } = {}) {
+  const store = new TrustStore();
+  store.onAlarm(typeof onAlarm === "function" ? onAlarm : () => showTrustAlarm());
+  let loaded = false;
+  // The number of the version the LAST call handed out. It is a local of this
+  // opener and of nothing wider: the bound on the retry belongs to one mask,
+  // and a field that outlived the page could be added up across attempts.
+  let lastSeq = 0;
+  return async function openTrust({ again = false } = {}) {
+    if (!loaded) {
+      loaded = true;
+      await store.load(installation);
+    }
+    // bootstrap on the second call is not a repeat: where the version in
+    // force came from this same anchor it follows the chain on from there and
+    // fetches only what is missing, which is exactly "pull the list forward
+    // once".
+    await store.bootstrap(anchor);
+    const cur = store.current();
+    // No version in force after a bootstrap that did not throw cannot happen;
+    // it is said all the same, because the alternative is handing login.js an
+    // undefined to read .list out of.
+    if (cur === null) throw new Error("trustlist: no version in force");
+    if (again && cur.list.seq === lastSeq) {
+      // The walk found nothing newer, so the issuer is in no version at all.
+      // Saying so here keeps login.js from reporting a second time what is
+      // really the first failure.
+      throw new Error("trustlist: nothing newer than the version that failed");
+    }
+    lastSeq = cur.list.seq;
+    return { list: cur.list, signed: cur.signed };
+  };
+}
