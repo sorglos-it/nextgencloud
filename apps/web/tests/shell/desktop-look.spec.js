@@ -124,3 +124,29 @@ test("Escape closes the menu, and the search starts empty the next time", async 
   // keystroke into whatever window was in front.
   expect(await shell.evaluate(() => document.activeElement.id)).toBe("smsearch");
 });
+
+// The six swatches carry the only thing a user can aim at - there is no colour
+// picker - so their names are measured in ALL FIVE languages and not only in
+// the one the suite otherwise runs in. A key that stands in four files and is
+// missing from the fifth does not show up in a German run at all.
+//
+// Türkis is the swatch under test because it is the one word that differs in
+// every language; "Orange" and "Pink" would pass with a file that was never
+// translated.
+for (const [locale, want] of [
+  ["de-DE", "Farbe Türkis"],
+  ["en-US", "Color Turquoise"],
+  ["es-ES", "Color Turquesa"],
+  ["fr-FR", "Couleur Turquoise"],
+  ["it-IT", "Colore Turchese"],
+]) {
+  test.describe(`in ${locale}`, () => {
+    test.use({ locale });
+    test("the second swatch is named in this language", async ({ shell }) => {
+      await shell.getByRole("button", { name: "Start" }).click();
+      const second = shell.locator("#smlook .swatches button").nth(1);
+      // The name as the BROWSER hands it out, not the string the source holds.
+      expect(await second.evaluate((e) => e.getAttribute("aria-label"))).toBe(want);
+    });
+  });
+}
