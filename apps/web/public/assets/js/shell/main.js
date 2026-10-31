@@ -4,7 +4,7 @@ import { startDesktop } from "./desktop.js";
 import { initTheme } from "./theme.js";
 import { loadConfig } from "../net/config.js";
 import { load as loadLang, t } from "./lang.js";
-import { anchorFor } from "./trustlist.js";
+import { anchorFor, openerFor } from "./trustlist.js";
 import { loginView } from "../auth/login.js";
 import { setupView } from "../auth/setup.js";
 import { el } from "./dom.js";
@@ -265,8 +265,23 @@ async function start() {
   // The login. Nothing of the desktop is built before somebody is in. root and
   // config come from above - the setup mask needs them too, so they are won
   // once for both ways through this function.
+  // THE ONE LINE THIS WHOLE ROUND IS ABOUT. Until now no openTrust was handed
+  // in here, so auth/login.js fell back to a stand-in that took version 1 --
+  // the oldest version of a list that grows. MEASURED at the six-VM plant on
+  // 30.10.2026: that is what made the first login of every pair fail with
+  // "Anmeldung fehlgeschlagen." while the second went through. The stand-in is
+  // gone and openTrust has no default any more, so this cannot be forgotten
+  // again without an error.
+  //
+  // `anchor` is not null here: the branch above returned for that case. No
+  // installation ID is handed in: that is what a KEPT version is filed under,
+  // and the mask does not know the ID yet -- it arrives with the login
+  // challenge. So the chain is walked from the anchor every time a mask is
+  // built, which is the safer of the two ways round anyway (trustlist.js says
+  // so at load()).
   loginView(root, {
     config, passwordKeys, passkeys: canAsk,
+    openTrust: openerFor({ anchor }),
     onSession: (world) => showDesktop(root, config, anchor, world).catch(() => {
       // A trust list that does not open has already put its own alarm on the
       // screen and ended the session; anything else broke on the way to the

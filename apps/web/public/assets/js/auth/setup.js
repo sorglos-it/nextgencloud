@@ -38,7 +38,7 @@ import * as proof from "../contracts/proof.js";
 import * as trust from "../contracts/trust.js";
 import * as wire from "../contracts/wire.js";
 import * as http from "../net/http.js";
-import { rememberAnchor, NOT_SET_UP } from "../shell/trustlist.js";
+import { rememberAnchor, openerFor, NOT_SET_UP } from "../shell/trustlist.js";
 import { proveWithPassword } from "./keys.js";
 import { login, loginView } from "./login.js";
 
@@ -531,13 +531,17 @@ export function setupView(root, { config, onDone } = {}) {
   // anyway; what must not happen is a page with nothing on it.
   async function signIn(who, password, anchor) {
     let world;
+    // The anchor the setup has just written is the one this login is held
+    // against. openTrust has no default any more (auth/login.js says why), and
+    // these are the other two places that used to live off the one it had.
+    const openTrust = openerFor({ anchor });
     try {
-      world = await login({ name: who, password });
+      world = await login({ name: who, password, openTrust });
     } catch {
       // The mask of task 18 takes over, and the anchor travels with it: the
       // person signs in by hand, and what follows needs the same anchor this
       // setup just made.
-      loginView(root, { config, onSession: (w) => onDone?.(w, anchor) });
+      loginView(root, { config, openTrust, onSession: (w) => onDone?.(w, anchor) });
       root.prepend(note(SIGN_IN_YOURSELF(), "info"));
       return;
     }
