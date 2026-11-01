@@ -26,5 +26,12 @@
   "look.accent.pink": "Pink",
   "look.accent.orange": "Orange",
   "look.accent.violet": "Violet",
-  "look.accent.green": "Green"
+  "look.accent.green": "Green",
+  "bar.start": "Start",
+  "bar.dock": "Dock",
+  "win.minimize": "Minimise",
+  "win.maximize": "Maximise",
+  "win.restore": "Restore",
+  "win.tile": "Arrange windows",
+  "win.close": "Close"
 }

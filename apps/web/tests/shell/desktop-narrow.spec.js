@@ -34,7 +34,9 @@ const inside = (shell, sel, outer) => shell.evaluate(([s, o]) => {
 // in the bar at every width. What was missing was this case saying so, so
 // that the next change to the bar cannot take it away unnoticed.
 test("every app is reachable on a phone, through the start menu", async ({ shell }) => {
-  await expect(shell.locator("#icons")).toBeHidden();
+  // The column of app icons is gone since 2026-11-01; what it is replaced by
+  // on a narrow screen is the dock, so that is what is asked for here.
+  await expect(shell.locator("#dock")).toBeVisible();
   const start = shell.getByRole("button", { name: "Start" });
   await expect(start).toBeVisible();
   // The button is wholly on the screen, not just present in the page.
@@ -55,7 +57,9 @@ test("every app is reachable on a phone, through the start menu", async ({ shell
 });
 
 test("the icons step aside and the taskbar keeps its words to itself", async ({ shell }) => {
-  await expect(shell.locator("#icons")).toBeHidden();
+  // The column of app icons is gone since 2026-11-01; what it is replaced by
+  // on a narrow screen is the dock, so that is what is asked for here.
+  await expect(shell.locator("#dock")).toBeVisible();
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
   const tab = shell.locator("#tasks .task");

@@ -197,13 +197,13 @@ test("the glyph beside a name is not read out with it", async ({ shell }) => {
   // Every badge in the shell carries an icon of the shell's own (icon.js).
   // Without aria-hidden it would be announced along with the name, and an
   // app whose icon the shell does not know would read as "App Böse".
-  expect(await shell.evaluate(() => [...document.querySelectorAll(".dicon .g, .smitem .g, .win .g")]
+  expect(await shell.evaluate(() => [...document.querySelectorAll(".dapp .g, .smitem .g, .win .g")]
     .every((g) => g.getAttribute("aria-hidden") === "true"))).toBe(true);
   await shell.getByRole("button", { name: "Start" }).click();
   // The exact name is the name alone: the badge is not part of it.
   await expect(shell.getByRole("menuitem", { name: "Rechner", exact: true })).toHaveCount(1);
   await shell.keyboard.press("Escape");
-  await expect(shell.locator("#icons").getByRole("button", { name: "Rechner", exact: true })).toHaveCount(1);
+  await expect(shell.locator("#dock").getByRole("button", { name: "Rechner", exact: true })).toHaveCount(1);
 });
 
 test("the taskbar entry says which window it belongs to", async ({ shell }) => {
