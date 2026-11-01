@@ -427,8 +427,6 @@ class Desktop {
     this.layer.id = "desktop";
     this.wallpaper = el("div", null);
     this.wallpaper.id = "wallpaper";
-    this.icons = el("div", null);
-    this.icons.id = "icons";
     this.snapHint = el("div", null);
     this.snapHint.id = "snaphint";
     // The desktop with nothing on it (docs/gestaltung.md point 3). It is
@@ -436,13 +434,13 @@ class Desktop {
     // list that came back empty, and that is the worst moment to be creating
     // elements.
     //
-    // It is NOT inside #icons. #icons is taken off the screen under 640 px,
-    // and the one sentence that says where the apps are is the last thing a
+    // It stands on its own, not inside anything that a narrow screen takes
+    // away: the one sentence that says where the apps are is the last thing a
     // phone may lose.
     this.empty = el("div", null);
     this.empty.id = "deskempty";
     this.empty.hidden = true;
-    this.layer.append(this.wallpaper, this.icons, this.empty, this.snapHint);
+    this.layer.append(this.wallpaper, this.empty, this.snapHint);
     root.append(this.layer);
   }
 
@@ -639,8 +637,8 @@ class Desktop {
     // later request that fails does not turn the desktop back into a page
     // that has not loaded yet.
     this.loaded = true;
-    this.renderIcons();
     this.renderDock();
+    this.renderEmpty();
     this.renderMenu("");
   }
 
@@ -746,21 +744,6 @@ class Desktop {
     const open2 = [...this.windows.values()].filter((x) => !x.min).length;
     item("Fenster anordnen", open2 > 1, () => this.tile());
     item("Schließen", true, () => w.close());
-  }
-
-  renderIcons() {
-    clear(this.icons);
-    this.renderEmpty();
-    for (const a of this.appList) {
-      // One click opens. Double-click is the habit of an installed desktop,
-      // and the people this is built for do not have it; one click is the
-      // same gesture as in the start menu, so there is nothing to learn.
-      const d = button("dicon", null, null);
-      d.append(this.glyph(a), el("span", "n", a.name));
-      if (a.state !== "ok") d.classList.add("off");
-      d.addEventListener("click", () => this.openApp(a.id));
-      this.icons.append(d);
-    }
   }
 
   // The one sentence and the one button of the empty desktop, and the whole
