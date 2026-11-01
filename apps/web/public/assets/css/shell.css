@@ -153,17 +153,12 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 #desktop{position:fixed;inset:var(--bar-h) 0 0 0;overflow:hidden}
 #wallpaper{position:absolute;inset:0;background-size:cover;background-position:center;
            transition:background .3s}
-#icons{position:absolute;inset:12px auto 12px 12px;display:flex;flex-direction:column;
-       flex-wrap:wrap;align-content:flex-start;gap:4px;max-height:calc(100% - 24px)}
-.dicon{width:92px;padding:var(--pad) 4px calc(var(--pad) * .8);border:1px solid transparent;border-radius:8px;
-       text-align:center;cursor:pointer;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);
-       background:none;font:inherit;display:flex;flex-direction:column;align-items:center;gap:4px}
-.dicon:hover{background:rgba(255,255,255,.12)}
-.dicon.off{opacity:.55}
-.dicon .g{display:flex;align-items:center;justify-content:center;width:38px;height:38px;
-          font-size:20px;font-weight:600;border-radius:10px;color:#fff;
-          background:linear-gradient(135deg,var(--accent),var(--accent-2));text-shadow:none}
-.dicon .n{font-size:12px;word-break:break-word;overflow:hidden;max-height:2.9em}
+/* THE COLUMN OF APP ICONS IS GONE (2026-11-01). The dock holds the same apps,
+   so every one of them stood twice on one screen - and on a phone the column
+   was hidden anyway, which means the dock is the way that always worked. A
+   macOS desktop carries files, not a copy of the launcher. What stays is the
+   EMPTY desktop below, which is a different thing: a sentence and a button
+   for the case where there are no apps at all (docs/gestaltung.md point 3). */
 
 /* ---------- Der leere Schreibtisch ----------
    Ein Satz und ein Knopf (docs/gestaltung.md Punkt 3). Es ist der Ausnahme-
@@ -489,7 +484,6 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .noticeclose:hover{border-color:var(--accent)}
 
 @media (max-width:640px){
-  #icons{display:none}
   .task .lbl{display:none}
 }
 
