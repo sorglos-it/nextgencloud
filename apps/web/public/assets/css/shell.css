@@ -617,9 +617,17 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .poweredby{margin:0 auto;padding:0 16px;max-width:min(360px,calc(100vw - 32px));
            text-align:center;color:var(--muted);font-size:12px}
 
-/* The standing advice to move to passkeys. Bottom LEFT, because the notice
-   bar of the desktop sits in the middle and this one never goes away: two
-   strips over each other is one strip nobody can read. */
+/* The standing advice to move to passkeys. Bottom left.
+   THE REASON WRITTEN HERE WAS NO LONGER TRUE: it said "because the notice bar
+   of the desktop sits in the middle", and that bar moved to the top right on
+   2026-11-01. Left as a false reason it would be read as one, and the next
+   person would keep this corner for a collision that cannot happen any more.
+   The reason it stays here is a different one, and it is about the message
+   itself: this one NEVER goes away, and the top right is where the shell puts
+   what it has to say right now. A standing piece of advice parked in the
+   stack of passing ones either hides the next notice or looks like one that
+   will not go - so it keeps the quiet corner, out of the dock's way, where it
+   can be read and ignored. */
 .passkeyhint{position:fixed;left:16px;bottom:18px;z-index:100001;margin:0;padding:8px 12px;
              border-radius:10px;border:1px solid #d2932a;background:var(--win-bg);
              color:var(--win-fg);box-shadow:var(--shadow);font-size:12.5px;
