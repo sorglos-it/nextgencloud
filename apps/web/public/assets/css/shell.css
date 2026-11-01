@@ -465,8 +465,13 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    appears only when there is news is announced by nobody. */
 /* pointer-events:none on the strip itself: while it is empty it is a box of
    no size, and a box of no size must not be able to swallow a click either. */
-.noticebar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;
-           align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));z-index:100002;
+/* TOP RIGHT, under the band, which is where macOS and Lord Flow put what the
+   system has to say. It stood centred at the bottom of the screen - the spot
+   the dock took on 2026-11-01, so the news and the apps were stacked on the
+   same corner of the screen. Nothing about WHEN it speaks changes here; only
+   where it stands. */
+.noticebar{position:fixed;top:calc(var(--bar-h) + 8px);right:8px;display:flex;
+           align-items:center;gap:6px;max-width:min(380px,calc(100vw - 16px));z-index:100002;
            pointer-events:none}
 .status,.alert,.noticeclose{pointer-events:auto}
 .status,.alert{margin:0;padding:var(--pad) 14px;border-radius:10px;border:1px solid var(--win-border);
