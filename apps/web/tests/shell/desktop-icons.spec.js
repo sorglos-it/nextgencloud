@@ -19,8 +19,8 @@ test.beforeEach(async ({ shell }) => {
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
-test("every badge on the desktop carries an icon that was really drawn", async ({ shell }) => {
-  const seen = await shell.evaluate(() => [...document.querySelectorAll("#icons .dicon .g")]
+test("every badge in the dock carries an icon that was really drawn", async ({ shell }) => {
+  const seen = await shell.evaluate(() => [...document.querySelectorAll("#dock .dapp .g")]
     .map((g) => {
       const s = g.querySelector("svg.ico");
       if (!s) return "(no icon)";
@@ -78,7 +78,7 @@ test("a window and its taskbar entry carry the app's icon", async ({ shell }) =>
 });
 
 test("the badge is not read out with the name", async ({ shell }) => {
-  expect(await shell.evaluate(() => [...document.querySelectorAll(".dicon .g, .smitem .g, .win .g")]
+  expect(await shell.evaluate(() => [...document.querySelectorAll(".dapp .g, .smitem .g, .win .g")]
     .every((g) => g.getAttribute("aria-hidden") === "true"))).toBe(true);
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.getByRole("menuitem", { name: "Rechner", exact: true })).toHaveCount(1);

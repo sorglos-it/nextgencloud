@@ -8,6 +8,10 @@ test.beforeEach(async ({ shell }) => {
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
+// The six the shell offers, written here once so a case can say "one of the
+// six" without a second list of hex values to keep right.
+const ACCENT_SIX = ["#2f7de1", "#16d1c3", "#e14f8a", "#f0a020", "#8b5cf6", "#22c55e"];
+
 const accent = (shell) => shell.evaluate(() =>
   getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
 const wallpaper = (shell) => shell.locator("#wallpaper").evaluate((e) => e.style.background);
@@ -157,17 +161,21 @@ test("a colour picked while an app is open reaches that app's frame", async ({ s
 // Türkis is the swatch under test because it is the one word that differs in
 // every language; "Orange" and "Pink" would pass with a file that was never
 // translated.
-for (const [locale, want] of [
-  ["de-DE", "Farbe Türkis"],
-  ["en-US", "Color Turquoise"],
-  ["es-ES", "Color Turquesa"],
-  ["fr-FR", "Couleur Turquoise"],
-  ["it-IT", "Colore Turchese"],
+//
+// THE NAME OF THE START BUTTON IS TRANSLATED TOO since 2026-11-01, so it is
+// named per language here. MEASURED, and it cost two red cases: these two
+// clicked "Start" and waited thirty seconds for it in Spanish and French.
+for (const [locale, want, start] of [
+  ["de-DE", "Farbe Türkis", "Start"],
+  ["en-US", "Color Turquoise", "Start"],
+  ["es-ES", "Color Turquesa", "Inicio"],
+  ["fr-FR", "Couleur Turquoise", "Démarrer"],
+  ["it-IT", "Colore Turchese", "Start"],
 ]) {
   test.describe(`in ${locale}`, () => {
     test.use({ locale });
     test("the second swatch is named in this language", async ({ shell }) => {
-      await shell.getByRole("button", { name: "Start" }).click();
+      await shell.getByRole("button", { name: start, exact: true }).click();
       const second = shell.locator("#smlook .swatches button").nth(1);
       // The name as the BROWSER hands it out, not the string the source holds.
       expect(await second.evaluate((e) => e.getAttribute("aria-label"))).toBe(want);
@@ -273,6 +281,88 @@ test("the start button keeps its name without carrying the word", async ({ shell
   expect((await b.textContent()).trim()).toBe("⊞");
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.locator("#startmenu")).toHaveClass(/open/);
+});
+
+// The band's own words, in all five languages. The mark at the left, the dock
+// and the four entries of the app menu were German strings in the source until
+// 2026-11-01 - the same defect as the colour names, found the same way.
+//
+// MEASURED here as the browser hands them out, and with the clock: it was
+// nailed to "de-DE", so a Spanish user got a German weekday and the German
+// order of day and month.
+for (const [locale, start, close, weekday] of [
+  ["de-DE", "Start", "Schließen", null],
+  ["en-US", "Start", "Close", null],
+  ["es-ES", "Inicio", "Cerrar", null],
+  ["fr-FR", "Démarrer", "Fermer", null],
+  ["it-IT", "Start", "Chiudi", null],
+]) {
+  test.describe(`band in ${locale}`, () => {
+    test.use({ locale });
+    test("the mark, the dock and the app menu speak this language", async ({ shell }) => {
+      expect(await shell.locator("#startbtn").getAttribute("aria-label")).toBe(start);
+      expect(await shell.locator("#dock").getAttribute("aria-label")).toBe("Dock");
+      await shell.getByRole("button", { name: start }).click();
+      await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+      await shell.locator("#appbtn").click();
+      const drop = shell.locator("#appdrop");
+      await expect(drop.locator("button").last()).toHaveText(close);
+
+      // The clock is this language's own date, not German's. The one thing
+      // asserted about its text is that it is NOT the German order with a
+      // year in it, which is what stood there before - the rest is the
+      // browser's business and changes with the engine's data.
+      const txt = (await shell.locator("#clock").textContent()).trim();
+      expect(txt).not.toMatch(/\d{4}/);
+      expect(txt).toMatch(/\d{1,2}:\d{2}/);
+      // The date and the time must not read as one word. MEASURED: without a
+      // space in the text it said "Nov 106:13 PM".
+      expect(txt).toMatch(/\s\d{1,2}:\d{2}/);
+      if (weekday) expect(txt).toContain(weekday);
+    });
+  });
+}
+
+// Every app badge wore the accent until 2026-11-01, so seven apps in the dock
+// were seven identical tiles. The tint is one of the shell's own six now, read
+// off the app's id.
+test("the apps do not all wear the same colour", async ({ shell }) => {
+  const tints = await shell.locator("#dock .dapp .g").evaluateAll(
+    (gs) => gs.map((g) => g.style.getPropertyValue("--tint")));
+  expect(tints.length).toBeGreaterThan(3);
+  // Not a count: with more than six apps two of them share a colour, and that
+  // is allowed. What is not allowed is one colour for all of them.
+  expect(new Set(tints).size).toBeGreaterThan(1);
+  for (const t of tints) expect(ACCENT_SIX).toContain(t);
+
+  // The same app is the same colour wherever it is drawn, and after a reload.
+  const ofApp = (where) => shell.locator(where).evaluate(
+    (g) => g.style.getPropertyValue("--tint"));
+  const dock = await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g');
+  await shell.getByRole("button", { name: "Start" }).click();
+  const menu = await shell.locator("#smlist .smitem")
+    .filter({ hasText: "Rechner" }).locator(".g")
+    .evaluate((g) => g.style.getPropertyValue("--tint"));
+  expect(menu).toBe(dock);
+  await shell.reload();
+  await signIn(shell);
+  await expect(shell.locator("#taskbar")).toBeVisible();
+  expect(await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g')).toBe(dock);
+});
+
+// The mark at the left of the band is a mark, not a lit pill: it carried the
+// accent as a gradient with a drop shadow, the loudest thing on a quiet screen.
+test("the mark in the band is quiet until it is pointed at", async ({ shell }) => {
+  const paint = () => shell.locator("#startbtn").evaluate((e) => {
+    const c = getComputedStyle(e);
+    return { img: c.backgroundImage, col: c.backgroundColor, shadow: c.boxShadow };
+  });
+  const quiet = await paint();
+  expect(quiet.img).toBe("none");
+  expect(quiet.shadow).toBe("none");
+  expect(quiet.col).toBe("rgba(0, 0, 0, 0)");
+  await shell.locator("#startbtn").hover();
+  expect((await paint()).col).not.toBe("rgba(0, 0, 0, 0)");
 });
 
 // What the system says stands top right, under the band - where macOS and
