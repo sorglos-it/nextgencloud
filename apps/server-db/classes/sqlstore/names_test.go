@@ -103,3 +103,42 @@ func TestPlaceholders(t *testing.T) {
 		}
 	}
 }
+
+// TestColumnTypeCoversEveryColumn holds the shape of ColumnType: one entry per
+// column of every table, and no entry for anything else. It says nothing about
+// whether an entry is RIGHT - that is measured against the statements the
+// migrations really carry, in migrate's
+// TestColumnTypeIsWhatTheMigrationsWrite. Both halves are needed: this one
+// catches a column added to Columns and forgotten here, that one catches an
+// entry that names the wrong type.
+func TestColumnTypeCoversEveryColumn(t *testing.T) {
+	for _, table := range Tables {
+		types, ok := ColumnType[table]
+		if !ok {
+			t.Errorf("ColumnType does not know table %q", table)
+			continue
+		}
+		for _, c := range Columns[table] {
+			p, ok := types[c]
+			if !ok {
+				t.Errorf("ColumnType does not know %s.%s", table, c)
+				continue
+			}
+			// "opts" is the suffix of CREATE TABLE, never a column, so a
+			// column that claims it is as wrong as one with a typo.
+			if p == "opts" || !slices.Contains(Placeholders, p) {
+				t.Errorf("%s.%s has placeholder %q, which is not a column type", table, c, p)
+			}
+		}
+		for c := range types {
+			if !slices.Contains(Columns[table], c) {
+				t.Errorf("ColumnType knows %s.%s, Columns does not", table, c)
+			}
+		}
+	}
+	for table := range ColumnType {
+		if !slices.Contains(Tables, table) {
+			t.Errorf("ColumnType knows table %q, Tables does not", table)
+		}
+	}
+}

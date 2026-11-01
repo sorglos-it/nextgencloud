@@ -32,6 +32,42 @@ var Columns = map[string][]string{
 // migration writes {{key}}; Fill puts the dialect's type in its place.
 var Placeholders = []string{"key", "text", "doc", "data", "int", "opts"}
 
+// ColumnType is the placeholder each column was created with, by table and
+// column name. It is the one piece this package was missing, and the reason it
+// stands here as data rather than being read out of a file: until 30.10.2026
+// the only place that said which type a column carries was the TEXT of
+// sql/0001-core.sql, so nothing a program runs could ask the question - and
+// what is not in the repo as data does not hold. Columns knows the names,
+// this knows what each one is.
+//
+// What it is FOR is a check against the real database: the type a column
+// really has, read back out of the database, against the one it was made with.
+// Measured on 30.10.2026 why that is worth having: ngc_blob.seq turned from
+// the number type into the byte type lets both SQLite and MariaDB start
+// without a word, and BlobFrom then hands its rows back in the wrong order -
+// on SQLite it hands back rows that do not belong in the answer at all. No
+// error anywhere. The check that looked like it covered this asked only
+// whether a type is ONE OF the dialect's types, and "BLOB" is one of them.
+//
+// "opts" is not in here: it is the suffix of CREATE TABLE, not a column.
+// migrate's TestColumnTypeIsWhatTheMigrationsWrite holds every entry against
+// the statements the migrations really carry, so neither half can drift.
+var ColumnType = map[string]map[string]string{
+	"ngc_schema": {"version": "int", "step": "int", "done": "int", "applied": "int"},
+	"ngc_lock":   {"name": "key", "owner": "text", "until": "int"},
+	"ngc_blob":   {"kind": "key", "id": "key", "seq": "int", "data": "data", "updated": "int"},
+	"ngc_app": {"id": "key", "version": "key", "store": "key", "node": "key", "active": "int",
+		"manifest": "doc", "sha256": "key", "grants": "doc", "kept_data": "int", "updated": "int"},
+	"ngc_once": {"kind": "key", "token": "key", "data": "key", "expires": "int", "used": "int"},
+	"ngc_user": {"id": "key", "name": "key", "roles": "doc", "totp": "doc", "locked": "int",
+		"failures": "int", "last_login": "int"},
+	"ngc_session": {"token": "key", "user_id": "key", "cert": "doc", "proof": "doc",
+		"api_key": "doc", "api_cert": "doc", "created": "int", "expires": "int", "seen": "int"},
+	"ngc_pending": {"pubkey": "key", "name": "key", "since": "int"},
+	"ngc_log": {"id": "key", "ts": "int", "user_id": "key", "kind": "key", "app": "key",
+		"action": "key", "node": "key", "result_code": "key", "detail": "text"},
+}
+
 // reserved holds the words the five databases reserve, upper case. The list
 // is why columns are called user_id, ts and result_code: "user", "time" and
 // "result" are reserved somewhere. It is not the full standard, only what a
