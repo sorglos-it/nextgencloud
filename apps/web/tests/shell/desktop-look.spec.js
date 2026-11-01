@@ -8,6 +8,10 @@ test.beforeEach(async ({ shell }) => {
   await expect(shell.locator("#taskbar")).toBeVisible();
 });
 
+// The six the shell offers, written here once so a case can say "one of the
+// six" without a second list of hex values to keep right.
+const ACCENT_SIX = ["#2f7de1", "#16d1c3", "#e14f8a", "#f0a020", "#8b5cf6", "#22c55e"];
+
 const accent = (shell) => shell.evaluate(() =>
   getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
 const wallpaper = (shell) => shell.locator("#wallpaper").evaluate((e) => e.style.background);
@@ -318,3 +322,45 @@ for (const [locale, start, close, weekday] of [
     });
   });
 }
+
+// Every app badge wore the accent until 2026-11-01, so seven apps in the dock
+// were seven identical tiles. The tint is one of the shell's own six now, read
+// off the app's id.
+test("the apps do not all wear the same colour", async ({ shell }) => {
+  const tints = await shell.locator("#dock .dapp .g").evaluateAll(
+    (gs) => gs.map((g) => g.style.getPropertyValue("--tint")));
+  expect(tints.length).toBeGreaterThan(3);
+  // Not a count: with more than six apps two of them share a colour, and that
+  // is allowed. What is not allowed is one colour for all of them.
+  expect(new Set(tints).size).toBeGreaterThan(1);
+  for (const t of tints) expect(ACCENT_SIX).toContain(t);
+
+  // The same app is the same colour wherever it is drawn, and after a reload.
+  const ofApp = (where) => shell.locator(where).evaluate(
+    (g) => g.style.getPropertyValue("--tint"));
+  const dock = await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g');
+  await shell.getByRole("button", { name: "Start" }).click();
+  const menu = await shell.locator("#smlist .smitem")
+    .filter({ hasText: "Rechner" }).locator(".g")
+    .evaluate((g) => g.style.getPropertyValue("--tint"));
+  expect(menu).toBe(dock);
+  await shell.reload();
+  await signIn(shell);
+  await expect(shell.locator("#taskbar")).toBeVisible();
+  expect(await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g')).toBe(dock);
+});
+
+// The mark at the left of the band is a mark, not a lit pill: it carried the
+// accent as a gradient with a drop shadow, the loudest thing on a quiet screen.
+test("the mark in the band is quiet until it is pointed at", async ({ shell }) => {
+  const paint = () => shell.locator("#startbtn").evaluate((e) => {
+    const c = getComputedStyle(e);
+    return { img: c.backgroundImage, col: c.backgroundColor, shadow: c.boxShadow };
+  });
+  const quiet = await paint();
+  expect(quiet.img).toBe("none");
+  expect(quiet.shadow).toBe("none");
+  expect(quiet.col).toBe("rgba(0, 0, 0, 0)");
+  await shell.locator("#startbtn").hover();
+  expect((await paint()).col).not.toBe("rgba(0, 0, 0, 0)");
+});

@@ -46,6 +46,17 @@ const BUILTIN = {
   "ngc.users": usersApp,
 };
 
+// tintOf picks one of the six by the app's id. A sum of the characters, which
+// is enough: this is not a hash anybody has to trust, only a way to spread the
+// apps over the six and land on the same one every time. An id is the thing
+// about an app that cannot change without it being another app, so the colour
+// cannot drift while a name or a version does.
+function tintOf(id) {
+  let n = 0;
+  for (let i = 0; i < id.length; i++) n = (n + id.charCodeAt(i)) % ACCENTS.length;
+  return ACCENTS[n];
+}
+
 // The id of the Store, written once. The empty desktop offers it by name, and
 // a second spelling of it somewhere else is a button that opens nothing.
 const STORE_APP = "ngc.store";
@@ -615,6 +626,21 @@ class Desktop {
   glyph(a) {
     const g = el("span", "g", null);
     g.setAttribute("aria-hidden", "true");
+    // EVERY BADGE WORE THE SAME COLOUR until 2026-11-01: the accent, which is
+    // one colour for the whole shell, so seven apps side by side in the dock
+    // were seven identical tiles that could be told apart only by the small
+    // shape inside them. An accent is for what is SELECTED - a focus ring, a
+    // marked swatch, the key under a finger. Giving it to every app at once
+    // spends the one colour that means "this one" on everything at once.
+    //
+    // The tint comes out of the SIX colours this shell already has - Thomas'
+    // decision of 2026-10-30 that the colours stay - so not one new number
+    // enters the repo for this. Which of the six an app wears is read off its
+    // id, so it is the same colour on the desktop, in the dock, in the start
+    // menu and in the title bar, and the same one again after a reload. With
+    // more than six apps two of them share a colour; the shape inside still
+    // tells those two apart, and six tiles that differ beat seven that do not.
+    g.style.setProperty("--tint", tintOf(a.id));
     fillGlyph(g, iconName(a));
     return g;
   }

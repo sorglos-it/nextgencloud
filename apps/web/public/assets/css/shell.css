@@ -196,12 +196,16 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
          gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(var(--blur)) saturate(150%);
          border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000;
          font-size:13px;font-weight:500}
-#startbtn{display:flex;align-items:center;gap:8px;height:22px;padding:0 9px;border:0;
-          border-radius:5px;cursor:pointer;font:inherit;font-weight:600;color:#fff;
-          background:linear-gradient(135deg,var(--accent),var(--accent-2));
-          box-shadow:0 2px 8px rgba(0,0,0,.3)}
-#startbtn:hover{filter:brightness(1.12)}
-#startbtn.open{filter:brightness(.9)}
+/* THE MARK AT THE LEFT IS A MARK, not a coloured pill. It wore the accent as
+   a gradient with a drop shadow - a lit button sitting in a band that is
+   translucent and quiet, the loudest thing on a screen that has nothing to
+   shout about yet. In macOS and in Lord Flow the far left of the band is a
+   glyph in the band's own colour, and it lights up only while it is pressed
+   or pointed at, exactly as the entries beside it do. */
+#startbtn{display:flex;align-items:center;height:22px;padding:0 9px;border:0;
+          border-radius:5px;cursor:pointer;font:inherit;color:inherit;background:none}
+#startbtn:hover{background:rgba(127,127,127,.26)}
+#startbtn.open{background:rgba(127,127,127,.32)}
 #startbtn .logo{font-size:16px}
 
 /* The name of the app in front, and its menu. 700 is the sheet's weight for
@@ -262,7 +266,9 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 .dapp:hover,.dapp:focus-visible{width:var(--dock-magnify);height:var(--dock-magnify)}
 .dapp .g{display:flex;align-items:center;justify-content:center;width:100%;height:100%;
          border-radius:9px;color:#fff;
-         background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+         background:var(--tint,var(--accent));
+         background:linear-gradient(135deg,var(--tint,var(--accent)),
+                     color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
 .dapp .g .ico{width:74%;height:74%}
 .dapp.off{opacity:.55}
 /* The dot that says the app is open. It sits UNDER the icon, outside it, so a
@@ -291,7 +297,9 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 .smitem.off{opacity:.55}
 .smitem .g{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
            font-size:18px;font-weight:600;border-radius:9px;color:#fff;
-           background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+           background:var(--tint,var(--accent));
+           background:linear-gradient(135deg,var(--tint,var(--accent)),
+                       color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
 .smitem .n{overflow:hidden;word-break:break-word;max-height:2.9em}
 .smempty{padding:14px;color:var(--muted)}
 #smlook{padding:4px 12px 10px;border-top:1px solid rgba(127,127,127,.25)}
@@ -326,7 +334,9 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 .win.focus .titlebar{background:var(--title-bg-active)}
 .titlebar .g{display:flex;align-items:center;justify-content:center;width:20px;height:20px;
              font-size:12px;font-weight:600;border-radius:6px;color:#fff;
-             background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+             background:var(--tint,var(--accent));
+             background:linear-gradient(135deg,var(--tint,var(--accent)),
+                         color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
 .titlebar .t{flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
              white-space:nowrap;opacity:.9}
 .win.focus .titlebar .t{opacity:1}
