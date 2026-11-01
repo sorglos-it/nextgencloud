@@ -122,6 +122,16 @@ export const BUILT_IN = Object.freeze({
   "look.accent.orange": "Orange",
   "look.accent.violet": "Violet",
   "look.accent.green": "Green",
+  // The band and the window commands. In here for the same reason as the rest:
+  // without a sentence the mark at the left of the band has no name, the dock
+  // has no name, and the menu of the app in front is four empty buttons.
+  "bar.start": "Start",
+  "bar.dock": "Dock",
+  "win.minimize": "Minimise",
+  "win.maximize": "Maximise",
+  "win.restore": "Restore",
+  "win.tile": "Arrange windows",
+  "win.close": "Close",
 });
 
 // A map of strings, read through the house decoder with a budget: a language

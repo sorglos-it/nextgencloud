@@ -5,7 +5,7 @@
 // prototype in docs/prototype.html builds the same surface with innerHTML;
 // look and handling are taken from it, that habit is not.
 import { el, button, text, clear } from "./dom.js";
-import { t } from "./lang.js";
+import { t, language } from "./lang.js";
 import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
 import { storeApp } from "../apps/store.js";
@@ -142,7 +142,7 @@ class Desktop {
     // places aim at this button by the name "Start". The mark itself says
     // nothing a screen reader can read, so without this line the way into the
     // app list has no name at all.
-    this.startBtn.setAttribute("aria-label", "Start");
+    this.startBtn.setAttribute("aria-label", t("bar.start"));
     this.startBtn.append(logo);
     this.startBtn.setAttribute("aria-expanded", "false");
     this.startBtn.addEventListener("click", (e) => {
@@ -183,7 +183,7 @@ class Desktop {
     this.dock = el("div", null);
     this.dock.id = "dock";
     this.dock.setAttribute("role", "toolbar");
-    this.dock.setAttribute("aria-label", "Dock");
+    this.dock.setAttribute("aria-label", t("bar.dock"));
     root.append(this.dock);
 
     // The app menu hangs off the shell and not off the band: the band clips
@@ -203,9 +203,23 @@ class Desktop {
   tick() {
     const d = new Date();
     clear(this.clock);
+    // THE SHELL'S OWN LANGUAGE, not "de-DE". It stood nailed to German here,
+    // in a shell that offers five languages: a Spanish user was handed a
+    // German weekday and a German order of day and month. language() answers
+    // with the one of the five that is in force, which is the same one every
+    // sentence beside this clock is written in.
+    //
+    // DATE FIRST, then the time, and the year is gone. That is the macOS and
+    // Lord Flow order, and the year is the part nobody reads off a clock -
+    // in a band of 28 the room it took is the room the app's name needs.
+    const lang = language();
     this.clock.append(
-      el("b", null, d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })),
-      el("span", null, d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })),
+      el("span", null, d.toLocaleDateString(lang, { weekday: "short", day: "numeric", month: "short" })),
+      // The space belongs IN the text and not only in the flex gap. MEASURED:
+      // with the gap alone the two read as one word - "Nov 106:13 PM" - which
+      // is what a screen reader says out loud. The gap puts the air on the
+      // screen, this puts it in the sentence.
+      el("b", null, " " + d.toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" })),
     );
   }
 
@@ -739,13 +753,13 @@ class Desktop {
       this.appDrop.append(b);
     };
     if (!w) return;
-    item("Minimieren", true, () => w.minimize());
-    item(w.max ? "Wiederherstellen" : "Maximieren", true, () => w.toggleMax());
+    item(t("win.minimize"), true, () => w.minimize());
+    item(t(w.max ? "win.restore" : "win.maximize"), true, () => w.toggleMax());
     // Arranging is about ALL the windows, not this one, so it is offered only
     // when there is more than one to arrange.
     const open2 = [...this.windows.values()].filter((x) => !x.min).length;
-    item("Fenster anordnen", open2 > 1, () => this.tile());
-    item("Schließen", true, () => w.close());
+    item(t("win.tile"), open2 > 1, () => this.tile());
+    item(t("win.close"), true, () => w.close());
   }
 
   renderIcons() {

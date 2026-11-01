@@ -26,5 +26,12 @@
   "look.accent.pink": "Rosa",
   "look.accent.orange": "Arancione",
   "look.accent.violet": "Viola",
-  "look.accent.green": "Verde"
+  "look.accent.green": "Verde",
+  "bar.start": "Start",
+  "bar.dock": "Dock",
+  "win.minimize": "Riduci a icona",
+  "win.maximize": "Ingrandisci",
+  "win.restore": "Ripristina",
+  "win.tile": "Disponi finestre",
+  "win.close": "Chiudi"
 }
