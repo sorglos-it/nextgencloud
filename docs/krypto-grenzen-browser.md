@@ -1,0 +1,526 @@
+# Krypto-Grenzen der Browser – was NGC in welcher Engine kann
+
+Stand 31.10.2026. Grundstand `dab25ef7` (origin/main), Zweig `web-krypto-grenzen`.
+Arbeitsbaum `D:\claude\working\ngc-krypto-grenzen` (lokale Platte D:, nicht das NAS Z:).
+
+Dieses Blatt trennt **zwei verschiedene Grenzen** mit **zwei verschiedenen Behebungen**.
+Wer sie in einen Satz packt, sucht später an der falschen Stelle.
+
+## 0. Die erste Lehre, und sie ist keine über Browser
+
+**Der Befund stand schon im Repo – getrennt, gemessen, mit Datum und Befehl.** In
+`apps/web/tests/fixtures/page.js:124-138` und `:322-346` steht seit dem 18.10.2026,
+dass webkit 26.0 bei `generateKey` mit `NotSupportedError` fällt und firefox 141.0 bei
+`exportKey("jwk")` mit `OperationError` – zwei verschiedene Grenzen, jede benannt, mit
+den drei Zeilen zum Nachfahren daneben. Gefunden hat es niemand, weil keiner dort
+nachgesehen hat. Stattdessen wurde dreimal eine Zahl weitergegeben, die der Absender
+nicht selbst gelesen hatte: erst „WebKit kann gar kein Ed25519" (Vermutung), dann „alle
+Übersprünge hängen an einem Haken `hasEd25519`" (falsch), dann „es sind vier Haken"
+(auch falsch – es sind zehn über sechs Lücken, und daneben ein zweites System aus elf
+lockeren Kopien).
+
+**Und es stand nicht nur im Repo.** Dieselbe Messung liegt seit dem 25.09./01.10.2026
+auch im Gedächtnis dieses Rechners, Wort für Wort: firefox kann `sign`, `verify`,
+`deriveBits`, `generateKey` und `importKey` für beide Kurven und genau eines nicht,
+`exportKey("jwk")` eines per `importKey("pkcs8")` eingeführten Schlüssels; webkit kennt
+die Kurven gar nicht. Zwei unabhängige Quellen, beide ungelesen.
+
+Die Notiz dort hält zusätzlich fest, **wie teuer dieses Muster schon einmal war**:
+sechsundzwanzig Aufträge lang wurde „firefox startet auf dieser Maschine nicht" als
+Umgebungstatsache weitergegeben, niemand hat firefox gemessen, und dann lief ein Satz
+versehentlich ohne Engine-Filter – **157 rote Fälle**. Am 31.10.2026 wiederholt sich
+dieselbe Figur, nur andersherum: ein Satzlauf über **zwei** Engines, und die am
+stärksten betroffene fehlt (Abschnitt 8, Punkt 5).
+
+**Daraus folgt der Satz, der das nächste Mal verhindert.** Dass ein Lauf alle drei
+Engines fährt, ist keine Verbesserung am Rand und kein Gründlichkeitsluxus, den man
+weglassen darf, weil es schneller geht – es ist die Behebung eines Fehlers, der hier
+schon einmal **157 Fälle** gekostet hat. Wer die dritte Engine weglässt, misst nicht
+weniger genau, sondern **in der Engine gar nicht**, und ein Grün aus zwei Engines sagt
+über die dritte nichts. Ein übersprungener Fall heißt nicht „der Browser kann es nicht",
+sondern „wir wissen nicht, ob er es kann" – und eine fehlende Engine heißt nicht einmal
+das.
+
+Dazu die billige Gegenmaßnahme, die am 31.10.2026 einen Platz gerettet hat und ab jetzt
+vor jedem Lauf gilt: **die Fahrbereitschaftsprüfung.** `npx playwright test --list` auf
+die gemeinte Datei startet keinen Browser, bindet keinen Port und braucht keine Sekunde
+eines Platzes – und sie nennt die Fallzahl **je Engine** und einen Ausstiegscode. Hier:
+6 Fälle, 3 Engines, Ausstieg 0. Wer ohne sie auf einen freien Platz losfährt, erfährt
+erst im Platz, dass die Vorrichtung fehlt (Abschnitt 4, Tabelle).
+
+**Die Lehre: vor der Messung die Datei lesen, die die Antwort schon enthalten könnte.**
+Das ist dieselbe Figur, die `messen.md` unter „eine Abwesenheit belegt man mit Orten,
+nicht mit Suchern" führt – dort war eine frühere, gelungene Messung für einen Irrtum
+gehalten worden, weil die Mehrheit nichts fand. Hier war sie nicht einmal gesucht.
+
+Was **nicht** im Repo stand und darum den eigentlichen Auftrag ausmacht: was die
+Engines jenseits der ersten gefallenen Stufe können, und ob sich dort ein Mensch
+anmelden kann.
+
+---
+
+## 1. Erwartung, aufgeschrieben VOR der Messung
+
+Festgehalten am 31.10.2026, bevor ein Browser gelaufen ist. Rein aus dem Quelltext
+gelesen, damit später zu sehen ist, wo das Lesen danebenlag.
+
+| Nr. | Erwartung | Wird wie geprüft |
+|---|---|---|
+| E1 | *(bestätigt)* Es gibt **kein** einzelnes `hasEd25519`, an dem alle Übersprünge hängen. Zwei getrennte Systeme: zehn `skipWithout…` über sechs gemessene Lücken, und daneben elf lokale Kopien eines lockereren `hasEd25519`. | Dateizeilen, Abschnitt 2 |
+| E2 | *(bestätigt, und schärfer: es ist eine HERKUNFTSfrage)* Die webkit-Grenze ist **die Kurve selbst** (`generateKey` fällt), die firefox-Grenze ist **ein einzelner Ausgang** (`exportKey("jwk")` eines eingeführten Schlüssels). Verschiedene Stufen, verschiedene Behebungen. | Fähigkeitstafel, Abschnitt 4 |
+| E3 | In Playwrights webkit kommt **die Maske nie** – `browserFits()` fällt vor allem anderen, der Mensch liest `boot.tooold`. | Anmeldemessung, Abschnitt 5 – **bestätigt** |
+| E4 | In firefox kommt eine Anmeldung **sehr wohl durch**, aber nur über **Passkey**: Passwortfeld aus, Passkey-Knopf an. | Anmeldemessung, Abschnitt 5 – **bestätigt** |
+| E5 | Die webkit-Grenze ist eine Grenze **des Prüfgerüsts**, nicht von Safari. Safari ab 17 hat Ed25519. Dann ist „in diesem Browser kann sich niemand anmelden" für echtes Safari **falsch**. | Abschnitt 6, und sie ist mit diesem Prüfsatz **nicht** zu messen |
+| E6 | *(halb bestätigt: zu locker ja, aber es fällt heute kein Fall deswegen – siehe Lücke 3)* Die elf lokalen `hasEd25519`-Kopien sind in firefox **zu locker**: sie fragen nur `importKey("raw")`, das kann firefox – also lassen sie Fälle laufen, die danach an `exportKey("jwk")` sterben. | Abschnitt 4 gegen Abschnitt 2 |
+
+Was diese Erwartung **widerlegen** würde, und das wäre das beste Ergebnis von allen:
+eine Anmeldung, die in firefox **und** in webkit durchkommt. E3 und E4 sind genau darauf
+gerichtet.
+
+---
+
+## 2. Woran der Übersprung hängt – zwei Systeme, nicht eins
+
+### System A: zehn Haken über sechs gemessene Lücken
+
+Alle in `apps/web/tests/fixtures/page.js`. Sie hängen an **einer** Messfunktion,
+`sessionKeyGaps` (Zeile 139), die je Engine sechs Lücken misst. Jede Lücke antwortet
+mit dem leeren Text, wenn die Engine den Vorgang kann, sonst mit dem Namen der ersten
+Stufe, die gefallen ist – und genau dieser Text steht dann in der Übersprung-Begründung.
+
+| Lücke | Was sie wirklich tut | Zeile |
+|---|---|---|
+| `curves` | die zwei `generateKey`, die der Auslieferungscode in `browserFits()` macht – und nichts weiter | 193 |
+| `ed25519` | Schlüssel, Signatur, Prüfung, öffentlicher Teil wieder eingeführt **und benutzt** | 206 |
+| `ed25519FromSeed` | öffentlicher Teil aus einer PKCS#8-Saat, und er muss die richtige Hälfte sein | 234 |
+| `x25519` | Schlüsselpaar, rohe Bytes, Gegenschlüssel, gemeinsames Geheimnis | 260 |
+| `x25519FromDocument` | öffentlicher Teil eines FESTEN Schlüssels aus einem PKCS#8-Dokument | 293 |
+| `p256FromDocument` | P-256 aus einem PKCS#8-Dokument, Signatur, Prüfung – was der Passkey-Weg braucht | 347 |
+
+| Haken | Zeile | Verlangt |
+|---|---|---|
+| `skipWithoutShell` | 465 | `curves` |
+| `skipWithoutLogin` | 470 | `ed25519` + `x25519` + `ed25519FromSeed` |
+| `skipWithoutSetup` | 478 | dasselbe wie `skipWithoutLogin` |
+| `skipWithoutSeedKeys` | 413 | `ed25519` + `ed25519FromSeed` |
+| `skipWithoutPasskey` | 434 | `ed25519` + `x25519` + `p256FromDocument` |
+| `skipWithoutSignatures` | 524 | `ed25519` |
+| `skipWithoutHandshake` | 511 | `x25519` |
+| `skipWithoutSessionKeys` | 530 | `x25519` |
+| `skipWithoutFixedKeys` | 516 | `x25519` + `x25519FromDocument` |
+| `skipWithoutCDPAuthenticator` | 506 | nichts davon – die WebAuthn-Domäne von CDP |
+
+Dieses System ist **sorgfältig gebaut und trägt**. Die Datei schreibt selbst auf, was
+zwei frühere Fassungen gekostet haben (Zeile 84–101): ein Haken, der nur `generateKey`
+fragte, ließ 157 Fälle in firefox rot laufen; die Reparatur danach war zu streng und
+schaltete zehn grüne firefox-Fälle still ab, darunter eine Sicherheitsprüfung. Daraus
+die Regel in der Datei: **eine Lücke je Vorgang, und ein Fall fragt nach dem, was er
+wirklich tut.** Diese Regel gilt weiter und wird hier nicht angetastet.
+
+### System B: elf lokale Kopien eines lockereren Hakens
+
+Daneben stehen elf eigene, voneinander unabhängige Kopien einer Funktion namens
+`hasEd25519`, die **nicht** über `fixtures/page.js` gehen:
+
+| Datei | Zeile |
+|---|---|
+| `apps/web/tests/contracts/catalog.spec.js` | 25 |
+| `apps/web/tests/contracts/core.spec.js` | 146 |
+| `apps/web/tests/contracts/proof.spec.js` | 23 |
+| `apps/web/tests/contracts/session.spec.js` | 22 |
+| `apps/web/tests/contracts/sign.spec.js` | 16 |
+| `apps/web/tests/contracts/task.spec.js` | 19 |
+| `apps/web/tests/contracts/trust.spec.js` | 18 |
+| `apps/web/tests/contracts/tunnel.spec.js` | 18 |
+| `apps/web/tests/shell/store.spec.js` | 106 |
+| `apps/web/tests/shell/trustlist.spec.js` | 42 |
+| `apps/web/tests/shell/users.spec.js` | 411 |
+
+Jede fragt dasselbe und nur dieses:
+
+```js
+await crypto.subtle.importKey("raw", b64decode(pubB64), { name: "Ed25519" }, false, ["verify"]);
+```
+
+**Das ist genau der Haken, den `fixtures/page.js` als unzureichend abgelöst hat** – er
+prüft eine Vorbereitung, nicht die Wirkung (`messen.md`, „geprüft wurde die Form, nicht
+die Wirkung"). In webkit sagt er richtig Nein, weil dort die Kurve fehlt. In firefox
+sagt er Ja, weil firefox `importKey("raw")` kann – und lässt damit jeden Fall laufen,
+der danach an `exportKey("jwk")` stirbt.
+
+**Also: die Übersprünge in `contracts/` kommen aus System B, die in `shell/` aus
+System A.** Das ist die Trennung, die der Auftrag verlangt, und sie liegt eine Ebene
+tiefer als vermutet: nicht zwei Engines mit einem Haken, sondern zwei Haken-Systeme
+verschiedener Güte am selben Satz.
+
+---
+
+## 3. Die drei Tore im Auslieferungscode
+
+Entscheidend für die Frage „kann sich dort ein Mensch anmelden", und sie steht nicht im
+Prüfsatz, sondern in `apps/web/public/assets/js/shell/main.js`:
+
+| Tor | Zeile | Fragt | Was ein Nein bedeutet |
+|---|---|---|---|
+| `browserFits()` | 22 | `generateKey` für Ed25519 und X25519 | **Keine Maske.** Der Mensch liest `boot.tooold` und kommt nicht weiter |
+| `passwordLoginFits()` | 66 | öffentlicher Teil einer Passwort-Saat, und er muss die Signatur prüfen | Passwortfeld aus, Passkey bleibt |
+| `passkeyFits()` | 119 | `navigator.credentials.get` ist eine Funktion | Passkey-Knopf aus |
+
+Der Code hat also **drei** Stufen, nicht eine. Was die Datei selbst dazu aufschreibt
+(Zeile 50–57) ist der Grund, warum das Blatt überhaupt nötig ist: vor dem zweiten Tor
+kam in firefox die Maske, das Passwort wurde genommen, Argon2id lief anderthalb
+Sekunden, und die Antwort war „Anmeldung fehlgeschlagen." – **der Satz für ein falsches
+Passwort**, obwohl kein Passwort der Welt hineingekommen wäre. Das ist dieselbe Falle,
+die `messen.md` als „ein verschluckter Fehler wird zur Falschauskunft" führt, und sie
+ist hier behoben.
+
+---
+
+## 4. Fähigkeitstafel je Engine
+
+**Die Selbstprüfung der Sonde ist in allen drei Engines leer** (AES-GCM `generateKey`,
+SHA-256 `digest`, `isSecureContext`). Die Sonde hat also die Engines gemessen und nicht
+sich selbst. Ohne diese Zeile wäre die webkit-Spalte unten nicht lesbar: eine Spalte aus
+lauter „nein" ist genau das, was eine kaputte Sonde erzeugt.
+
+Gemessen am 31.10.2026, `apps/web/tests/shell/krypto-tafel.spec.js`, Playwright 1.55.1,
+Arbeitsbaum `D:\claude\working\ngc-krypto-grenzen` auf der lokalen Platte D:. Befehl:
+
+```
+cd apps\web\tests
+$env:NGC_WEB_TEST_PORT = "8201"; npx playwright test shell/krypto-tafel.spec.js
+```
+
+6 bestanden, 0 rot, 0 übersprungen, Ausstiegscode 0, 48 Sekunden.
+TIME_WAIT 13:55:21 = **705** vor dem Lauf, 13:56:09 = **1 907** danach (+1 202).
+Zum Vergleich: ein voller Satz über drei Engines hinterlässt rund 17 000.
+
+**„Folge" ist eine eigene Spalte und keine Fußnote.** Wer eine Tafel liest, liest Zellen.
+Eine Zelle, die nur deshalb „nein" sagt, weil eine frühere Stufe keinen Schlüssel
+geliefert hat, ist **keine fehlende Fähigkeit** – sie ist ungemessen. In webkit sind das
+18 der 22 Nein, und ohne diese Trennung stünde in jedem Bericht „webkit kann 22 Dinge
+nicht".
+
+| Zelle | chromium 140 | firefox 141 | webkit 26 |
+|---|---|---|---|
+| **Selbstprüfung** AES-GCM, SHA-256, sicherer Kontext | ja | ja | ja |
+| Ed25519 `generateKey` | ja | ja | **nein: NotSupportedError** |
+| Ed25519 `importKey pkcs8` | ja | ja | **nein: NotSupportedError** |
+| Ed25519 `exportKey jwk` **eines eingeführten Schlüssels** | ja | **nein: OperationError** | Folge (TypeError) |
+| Ed25519 `exportKey jwk` **eines selbst erzeugten Schlüssels** | ja | **ja** | Folge (TypeError) |
+| Ed25519 `exportKey pkcs8` / `raw` / `spki` | ja | ja | Folge (TypeError) |
+| Ed25519 `importKey raw` / `spki` | ja | ja | Folge (TypeError) |
+| Ed25519 `sign` | ja | ja | Folge (TypeError) |
+| Ed25519 prüft eine **richtige** Signatur als wahr | ja | ja | Folge (TypeError) |
+| Ed25519 weist eine **falsche** Signatur ab | ja | ja | Folge (TypeError) |
+| X25519 `generateKey` | ja | ja | **nein: NotSupportedError** |
+| X25519 `importKey pkcs8` | ja | ja | **nein: NotSupportedError** |
+| X25519 `exportKey jwk` **eines eingeführten Schlüssels** | ja | **nein: OperationError** | Folge (TypeError) |
+| X25519 `exportKey jwk` **eines selbst erzeugten Schlüssels** | ja | **ja** | Folge (TypeError) |
+| X25519 `exportKey pkcs8` / `raw` / `spki` | ja | ja | Folge (TypeError) |
+| X25519 `importKey raw` / `spki` | ja | ja | Folge (TypeError) |
+| X25519 `deriveBits`, beide Seiten gleich | ja | ja | **nein: NotSupportedError** |
+| P-256 `generateKey` | ja | ja | **ja** |
+| P-256 `exportKey jwk` | ja | ja | **ja** |
+| P-256 `sign` und `verify` | ja | ja | **ja** |
+| **Summe** | 25 ja, 0 nein | **23 ja, 2 nein** | **3 ja, 22 nein (davon 18 Folge)** |
+
+### Was die Tafel sagt, in drei Sätzen
+
+**firefox: es ist keine fehlende Fähigkeit, sondern eine Frage der HERKUNFT des
+Schlüssels.** Die zwei Nein sind derselbe Aufruf, `exportKey("jwk")` – und derselbe
+Aufruf geht an einem selbst erzeugten Schlüssel, bei beiden Kurven. firefox kann
+`generateKey`, `sign`, `verify`, `deriveBits` mit Gleichheit beider Seiten, `importKey`
+roh, als spki und als pkcs8, `exportKey` roh, als spki und als pkcs8. Diese
+Unterscheidung entscheidet, was Abschnitt 7 überhaupt erwägen darf: **eine fehlende
+Fähigkeit muss man umgehen, eine Herkunftsfrage kann man ändern.** Und der Name sagt
+schon, wo sie sitzt – `proof.publicFromSeed` führt einen Schlüssel *aus einer Saat ein*,
+also genau die Herkunft, die firefox nicht exportiert.
+
+**webkit: ein einziges fehlendes Stück, nicht zweiundzwanzig.** Die vier echten Nein
+sind viermal dieselbe Sache – die CFRG-Kurven gibt es nicht, darum fällt `generateKey`
+und `importKey pkcs8` für beide Kurven mit `NotSupportedError`. Die 18 `TypeError`
+dahinter sind Folgen: die Zelle hatte keinen Schlüssel, den sie exportieren konnte.
+Genau diese 18 Zellen verdeckt `sessionKeyGaps` mit seinem Abbruch.
+
+**webkit kann P-256 vollständig** – erzeugen, als jwk ausgeben, signieren und prüfen.
+Es ist also nicht „ein Browser ohne Krypto", sondern ein Browser ohne **diese zwei
+Kurven**. Das ist der Grund, warum Abschnitt 7 den Passkey-Weg für webkit überhaupt
+erwägt (Weg 1c).
+
+Die Sonde ist ein **Messgerät und kein Prüfschritt**: sie behauptet über keine Engine
+etwas, kann darum an keiner rot werden, und eine Engine, die sich morgen ändert, ändert
+nur ihre Ausgabe. Das ist der Grund, warum sie dauerhaft im Repo stehen darf.
+
+Was ein Lauf auf diesem Rechner braucht, gemessen am 31.10.2026 **vor** dem Lauf, damit
+kein Platz fürs Einrichten draufgeht:
+
+| Posten | Stand |
+|---|---|
+| `apps/web/tests/node_modules` | **Je Worktree eigen.** Ein frischer Worktree hat keines; `npm install` dort, 3 Pakete in 4 s aus dem Zwischenspeicher. Weder global noch im Hauptcheckout liegt Playwright |
+| Browser | **Geteilt** in `C:\Users\User\playwright-browsers` über die Benutzervariable `PLAYWRIGHT_BROWSERS_PATH`. Alle drei liegen: `chromium-1193`, `firefox-1490`, `webkit-2203`, passend zu Playwright 1.55.1 – kein Download |
+| `D:\claude\package.json` | **Gibt es nicht mehr**, und `D:\claude\node_modules` auch nicht. Die alte ESM-Falle („`type: commonjs` fängt die Suche ab") ist damit aus zwei unabhängigen Gründen weg: diese Datei ist fort, und `apps/web/package.json` trägt `"type": "module"`. Sonde grün, Ausstieg 0 |
+| Port | `NGC_WEB_TEST_PORT=8201`. Auf der Vorgabe 8099 findet ein zweiter Lauf einen schon antwortenden Server und prüft dann **den anderen Arbeitsbaum, ohne es zu sagen** (`playwright.config.js:10-16`) |
+
+Warum eine eigene Sonde und nicht `sessionKeyGaps`: die Lücken dort sind **Ketten**
+und brechen bei der ersten gefallenen Stufe ab. Sie sagen darum die **erste** Grenze,
+nicht die **ganze** Fähigkeit – und für „was kann die Engine wirklich" braucht es jede
+Zelle einzeln. Was bisher aus der Kette bekannt ist, steht in `fixtures/page.js:124`
+und ist dort mit Datum und Befehl belegt (18.10.2026, playwright 1.55.1):
+
+| Engine | `curves` | `ed25519` | `ed25519FromSeed` | `x25519` | `x25519FromDocument` | `p256FromDocument` |
+|---|---|---|---|---|---|---|
+| chromium 140 | – | – | – | – | – | – |
+| firefox 141 | – | – | `OperationError` | – | `OperationError` | – |
+| webkit 26 | `NotSupportedError` bei `generateKey` | (verdeckt) | `NotSupportedError` | (verdeckt) | (verdeckt) | – |
+
+„–" heißt: kann es. „(verdeckt)" heißt: die Kette ist vorher abgebrochen, **es ist
+nicht gemessen**. Genau diese vier Zellen füllt die Sonde.
+
+---
+
+## 5. Kommt eine Anmeldung durch?
+
+Gemessen am 31.10.2026, 14:51–14:52, gegen die örtliche Anlage des Prüfsatzes
+(`mock/api.js` plus der PHP-Server dahinter) auf Port 8201 – nicht gegen die
+sechs-VM-Anlage und nicht gegen ngc-ein. 6 bestanden, 0 rot, Ausstieg 0, 24,3 s,
+TIME_WAIT 1 383 → 2 254.
+
+**Die Kontrolle ist grün: chromium kommt auf BEIDEN Wegen zum Schreibtisch.** Ohne das
+wäre keine Zeile dieser Tafel zu deuten – eine Engine, die alles kann, muss hineinkommen,
+sonst ist die Vorrichtung kaputt und nicht der Browser.
+
+| | chromium | firefox | webkit |
+|---|---|---|---|
+| `browserFits()` | ja | ja | **nein** |
+| `passwordLoginFits()` | ja | **nein** | nein |
+| `passkeyFits()` | ja | ja | nein |
+| Was der Mensch zuerst sieht | Maske | Maske | **nur eine Meldung** |
+| Passwortfeld | an | **aus** | – |
+| „Anmelden" | an | **aus** | – |
+| „Mit Passkey anmelden" | an | **an** | – |
+| **Passwort-Anmeldung** | **Schreibtisch** | nicht möglich, Knopf ist aus | nicht möglich, keine Maske |
+| **Passkey-Anmeldung** | **Schreibtisch** | **Schreibtisch** | nicht möglich, keine Maske |
+
+Was der Mensch in firefox liest, bevor er etwas eintippt:
+
+> Dieser Browser kann die Passwort-Anmeldung nicht ausführen. Bitte mit Passkey anmelden.
+
+Was der Mensch in webkit liest, bevor er etwas eintippt:
+
+> Dieser Browser ist zu alt für NGC. Bitte Chrome 137 oder Safari 17.4 oder neuer benutzen.
+
+### Die Antwort auf die Frage des Auftrags
+
+**In firefox kann sich ein Mensch anmelden – über Passkey, und die Maske sagt ihm das.**
+Das ist der Ausgang, den der Auftrag als bestes Ergebnis genannt hat, und er ist
+gemessen: `Ende=desktop`. E4 aus Abschnitt 1 ist bestätigt, E3 ebenfalls. Die
+Passwort-Anmeldung ist dort tatsächlich zu, aber sie ist **vorgesehen, abgeschaltet und
+benannt** – nicht ein Fehlschlag, der als falsches Passwort erscheint.
+
+**Zwei unabhängige Messungen sagen dasselbe.** Der Anmelde-Strang hat am selben Tag auf
+`main` gemessen, dass `shell/login.spec.js:319` – ein Passkey-Fall mit
+Software-Authentikator – in firefox **grün** ist (firefox 275 bestanden, 0 rot, 250
+übersprungen). Diese Sonde kommt über einen anderen Weg zum selben Ergebnis. Eine Zahl,
+die zweimal unabhängig herauskommt, ist etwas anderes als eine, die einmal herauskommt.
+
+**In webkit kann sich niemand anmelden**, und zwar schon vor der Maske: `browserFits()`
+fällt, weil die CFRG-Kurven fehlen. Das gilt für **Playwrights webkit 26**. Über echtes
+Safari sagt diese Messung nichts (Abschnitt 6) – und die Meldung, die NGC dort zeigt,
+empfiehlt Safari 17.4 oder neuer, also genau die Fassung, die die Kurven hat.
+
+### Was diese Antwort gekostet hat, und warum es hierhin gehört
+
+Sie steht erst im **sechsten** Lauf. Die drei davor haben eine Zahl gemeldet, die falsch
+war, und zwar dreimal derselbe Fehler in anderem Mantel – jedes Mal eine Wartebedingung,
+die einen Zustand beschreibt, der **schon vor dem Klick** galt, und die darum den Klick
+nie melden konnte:
+
+| Lauf | Bedingung | Warum sie in firefox nicht gilt |
+|---|---|---|
+| 2 | kein Warten, sofort gelesen | der Start war noch nicht fertig |
+| 3 | „der Versuch läuft, solange ALLE Knöpfe aus sind" | „Anmelden" ist dort **dauerhaft** aus |
+| 4, 5 | „eine Warnung mit Text ist ein Ende" | der Hinweis zur Passwort-Anmeldung trägt `role="alert"` und **steht von Anfang an da** |
+| 6 | „ein Ende ist, was vorher NICHT da war" | engine-unabhängig – trägt |
+
+**Und die Kontrolle hat keinen der drei gefangen.** chromium kam jedes Mal auf beiden
+Wegen zum Schreibtisch, die Kontrolle war jedes Mal grün – weil chromium die Eigenschaft
+nicht hat, an der die Bedingung scheiterte: einen dauerhaft abgeschalteten Knopf und
+einen dauerhaft stehenden Hinweis. Daraus die Verschärfung der Regel, die ihren Platz in
+`messen.md` hat:
+
+> Eine Variante, die gelingen muss, ist die richtige Kontrolle – aber sie deckt nur die
+> Annahmen ab, die sie mit den anderen Varianten **teilt**. Eine Bedingung, die von der
+> Variante abhängt, prüft sie nicht. Darum: eine Wartebedingung fragt nach einer
+> **Änderung**, nicht nach einem Zustand – eine Änderung gibt es in jeder Variante, einen
+> Zustand nicht.
+
+---
+
+## 6. Die Grenze des Prüfgerüsts ist nicht die Grenze der Welt
+
+Playwrights webkit ist **nicht** Safari. Es ist ein Bau von WebKit, den Playwright
+mitbringt, und Safari 17 und neuer hat Ed25519 im Web-Crypto. Die vorhandene Messung
+sagt also:
+
+- **gemessen:** in Playwrights webkit 26 fehlen die CFRG-Kurven.
+- **nicht gemessen und mit diesem Prüfsatz nicht messbar:** ob sie in einem echten
+  Safari fehlen.
+
+Nach `messen.md` („eine Abwesenheit belegt man mit Orten, nicht mit Suchern") ist das
+der Unterschied zwischen einem Befund und einer Gewohnheit. Ein Satz wie „in Safari
+kann sich niemand bei NGC anmelden" ist durch diesen Prüfsatz **nicht** belegt. Was ihn
+belegen oder widerlegen würde, ist ein echtes Safari auf einem Apple-Gerät – auf diesem
+Rechner nicht vorhanden, und darum hier als offener Punkt und nicht als Ergebnis.
+
+---
+
+## 7. Wege je fehlender Fähigkeit
+
+Nach Rangfolge **Sicherheit > Stabilität > Geschwindigkeit**.
+
+### Vorab und verbindlich: eine Krypto-Lücke wird nicht mit eigenem Code umgangen
+
+`CLAUDE.md` dieses Repos: „Kryptografie nur aus der Standardbibliothek oder aus
+`vendor/`, nichts selbst gebaut." Das heißt für dieses Blatt:
+
+- Eine Ed25519-Umsetzung in JavaScript selbst schreiben, weil webkit die Kurve nicht
+  hat: **verboten.** Nicht „ungünstig", nicht „abzuwägen" – verboten, und dieser Absatz
+  steht hier, damit niemand es für ein Versehen hält.
+- Der zulässige Weg für dieselbe Lücke ist eine **geprüfte Bibliothek in `vendor/`**,
+  mit Zeile in `THIRD-PARTY.md` und AGPL-verträglicher Lizenz, und neue Module werden
+  vorher beim Koordinator angefragt. Im Baum liegt bereits `noble-hashes` (für
+  Argon2id), also ist der Weg beschritten und nicht neu.
+- Für den Austausch von Schlüsseln und Signaturen ist eine Umsetzung ohne
+  Seitenkanalschutz zusätzlich ein **Sicherheitsrückschritt**, nicht nur ein
+  Regelverstoß: der private Schlüssel eines Menschen liegt dann in einer Sprache mit
+  Zwischenspeicher-Zeitverhalten, das niemand hier messen kann.
+
+### Lücke 1 – webkit: die CFRG-Kurven fehlen (`generateKey` → `NotSupportedError`)
+
+| Weg | Kosten | Schaden |
+|---|---|---|
+| **1a. Nichts bauen, nur richtig sagen.** Das Tor `browserFits()` bleibt, der Satz `boot.tooold` wird so geschrieben, dass er den Browser und die fehlende Fähigkeit benennt und einen Browser empfiehlt, der sie hat – in allen fünf Sprachen. | Ein Sprachschlüssel je Sprache, ein Fall | **Kein Schaden.** Ein Mensch in webkit kommt nicht hinein, erfährt aber richtig, warum, und kann handeln. Sicherheit unverändert. Das ist der Stand heute, nur mit einem besseren Satz |
+| **1b. Ed25519 und X25519 aus `vendor/`** nachladen, wenn die Engine sie nicht hat, und die Krypto über diese Bibliothek führen. | Ein neues Modul (Anfrage beim Koordinator), `THIRD-PARTY.md`, Vektorentests gegen `shared/testdata/`, Bau- und Ladeweg, Fälle für den Rückfallpfad | **Zwei Wege im Programm**, und nach `messen.md` braucht der schnelle Weg eine Gegenprobe gegen den langsamen **im Prüfsatz**. Dazu: Schlüssel im JavaScript-Heap statt in der Engine, also ein Sicherheitsrückschritt gegenüber Web-Crypto. Teuer und riskant |
+| **1c. Den Passkey-Weg auch dort öffnen.** P-256 ist in webkit vollständig vorhanden, der Anmelde-BEWEIS wäre dort also machbar. | – | **GEMESSEN UND WIDERLEGT, siehe unten. Dieser Weg trägt nicht.** |
+
+#### Weg 1c ist gemessen und widerlegt
+
+Gemessen am 31.10.2026, Lauf 8, `apps/web/tests/shell/krypto-tafel.spec.js`, Teil C.
+
+**Wie, und warum nicht in webkit:** in webkit weist `browserFits()` vor der Maske ab,
+also ist dort nichts dahinter erreichbar und die Frage nicht stellbar. Darum umgekehrt:
+einer Engine, die **alles** kann, werden die zwei Kurven weggenommen und P-256 gelassen
+– das ist genau die Gestalt von webkit –, und dann wird gefragt. Derselbe Griff, den
+`shell/engines.spec.js` für die Saat-Stufe benutzt: die Engine wird **weniger** fähig
+gemacht, das ist der geprüfte Zustand und schaltet keine Prüfung ab.
+
+**Die Nachbildung ist belegt, nicht angenommen:** nach dem Eingriff antwortet die Engine
+auf `Ed25519 generateKey` und `X25519 generateKey` mit `NotSupportedError` und kann
+P-256 weiter vollständig – dieselbe Tafel wie webkit 26. Und `browserFits()` weist
+daraufhin ab, genau wie im echten webkit. Stimmt die Gestalt nicht, druckt der Fall
+„VORRICHTUNG KAPUTT, KEINE AUSSAGE" und keine Zahl.
+
+**Zwei getrennte Befunde, und sie dürfen nicht in einen Satz:**
+
+1. **Das Tor.** `browserFits()` weist ab, bevor eine Maske kommt – der Mensch erreicht
+   den Passkey-Knopf nie. Das ist eine **Entscheidung**, die NGC trifft, und sie wäre
+   änderbar.
+2. **Die Sitzung.** `auth/keys.js newSessionKeys()`, direkt aufgerufen und **ohne Tor
+   davor**, scheitert ohne die zwei Kurven: `NotSupportedError`. Der Code erzeugt immer
+   beide – „Ed25519 signs tasks, X25519 carries the Noise session and every end-to-end
+   channel" (`keys.js:29`). Das ist **keine** Entscheidung, die ein Tor ändert.
+
+**Also: Weg 1c trägt nicht.** P-256 reicht für den Beweis und nicht für die Sitzung, die
+danach läuft. Der Kommentar in `fixtures/page.js:429`, der für `passkeyGap` auch
+`ed25519` und `x25519` verlangt, ist damit bestätigt.
+
+**Und eine Lehre über diese Messung selbst.** Lauf 7 hat „Weg 1c trägt nicht" gedruckt
+und **nichts dergleichen gemessen**: er war am Tor abgewiesen worden und hatte damit die
+**frühere Wand** gemessen – der älteste Eintrag in `messen.md`, und er wäre als Befund
+hinausgegangen. Erst Lauf 8 fragt die gemeinte Stelle direkt und am Tor vorbei. Dass das
+Ergebnis beider Läufe dasselbe Wort trägt, macht den Unterschied nicht kleiner: das eine
+war geraten, das andere gemessen.
+
+**Empfehlung: 1a jetzt, 1b nicht, 1c ist erledigt.** 1b verstößt gegen keine Regel, wenn
+das Modul aus `vendor/` kommt – aber es verdoppelt den Krypto-Weg für eine Engine, deren
+Grenze (Abschnitt 6) nicht einmal belegt eine Grenze echter Nutzer ist. Mit 1c gefallen
+bleibt für webkit **nur** 1a (richtig sagen) oder 1b (Bibliothek aus `vendor/`) – ein
+dritter Weg ist nicht in Sicht.
+
+### Lücke 2 – firefox: `exportKey("jwk")` eines eingeführten PKCS#8-Schlüssels
+
+Das ist **eine einzige Stelle**: Web-Crypto gibt keinen öffentlichen Teil eines privaten
+Schlüssels heraus, und firefox rechnet ihn aus einer Ed25519-Saat nicht aus, während
+chromium und webkit es tun. Betroffen sind `proof.publicFromSeed` (daran hängt die
+Passwort-Anmeldung) und `noise.publicOf`.
+
+| Weg | Kosten | Schaden |
+|---|---|---|
+| **2a. Passkey statt Passwort**, und die Maske sagt es. Ist im Code **schon gebaut** (`main.js:66` und `:119`, `auth/login.js` `passwordKeys`). | Nichts zu bauen; zu messen, ob es wirklich greift (E4) | **Kein Schaden, und es ist der sicherere Weg sowieso** – Passkeys statt Passwörter ist die Richtung, in die NGC ohnehin zeigt (`HINT` in `main.js:19`). Preis: eine Installation ohne Relying Party hat in firefox keinen Weg hinein |
+| **2b. Den öffentlichen Teil aus `vendor/` rechnen** – nur die eine Stelle, nur die Punktmultiplikation auf der Kurve, der private Schlüssel bleibt sonst in Web-Crypto. | Ein Modul aus `vendor/`, Vektorentests, eine Gegenprobe gegen chromium Byte für Byte | **Verboten als Eigenbau, zulässig aus `vendor/`.** Sicherheitlich milder als 1b, weil nur der ÖFFENTLICHE Teil berechnet wird – eine falsche Zahl fällt sofort auf, denn sie prüft keine Signatur. Trotzdem: der Saatwert geht durch JavaScript-Code |
+| **2c. Den öffentlichen Teil vom Server holen.** | Wenig Code | **Nicht zulässig.** Der Server erfährt dann etwas, was aus dem Passwort folgt, und die Passwort-Anmeldung stützt sich darauf, dass er das nicht tut. Hier aufgeschrieben, damit es niemand als Abkürzung vorschlägt |
+| **2d. Nichts tun.** | Nichts | Ein Mensch in firefox ohne Passkey liest heute, dass sein Passwort nicht geht – richtig, aber ohne Weg. **Nur tragbar, solange 2a trägt** |
+
+**Empfehlung: 2a bestätigen (messen), 2b als Rückfall vorbereiten, 2c nie, 2d nicht.**
+
+### Lücke 3 – die elf lockeren Haken aus System B (Abschnitt 2)
+
+Kein Krypto-Problem, ein Messproblem – und nach `messen.md` das gefährlichere der
+beiden, weil ein übersprungener Fall wie ein bestandener aussieht.
+
+**Welcher Haken je Datei der richtige ist**, bestimmt danach, was die Datei wirklich
+tut – gelesen am 31.10.2026, nicht geraten:
+
+| Datei | Was sie an Krypto wirklich tut | Richtiger Haken |
+|---|---|---|
+| `contracts/proof.spec.js` | `publicFromSeed` 10×, `privateFromSeed` 3×, ein PKCS#8 | `skipWithoutSeedKeys` |
+| `contracts/session.spec.js` | `publicFromSeed` 10×, `privateFromSeed` 5×, dazu Signaturen | `skipWithoutSeedKeys` |
+| `shell/users.spec.js` | `publicFromSeed` 1×, `privateFromSeed` 1× | `skipWithoutSeedKeys` |
+| `contracts/sign.spec.js` | nur Signaturen prüfen | `skipWithoutSignatures` |
+| `contracts/task.spec.js` | `signTask` 8×, prüfen 10× | `skipWithoutSignatures` |
+| `contracts/catalog.spec.js` | `verifyCatalog` | `skipWithoutSignatures` |
+| `contracts/core.spec.js` | `parseUIProof`, `parseResult`, `parseTask` | `skipWithoutSignatures` |
+| `contracts/trust.spec.js` | `parseList`, `open`, `parseSigned` | `skipWithoutSignatures` |
+| `contracts/tunnel.spec.js` | `trust.open`, `checkCode` | `skipWithoutSignatures` |
+| `shell/store.spec.js` | `parseSigned`, `parseList`, `parseEnvelope` | `skipWithoutSignatures` |
+| `shell/trustlist.spec.js` | Signaturen, aber in einem `beforeAll` mit eigener Seite | `signatureGap` im `beforeAll`, nicht der Haken |
+
+| Weg | Kosten | Schaden |
+|---|---|---|
+| **3a. Die elf Kopien auf die Haken aus `fixtures/page.js` umstellen**, je Datei nach der Tabelle oben. | Elf Dateien, je zwei Zeilen; `trustlist.spec.js` braucht eine eigene Lösung, weil es in einem `beforeAll` auf einer eigenen Seite verzweigt statt zu überspringen | **Der Haken kann zu streng werden** – genau der Fehler, den `fixtures/page.js:94` schon einmal bezahlt hat (zehn grüne firefox-Fälle still abgeschaltet, eine Sicherheitsprüfung darunter). Darum **je Datei einzeln** und mit einer Zahl vorher und nachher, nicht in einem Zug |
+| **3b. So lassen.** | Nichts | Der Zustand, aus dem der Auftrag kommt, mit der Falle unten |
+
+**Was 3a wirklich bringt, und was nicht – ehrlich gerechnet.** An den heutigen Zahlen
+ändert es wenig, und das gehört hierhin, damit niemand einen großen Gewinn erwartet:
+
+- **In webkit ändert sich das Ergebnis gar nicht**, nur der Satz. Der lockere Haken sagt
+  dort richtig Nein (`importKey("raw")` fällt mit der Kurve), der richtige Haken auch –
+  aber der richtige nennt die **gemessene** Lücke, während heute Sätze wie „no Ed25519 in
+  this engine's Web Crypto" dastehen, die über firefox falsch wären.
+- **In firefox laufen die acht Signatur-Dateien heute und sind grün**, zu Recht:
+  `signatureGap` ist in firefox **leer**, firefox kann Signaturen vollständig. Der
+  Wechsel schaltet dort also nichts ab – was wichtig ist, weil das genau der Schaden
+  wäre.
+- **Der eigentliche Gewinn ist eine Falle, die noch nicht zugeschlagen hat.** Die drei
+  Dateien, die `publicFromSeed` benutzen, sind heute teils nur vom lockeren Haken
+  bewacht. Der sagt in firefox **ja**. Ein neuer Fall in `proof.spec.js` oder
+  `session.spec.js`, der die Saat-Stufe anfasst, wird in firefox also **rot** – und sein
+  Rot sieht wie ein Fehler im Code aus, nicht wie eine Grenze des Browsers. Genau so
+  sind die 157 roten Fälle vom 01.10.2026 entstanden.
+
+**Empfehlung: 3a, aber datei‑ und schrittweise, mit der Fallzahl je Engine vor und nach
+jedem Schritt** – und mit dieser Begründung, nicht mit einer Zahl, die es nicht gibt.
+Nicht als ein PR.
+
+---
+
+## 8. Offene Punkte
+
+1. ~~Die vier verdeckten Zellen der webkit-Zeile~~ – **gemessen**, Abschnitt 4.
+2. ~~Kommt eine Anmeldung in firefox über Passkey durch (E4)?~~ – **ja, gemessen**, Abschnitt 5.
+3. ~~Trägt Weg 1c?~~ – **nein, gemessen**, Abschnitt 7. `newSessionKeys()` scheitert ohne die zwei Kurven, unabhängig vom Tor.
+4. Hat ein echtes Safari die Kurven? **Auf diesem Rechner nicht messbar** (Abschnitt 6).
+5. Der gemeldete Satzlauf vom 31.10.2026 (chromium 302/137/2, webkit 147/0/134) hat
+   **firefox nicht dabei**, obwohl `apps/web/tests/playwright.config.js` alle drei
+   Projekte führt. Die am engsten betroffene Engine fehlt in der Zahl.
