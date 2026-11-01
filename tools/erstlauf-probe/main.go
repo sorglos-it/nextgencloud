@@ -259,12 +259,12 @@ type probeEngine struct{ wrote error }
 func (e *probeEngine) LoadImage(context.Context, string, string) (string, error) {
 	return "", errors.New("probe engine loads no image")
 }
-func (e *probeEngine) RemoveImage(context.Context, string, string) error  { return nil }
-func (e *probeEngine) Create(context.Context, ctlruntime.Container) error { return nil }
-func (e *probeEngine) Start(context.Context, string) error                { return nil }
-func (e *probeEngine) Stop(context.Context, string) error                 { return nil }
-func (e *probeEngine) Remove(context.Context, string) error               { return nil }
-func (e *probeEngine) Running(context.Context, string) (bool, error)      { return true, nil }
+func (e *probeEngine) RemoveImage(context.Context, string, string) error      { return nil }
+func (e *probeEngine) Create(context.Context, ctlruntime.Container) error     { return nil }
+func (e *probeEngine) Start(context.Context, string, ctlruntime.Limits) error { return nil }
+func (e *probeEngine) Stop(context.Context, string) error                     { return nil }
+func (e *probeEngine) Remove(context.Context, string) error                   { return nil }
+func (e *probeEngine) Running(context.Context, string) (bool, error)          { return true, nil }
 
 func (e *probeEngine) Exec(_ context.Context, x ctlruntime.Exec) (int, error) {
 	// A probe that could not write at all would make both checks below red for

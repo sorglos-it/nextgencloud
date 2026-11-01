@@ -86,7 +86,26 @@ type RestoreConfig struct {
 	// root. Its error means "the directory could not be made", which leaves
 	// the app off and logged, like the other three.
 	EnsureRun func(ctx context.Context, app string) error
-	Log       *slog.Logger // nil: slog.Default()
+	// HasCgroup says whether the container of this app runs inside a cgroup
+	// of this program, which is the only way to see that an app is up and
+	// braked by nothing. nil: runtime.HasCgroup.
+	//
+	// It is a function for the reason the two above are: it reads
+	// /sys/fs/cgroup, and the cases of this package run where there is none -
+	// so without a stand-in every case about a container that is already
+	// running would measure the cgroup tree of the machine the case runs on.
+	HasCgroup func(name string) bool
+	// KillCgroup ends every task in the cgroup of an app and waits until none
+	// is left (nil: runtime.KillCgroup). A function for the reason HasCgroup
+	// is one, and for a second: a case about this must not be able to kill
+	// anything on the machine it runs on.
+	KillCgroup func(name string) error
+	// Wait is the waiting between the two looks at the contradiction below
+	// (nil: time.Sleep). It is here so the cases of this package take no real
+	// twelve seconds - a case that really waits is a case somebody switches
+	// off.
+	Wait func(d time.Duration)
+	Log  *slog.Logger // nil: slog.Default()
 }
 
 // Restore brings the apps of this server back up, in the order the state hands
@@ -201,13 +220,112 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 		log.Warn("the engine does not say whether an app runs, it stays off", "app", a.ID, "err", err)
 		return
 	}
+	// A container that is up but in no cgroup of this program was started by a
+	// controller from before the limits were real: podman accepted
+	// --pids-limit, --memory and --cpus, wrote them into its own answer and
+	// dropped them, so the app runs with the ceiling of the controller and
+	// none of its own (runtime/cgroup.go). Nothing of podman says so, and that
+	// is why this stands here: a running container is the one state no start
+	// would ever reach, so without this line such an app would keep running
+	// unbraked until somebody activated it anew. It is stopped and started
+	// again, once, and the line says so.
+	if up && !c.hasCgroup(name) {
+		log.Warn("an app runs outside its own limits and is started again into them",
+			"app", a.ID)
+		if err := c.Engine.Stop(ctx, name); err != nil {
+			log.Warn("the container of an app could not be stopped, it keeps running unlimited",
+				"app", a.ID, "err", err)
+			return
+		}
+		up = false
+	}
+	// And the other way round: podman says nothing of this app runs, while its
+	// cgroup still holds a task. Then a process set of this app is up that
+	// podman has forgotten - after a hard death of the controller one set per
+	// start of it, three per app on svc-1 after two starts (point 98). Podman
+	// forgot them because it refreshes its own state when its runtime
+	// directory is gone, which systemd deletes with the unit; the processes
+	// did not notice, because since the limits are real they no longer sit in
+	// the cgroup of the unit and the death of the service does not take them.
+	// Starting now would put a SECOND writer on one data directory.
+	//
+	// It is looked at TWICE, and that is the whole care of this branch. Those
+	// two numbers stand that way in ordinary operation as well - at every stop
+	// and at every start, measured (runtime.OrphanWait names the window and
+	// the measurement). Only a contradiction that survives a wait longer than
+	// the deadline of a stop is no state of operation: an ordinary stop is
+	// over by then and the cgroup empty, an orphan stands for hours.
+	//
+	// And it is only looked at HERE, while the node comes up, never again
+	// while it runs: a recurring check would sooner or later look exactly into
+	// the stop of a neighbour, and the wait that makes this safe would make a
+	// watchdog useless. A watchdog is a new decision and needs its own
+	// measurement.
+	if !up && c.hasCgroup(name) {
+		c.wait(runtime.OrphanWait)
+		if c.hasCgroup(name) {
+			log.Warn("tasks of an app are still running although the engine knows no container of it, they are ended before it starts again",
+				"app", a.ID, "waited", runtime.OrphanWait)
+			if err := c.killCgroup(name); err != nil {
+				// Not started. An app whose surplus tasks cannot be ended is
+				// an app that would run twice on one data directory, and that
+				// is worse than an app that is off and logged.
+				log.Warn("the surplus tasks of an app could not be ended, it stays off rather than running twice on its data",
+					"app", a.ID, "err", err)
+				return
+			}
+		}
+	}
 	if !up {
-		if err := c.Engine.Start(ctx, name); err != nil {
+		if err := c.Engine.Start(ctx, name, limitsOf(a)); err != nil {
 			log.Warn("the container of an app did not start", "app", a.ID, "err", err)
 			return
 		}
 	}
 	c.start(ctx, log, a, name)
+}
+
+// hasCgroup answers through the field if one was wired and through
+// runtime.HasCgroup otherwise, for the reason ensureRun has its default here.
+func (c RestoreConfig) hasCgroup(name string) bool {
+	if c.HasCgroup != nil {
+		return c.HasCgroup(name)
+	}
+	return runtime.HasCgroup(name)
+}
+
+// killCgroup and wait answer through their fields if ones were wired and
+// through the real calls otherwise, for the reason hasCgroup does.
+func (c RestoreConfig) killCgroup(name string) error {
+	if c.KillCgroup != nil {
+		return c.KillCgroup(name)
+	}
+	return runtime.KillCgroup(name)
+}
+
+func (c RestoreConfig) wait(d time.Duration) {
+	if c.Wait != nil {
+		c.Wait(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// limitsOf is the ceiling of this app, out of its own manifest - the same two
+// numbers the activation hands Create (install/activate.go).
+//
+// A manifest that cannot be read gives the two zeros, and a zero is the
+// default of the contract and never "no limit" (runtime.Limits): a row whose
+// manifest is broken gets store.DefaultCPU and store.DefaultMemory and runs
+// braked, instead of getting no ceiling because its text was unreadable. That
+// a broken manifest is reported is start's, which parses it again for the
+// start action and says so there.
+func limitsOf(a dbapi.App) runtime.Limits {
+	mf, err := store.ParseManifest(a.Manifest)
+	if err != nil {
+		return runtime.Limits{}
+	}
+	return runtime.Limits{CPU: mf.CPU, Memory: mf.Memory}
 }
 
 // ensureRun makes the runtime directory of an app, through the field if one was

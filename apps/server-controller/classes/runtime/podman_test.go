@@ -843,11 +843,19 @@ func TestStartAndRemoveBuildTheirArgumentList(t *testing.T) {
 		call func(p *Podman) error
 		want []string
 	}{
-		{func(p *Podman) error { return p.Start(context.Background(), name) }, []string{"start", name}},
+		{func(p *Podman) error { return p.Start(context.Background(), name, Limits{}) }, []string{"start", name}},
 		{func(p *Podman) error { return p.Remove(context.Background(), name) }, []string{"rm", name}},
 	}
 	for _, c := range cases {
 		f := fakePodman(t)
+		// Start lays a cgroup, so this case needs the stand-in kernel even
+		// though it only looks at the argument list: without it the case
+		// reached the real /sys/fs/cgroup, where it failed as a normal user
+		// (mkdir: permission denied) and ALSO as root (the directory came,
+		// but fake podman puts no task into cgroup.procs, so the start
+		// counted as one that went past its ceiling). aKernel comes second
+		// because it saves and restores the whole of paths.
+		aKernel(t)
 		if err := c.call(NewPodman(f.bin)); err != nil {
 			t.Fatal(err)
 		}
@@ -1025,9 +1033,13 @@ var _ Engine = (*Podman)(nil)
 // A call whose context is already over starts nothing at all.
 func TestACancelledCallStartsNothing(t *testing.T) {
 	f := fakePodman(t)
+	// Same reason as in TestStartAndRemoveBuildTheirArgumentList: Start lays a
+	// cgroup before it looks at the context, so without the stand-in this case
+	// would reach into the real tree of the machine it runs on.
+	aKernel(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := NewPodman(f.bin).Start(ctx, anApp(t).name); err == nil {
+	if err := NewPodman(f.bin).Start(ctx, anApp(t).name, Limits{}); err == nil {
 		t.Fatal("the call ran anyway")
 	}
 	if f.ran() {
@@ -1118,7 +1130,7 @@ func TestNoContainerOfAnAppIsRoot(t *testing.T) {
 		t.Skip("there is no user root here: " + err.Error())
 	}
 	calls := map[string]func(p *Podman) error{
-		"Start":  func(p *Podman) error { return p.Start(context.Background(), "root") },
+		"Start":  func(p *Podman) error { return p.Start(context.Background(), "root", Limits{}) },
 		"Stop":   func(p *Podman) error { return p.Stop(context.Background(), "root") },
 		"Remove": func(p *Podman) error { return p.Remove(context.Background(), "root") },
 		"Running": func(p *Podman) error {
@@ -1214,7 +1226,7 @@ func TestTheCallsAfterCreateNeedTheUserOfTheirName(t *testing.T) {
 		t.Skip("there is a user called " + gone + " on this machine")
 	}
 	calls := map[string]func(p *Podman) error{
-		"Start":  func(p *Podman) error { return p.Start(context.Background(), gone) },
+		"Start":  func(p *Podman) error { return p.Start(context.Background(), gone, Limits{}) },
 		"Stop":   func(p *Podman) error { return p.Stop(context.Background(), gone) },
 		"Remove": func(p *Podman) error { return p.Remove(context.Background(), gone) },
 		"Running": func(p *Podman) error {
