@@ -364,3 +364,18 @@ test("the mark in the band is quiet until it is pointed at", async ({ shell }) =
   await shell.locator("#startbtn").hover();
   expect((await paint()).col).not.toBe("rgba(0, 0, 0, 0)");
 });
+
+// What the system says stands top right, under the band - where macOS and
+// Lord Flow put it. It stood centred at the BOTTOM, which is the spot the dock
+// took on 2026-11-01, so the news and the apps shared one corner.
+test("what the system says stands under the band, clear of the dock", async ({ shell }) => {
+  const vp = shell.viewportSize();
+  const bar = await shell.locator(".noticebar").boundingBox();
+  const band = await shell.locator("#taskbar").boundingBox();
+  const dock = await shell.locator("#dock").boundingBox();
+  // Under the band, not over it and not under the page's own top.
+  expect(bar.y).toBeGreaterThanOrEqual(band.height);
+  expect(Math.round(vp.width - (bar.x + bar.width))).toBe(8);
+  // And clear of the dock, which is the whole point.
+  expect(bar.y + bar.height).toBeLessThan(dock.y);
+});
