@@ -183,3 +183,46 @@ test("Fenster anordnen keeps every window inside the desktop", async ({ shell })
   });
   expect(got).toEqual({ count: 3, outside: [], overlap: [] });
 });
+
+// MEASURED on 2026-11-02, and it was a real defect: the standing passkey
+// advice sat bottom left at z-index 100001 while the dock sits bottom centre
+// at 99998, and at this width the dock is as wide as the room there is - 344
+// of 344 px at 360, by the sheet's own arithmetic 16 + 7*40 + 8*6. So the
+// advice lay ON the dock and document.elementFromPoint at the centre of an
+// icon returned the paragraph. The dock could not be pressed in the middle.
+//
+// THE CASE DOES NOT ASK WHERE THE ADVICE IS. It asks whether anything at all
+// covers the dock, so the next overlay parked at the bottom is caught too -
+// naming this one paragraph would guard the bug and not the promise.
+test("nothing lies on the dock on a phone", async ({ shell }) => {
+  const dock = shell.locator("#dock");
+  await expect(dock).toBeVisible();
+  const n = await shell.locator("#dock .dapp").count();
+  expect(n).toBeGreaterThan(0);
+
+  const covered = await shell.evaluate(() =>
+    [...document.querySelectorAll("#dock .dapp")].map((d, i) => {
+      const r = d.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return top && top.closest(".dapp") === d ? null : `${i}:${top ? top.className || top.tagName : "nichts"}`;
+    }).filter(Boolean));
+  expect(covered).toEqual([]);
+
+  // And the advice itself is still there to be read - moving it out of the way
+  // must not have been done by hiding it.
+  await expect(shell.locator(".passkeyhint")).toBeVisible();
+  expect(await inside(shell, ".passkeyhint", "viewport")).toBe(true);
+
+  // IT TAKES NO CLICKS. Asked at its OWN centre, the shell answers with what
+  // lies behind it, never with the paragraph: it is text and nothing else, so
+  // there is nothing in it to press, and a box that swallows the pointer is a
+  // trap wherever it is parked. MEASURED the hard way - with the corner moved
+  // but the clicks still taken, a double click on a title bar timed out
+  // thirty seconds on "passkeyhint intercepts pointer events".
+  const unterDemHinweis = await shell.evaluate(() => {
+    const r = document.querySelector(".passkeyhint").getBoundingClientRect();
+    const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return e ? !!e.closest(".passkeyhint") : false;
+  });
+  expect(unterDemHinweis).toBe(false);
+});
