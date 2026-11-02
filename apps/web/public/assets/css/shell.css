@@ -622,13 +622,40 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    of the desktop sits in the middle", and that bar moved to the top right on
    2026-11-01. Left as a false reason it would be read as one, and the next
    person would keep this corner for a collision that cannot happen any more.
-   The reason it stays here is a different one, and it is about the message
-   itself: this one NEVER goes away, and the top right is where the shell puts
-   what it has to say right now. A standing piece of advice parked in the
-   stack of passing ones either hides the next notice or looks like one that
-   will not go - so it keeps the quiet corner, out of the dock's way, where it
-   can be read and ignored. */
-.passkeyhint{position:fixed;left:16px;bottom:18px;z-index:100001;margin:0;padding:8px 12px;
+   The reason it stays out of the top right is about the message itself: this
+   one NEVER goes away, and the top right is where the shell says what it has
+   to say right now. A standing piece of advice parked in the stack of passing
+   ones either hides the next notice or looks like one that will not go.
+
+   SO IT GOES TOP LEFT, and the bottom left it had is now a measured defect
+   rather than a quiet corner. MEASURED at 360x700: the dock is 344 px wide
+   and the room is 344 px, so it is centred across almost the whole width,
+   and document.elementFromPoint at the centre of a dock icon returned this
+   paragraph - z-index 100001 over the dock's 99998. On a phone the dock could
+   not be pressed in the middle, and the comment that stood here claimed the
+   corner was "out of the dock's way" without ever having measured it.
+
+   Top left cannot meet the dock at any width, because the dock is at the
+   bottom. It also reads as a system with the strip opposite it: standing
+   advice on the left, passing notices on the right, both under the band at
+   the same offsets.
+
+   AND IT TAKES NO CLICKS, which is the half of this that matters more than
+   the corner. This paragraph is text and nothing else - no link, no button -
+   so there was never anything in it to press, and a box that lies over the
+   shell at z-index 100001 and swallows the pointer is a trap wherever it is
+   parked. The strip opposite it has worked this way all along: none on the
+   box, auto on the things that can be pressed.
+
+   MEASURED, and it is why this line exists rather than a smaller move: with
+   the corner changed but the clicks still taken, desktop-windows "a double
+   click on the title bar maximizes and restores" timed out thirty seconds on
+   "<p class=passkeyhint> intercepts pointer events". I had measured the
+   overlap in ONE viewport, called the three pixels it cost harmless, and
+   missed that another spec's window sits somewhere else. One measurement is
+   not a rule. */
+.passkeyhint{position:fixed;left:8px;top:calc(var(--bar-h) + 8px);z-index:100001;margin:0;padding:8px 12px;
+             pointer-events:none;
              border-radius:10px;border:1px solid #d2932a;background:var(--win-bg);
              color:var(--win-fg);box-shadow:var(--shadow);font-size:12.5px;
              max-width:min(280px,calc(100vw - 32px))}
