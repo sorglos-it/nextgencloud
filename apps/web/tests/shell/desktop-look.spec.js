@@ -271,6 +271,50 @@ test("the app menu says what can be done with the window as it stands", async ({
   await expect(shell.locator(".win")).toHaveCount(0);
 });
 
+// The named gap of PR 172: the menu had Tab and Escape and no walk, so it was
+// the one menu in the shell that did not answer the keys every menu answers.
+test("the app menu walks with the arrow keys and steps over what is off", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const drop = shell.locator("#appdrop");
+  const here = () => shell.evaluate(() => document.activeElement.textContent);
+
+  // Down on the button OPENS the menu onto its first entry. Without this the
+  // menu cannot be reached at all without a mouse: there is nothing to Tab
+  // into before it is open, because the entries are built when it opens.
+  await shell.locator("#appbtn").focus();
+  await shell.keyboard.press("ArrowDown");
+  await expect(drop).toBeVisible();
+  expect(await here()).toBe("Minimieren");
+
+  // THE POINT OF THIS CASE: with one window "Fenster anordnen" is off, and the
+  // walk goes past it to Schließen instead of landing on a dead entry.
+  await shell.keyboard.press("ArrowDown");
+  expect(await here()).toBe("Maximieren");
+  await shell.keyboard.press("ArrowDown");
+  expect(await here()).toBe("Schließen");
+
+  // It comes round at both ends, and Home and End go to them.
+  await shell.keyboard.press("ArrowDown");
+  expect(await here()).toBe("Minimieren");
+  await shell.keyboard.press("ArrowUp");
+  expect(await here()).toBe("Schließen");
+  await shell.keyboard.press("Home");
+  expect(await here()).toBe("Minimieren");
+  await shell.keyboard.press("End");
+  expect(await here()).toBe("Schließen");
+
+  // Up on the button opens it onto the LAST entry, the other half of the rule.
+  await shell.keyboard.press("Escape");
+  await shell.keyboard.press("ArrowUp");
+  await expect(drop).toBeVisible();
+  expect(await here()).toBe("Schließen");
+
+  // And the entry under the keyboard is the one that runs.
+  await shell.keyboard.press("Enter");
+  await expect(shell.locator(".win")).toHaveCount(0);
+});
+
 // The mark alone has no name of its own, and 89 places in this suite aim at
 // this button by the name "Start". It is written out as a label since the word
 // came out of the band - MEASURED: without the label it was null, and 62 cases
