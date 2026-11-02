@@ -193,10 +193,25 @@ test("the dock holds the apps, magnifies one, and marks the open one", async ({ 
     const r = await first.boundingBox();
     return [Math.round(r.width), Math.round(r.height)];
   };
+  const icon = async () => {
+    const r = await first.locator(".g").boundingBox();
+    return [Math.round(r.width), Math.round(r.height)];
+  };
   expect(await size()).toEqual([40, 40]);
+  expect(await icon()).toEqual([40, 40]);
+  const ruheOben = (await first.locator(".g").boundingBox()).y;
   await first.hover();
   // The magnifier is a transition, so it is waited for and not slept through.
-  await expect.poll(size).toEqual([64, 64]);
+  // What grows is the ICON; the BUTTON keeps its 40, because the row is full
+  // at 360 px and anything that grows the button pushes the row along.
+  await expect.poll(icon).toEqual([64, 64]);
+  expect(await size()).toEqual([40, 40]);
+  // And it grows UPWARD: the bottom edge stands still, the top edge rises by
+  // the whole 24. Measured and not described, because "it grows up" is the
+  // one thing a width tells you nothing about.
+  const lupe = await first.locator(".g").boundingBox();
+  expect(Math.round(ruheOben - lupe.y)).toBe(24);
+  expect(Math.round(lupe.y + lupe.height)).toBe(Math.round(ruheOben + 40));
 
   // The dot is read off the register of open windows, so it has to appear and
   // go away again with the window and not only once.
