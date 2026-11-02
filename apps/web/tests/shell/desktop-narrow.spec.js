@@ -226,3 +226,60 @@ test("nothing lies on the dock on a phone", async ({ shell }) => {
   });
   expect(unterDemHinweis).toBe(false);
 });
+
+// THE MAGNIFIER MUST NOT MAKE THE ROW LONGER. 360 and not this file's 375,
+// because 360 is where the arithmetic of the sheet runs out: 16 + 7*40 + 8*6
+// = 344 is the whole dock, the row is full by construction, and a magnifier
+// that grows the button pushed the last icon off the screen (measured: the
+// row asked for 360 px of the 342 it has, and the last icon ended at 369).
+//
+// The case does not ask HOW the magnifier is built. It asks that the row need
+// no more room than before and that every icon still take its own click -
+// asking for a transform would guard today's repair instead of the promise.
+test.describe("das Dock bei 360", () => {
+  test.use({ viewport: { width: 360, height: 700 } });
+
+  test("the magnifier asks the row for no more room", async ({ shell }) => {
+    const dock = shell.locator("#dock");
+    await expect(dock).toBeVisible();
+    // Everything that would show as a longer row: what the row needs against
+    // what it has, the dock's own box, and the right edge of the last icon.
+    const zeile = () => shell.evaluate(() => {
+      const d = document.querySelector("#dock");
+      const icons = [...d.querySelectorAll(".dapp")];
+      const last = icons[icons.length - 1].getBoundingClientRect();
+      const r = d.getBoundingClientRect();
+      return {
+        braucht: d.scrollWidth, hat: d.clientWidth,
+        dock: [Math.round(r.left), Math.round(r.width)],
+        letztes: Math.round(last.right),
+        // What answers at the middle of each icon - the only measurement that
+        // says whether a press would arrive.
+        fremd: icons.map((a, i) => {
+          const b = a.getBoundingClientRect();
+          const top = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+          return top && top.closest(".dapp") === a ? null : `${i}:${top ? top.className || top.tagName : "nichts"}`;
+        }).filter(Boolean),
+      };
+    });
+
+    const ruhe = await zeile();
+    expect(ruhe.fremd).toEqual([]);
+    expect(ruhe.braucht).toBeLessThanOrEqual(ruhe.hat);
+    expect(ruhe.letztes).toBeLessThanOrEqual(360);
+
+    await dock.locator(".dapp").first().hover();
+    // The magnifier is a transition: waited for at the icon that grows, so
+    // the row is read once the growth has happened and not before it.
+    await expect.poll(async () => {
+      const g = await dock.locator(".dapp").first().locator(".g").boundingBox();
+      return Math.round(g.width);
+    }).toBeGreaterThan(40);
+
+    const lupe = await zeile();
+    expect(lupe.fremd).toEqual([]);
+    expect(lupe.braucht).toBeLessThanOrEqual(lupe.hat);
+    expect(lupe.letztes).toBeLessThanOrEqual(360);
+    expect(lupe.dock).toEqual(ruhe.dock);
+  });
+});

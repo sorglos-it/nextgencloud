@@ -22,10 +22,13 @@
      time the floor, because 40 is the same finger size decided that day for
      the window buttons. The sum is written out in docs/gestaltung-lordos.md
      section 8.
-     Under the pointer 64, which keeps LordOS's own ratio (86/54 = 1.59)
-     instead of inventing a second number. */
+     Under the pointer the icon grows by 1.6, which keeps LordOS's own ratio
+     (86/54 = 1.59) instead of inventing a second number: 40 x 1.6 = 64, the
+     same magnified icon the dock has shown since 2026-10-30. It is written as
+     a RATIO and no longer as a second length, because it is now a transform
+     and not a width - see the magnifier below for why. */
   --dock-size: 40px;
-  --dock-magnify: 64px;
+  --dock-grow: 1.6;
   /* ONE duration and ONE curve for every movement in the shell, so that
      "reduce motion" bites in one place. 180 ms is LordOS SLIDE_MS; the curve
      is chosen - LordOS draws its movements in C and names none. */
@@ -258,17 +261,45 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 #dock:empty{display:none}
 .dapp{position:relative;display:flex;align-items:center;justify-content:center;
       width:var(--dock-size);height:var(--dock-size);flex:0 0 auto;padding:0;border:0;
-      border-radius:9px;cursor:pointer;background:none;color:inherit;
-      transition:width var(--motion) var(--ease),height var(--motion) var(--ease)}
-/* The magnifier. Only under the pointer or the keyboard's focus, and the
-   neighbours keep their size - growing them too needs a measurement of its
-   own, and this step does not claim it. */
-.dapp:hover,.dapp:focus-visible{width:var(--dock-magnify);height:var(--dock-magnify)}
+      border-radius:9px;cursor:pointer;background:none;color:inherit}
+/* THE MAGNIFIER GROWS UPWARD, out of the dock, and takes no room in the row.
+   It used to grow the BUTTON from 40 to 64, and that is a layout change: the
+   row got 24 px longer and pushed its neighbours along. MEASURED at 360x700,
+   a phone held upright, with seven apps in the dock:
+
+     at rest      the row needs 342 px of the 342 it has, last icon ends at 345
+     magnified    the row needs 360 px of the 342 it has, last icon ends at 369
+
+   The screen is 360 wide. Pointing at the FIRST icon pushed the LAST one off
+   the screen - an icon nobody could press any more, and the arithmetic of
+   section 8 of the sheet says why there is no room: 16 + 7*40 + 8*6 = 344 is
+   the whole dock, so the row is full by construction and has nothing to give.
+
+   A transform takes no part in layout, so the icon can be 64 across while its
+   button stays 40: nothing moves sideways, nothing is pushed anywhere. The
+   origin is the BOTTOM edge, so the growth goes up and out of the dock's
+   surface - which is what macOS and Lord Flow do, and the one direction where
+   a full dock still has room.
+
+   The NEIGHBOURS still do not grow, and that is now a measured no rather than
+   a "not this step": a neighbour at the halfway 1.3 would eat 6 px into a gap
+   of 8 while the magnified icon eats 12 from the other side, so the two would
+   overlap by 10 px. macOS makes that room by sliding the row apart, and at
+   360 px this row has no room to slide into. */
 .dapp .g{display:flex;align-items:center;justify-content:center;width:100%;height:100%;
          border-radius:9px;color:#fff;
+         transform-origin:bottom center;
+         transition:transform var(--motion) var(--ease);
          background:var(--tint,var(--accent));
          background:linear-gradient(135deg,var(--tint,var(--accent)),
                      color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
+/* The magnified icon is 4 px wider on each side than the gap it has (12 into
+   a gap of 8), so it reaches over its neighbour - and a later sibling paints
+   over an earlier one, which would have the NEIGHBOUR drawn on top of the
+   icon the pointer is on. One step up the stack puts the icon in front of the
+   row it stands in. */
+.dapp:hover,.dapp:focus-visible{z-index:1}
+.dapp:hover .g,.dapp:focus-visible .g{transform:scale(var(--dock-grow))}
 .dapp .g .ico{width:74%;height:74%}
 .dapp.off{opacity:.55}
 /* The dot that says the app is open. It sits UNDER the icon, outside it, so a
@@ -700,5 +731,5 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    jump from 40 to 64 with no duration is a flicker, not a calmer screen. */
 @media (prefers-reduced-motion: reduce){
   :root{ --motion: 0ms; }
-  .dapp:hover,.dapp:focus-visible{width:var(--dock-size);height:var(--dock-size)}
+  .dapp:hover .g,.dapp:focus-visible .g{transform:none}
 }
