@@ -171,6 +171,16 @@ class Desktop {
       e.stopPropagation();
       this.toggleAppMenu();
     });
+    // Down opens the menu onto its first entry, up onto its last - the way a
+    // menu bar works everywhere, and the only way to reach the menu at all
+    // without a mouse: the entries are built when it opens, so there is
+    // nothing to Tab into until it is open.
+    this.appBtn.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      this.toggleAppMenu(true);
+      this.appMove(e.key === "ArrowDown" ? "first" : "last");
+    });
 
     this.tasks = el("div", null);
     this.tasks.id = "tasks";
@@ -202,6 +212,7 @@ class Desktop {
     this.appDrop = el("div", null);
     this.appDrop.id = "appdrop";
     this.appDrop.setAttribute("role", "menu");
+    this.appDrop.addEventListener("keydown", (e) => this.appKey(e));
     root.append(this.appDrop);
     this.markBar();
     this.tick();
@@ -751,6 +762,38 @@ class Desktop {
     // server, and the Store's own list holds one that is markup.
     text(this.appBtn, title);
     this.appBtn.setAttribute("aria-label", title);
+  }
+
+  // The keys this menu promises are the ones the start menu already keeps:
+  // down and right go on, up and left go back, Home and End go to the ends,
+  // and it comes round at both.
+  appKey(e) {
+    const keys = {
+      __proto__: null,
+      ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, Home: "first", End: "last",
+    };
+    const how = keys[e.key];
+    if (how === undefined) return;
+    e.preventDefault();
+    this.appMove(how);
+  }
+
+  // A DISABLED entry is stepped over, never landed on. "Fenster anordnen" is
+  // off while there is only one window to arrange, and a walk that stops on
+  // something that cannot be pressed reads as a walk that is stuck. The place
+  // to carry on from is read off the element that HAS the focus rather than
+  // off a remembered number: the entries are thrown away and built again
+  // every time the menu opens, so a remembered number would point at an
+  // entry that no longer exists.
+  appMove(how) {
+    const items = [...this.appDrop.querySelectorAll('[role="menuitem"]:not([disabled])')];
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    const i = how === "first" ? 0
+      : how === "last" ? items.length - 1
+        : at < 0 ? (how > 0 ? 0 : items.length - 1)
+          : (at + how + items.length) % items.length;
+    items[i].focus();
   }
 
   // The menu of the app in front. Its entries are built when it OPENS and not
