@@ -110,6 +110,20 @@ var paths = struct {
 	// A case has ordinary files in their place, and against os.Remove it would
 	// measure that difference instead of the call (DropCgroup).
 	cgroupDrop func(path string) error
+	// procRoot is where the kernel keeps one directory per process. It is held
+	// here for the reason cgroupRoot is: the cases of this package run where
+	// there is no process of an app at all, and against the real /proc every
+	// case about WHICH tasks belong to a container would measure the process
+	// tree of the machine it runs on. A case lays out its own /proc/<pid>/stat
+	// in a temporary folder instead.
+	procRoot string
+	// killTask ends ONE task, and it takes the start time with the number
+	// because a number alone is not a process: the kernel hands numbers out
+	// again, and between "this one is surplus" and "end it" lies time. The
+	// real one opens a handle on the process first, so the signal cannot
+	// reach a different process that got the same number in between
+	// (surplus_linux.go). nil is never right here.
+	killTask func(pid int, start uint64) error
 	// sleep is the waiting between two looks into cgroup.procs. It is here so
 	// a case about KillCgroup takes no real time: a case that really waits is
 	// a case somebody switches off.
@@ -130,11 +144,18 @@ var paths = struct {
 	chmod:     os.Chmod,
 
 	cgroupRoot:  cgroupRootDefault,
+	procRoot:    procRootDefault,
+	killTask:    killTask,
 	cgroupWrite: cgroupWrite,
 	cgroupJoin:  inCgroup,
 	cgroupDrop:  os.Remove,
 	sleep:       time.Sleep,
 }
+
+// procRootDefault is where the kernel mounts proc on every system NGC runs on.
+// It stands apart from the field above only so that a case can say what it
+// replaced.
+const procRootDefault = "/proc"
 
 // cgroupRootDefault is where a cgroup v2 tree is mounted on every system NGC
 // runs on. It stands apart from the field above only so that a case can say

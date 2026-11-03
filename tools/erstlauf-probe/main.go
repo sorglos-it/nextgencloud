@@ -266,6 +266,9 @@ func (e *probeEngine) Stop(context.Context, string) error                     { 
 func (e *probeEngine) Remove(context.Context, string) error                   { return nil }
 func (e *probeEngine) Running(context.Context, string) (bool, error)          { return true, nil }
 
+// The probe runs one app once; tasks of earlier lives cannot exist there.
+func (e *probeEngine) EndSurplus(context.Context, string) (int, error) { return 0, nil }
+
 func (e *probeEngine) Exec(_ context.Context, x ctlruntime.Exec) (int, error) {
 	// A probe that could not write at all would make both checks below red for
 	// a reason that is this program's own, so the error is kept and the caller

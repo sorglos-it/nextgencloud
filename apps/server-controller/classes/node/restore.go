@@ -100,6 +100,9 @@ type RestoreConfig struct {
 	// is one, and for a second: a case about this must not be able to kill
 	// anything on the machine it runs on.
 	KillCgroup func(name string) error
+	// EndSurplus ends the tasks of earlier lives of an app that hang beside
+	// the container the engine knows (nil: the engine's own call).
+	EndSurplus func(ctx context.Context, name string) (int, error)
 	// Wait is the waiting between the two looks at the contradiction below
 	// (nil: time.Sleep). It is here so the cases of this package take no real
 	// twelve seconds - a case that really waits is a case somebody switches
@@ -261,6 +264,25 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 	// the stop of a neighbour, and the wait that makes this safe would make a
 	// watchdog useless. A watchdog is a new decision and needs its own
 	// measurement.
+	// A container the engine KNOWS, with tasks of earlier lives hanging beside
+	// it in the same cgroup. That is the other half of point 98, and it needs
+	// the other tool: here cgroup.kill would take the healthy container with
+	// it, so the surplus is named task by task (runtime/surplus.go).
+	//
+	// It is not fatal. The app runs, the engine knows it, and an error here
+	// means only that the surplus could not be cleaned - then it keeps
+	// running, which is bad, and the line says so. Stopping the app over it
+	// would make a working app unavailable because something ELSE is wrong
+	// beside it.
+	if up {
+		if n, err := c.endSurplus(ctx, name); err != nil {
+			log.Warn("tasks of earlier lives of this app keep running beside its container",
+				"app", a.ID, "ended", n, "err", err)
+		} else if n > 0 {
+			log.Warn("tasks of earlier lives of this app were ended, its container keeps running",
+				"app", a.ID, "ended", n)
+		}
+	}
 	if !up && c.hasCgroup(name) {
 		c.wait(runtime.OrphanWait)
 		if c.hasCgroup(name) {
@@ -292,6 +314,17 @@ func (c RestoreConfig) hasCgroup(name string) bool {
 		return c.HasCgroup(name)
 	}
 	return runtime.HasCgroup(name)
+}
+
+// endSurplus answers through the field if one was wired and through the engine
+// otherwise. Unlike the three above it is NOT a seam against the machine - the
+// engine is already a seam - but a case that wants to count the calls or play
+// a failure needs a place to stand.
+func (c RestoreConfig) endSurplus(ctx context.Context, name string) (int, error) {
+	if c.EndSurplus != nil {
+		return c.EndSurplus(ctx, name)
+	}
+	return c.Engine.EndSurplus(ctx, name)
 }
 
 // killCgroup and wait answer through their fields if ones were wired and

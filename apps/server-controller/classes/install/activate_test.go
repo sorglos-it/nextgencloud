@@ -143,6 +143,12 @@ func (e *engine) Running(_ context.Context, _ string) (bool, error) {
 }
 func (e *engine) Exec(_ context.Context, _ runtime.Exec) (int, error) { return 0, e.did("Exec") }
 
+// No activation reaches this: tasks of earlier lives are a thing of the
+// restore, not of an installation.
+func (e *engine) EndSurplus(_ context.Context, _ string) (int, error) {
+	return 0, e.did("EndSurplus")
+}
+
 // sys stands in for everything that changes this machine. The real three need
 // root and a kernel that can encrypt a directory, so without this nothing
 // after them could be measured here - and what a case wants to know is the
