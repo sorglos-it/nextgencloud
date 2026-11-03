@@ -331,19 +331,31 @@ empfiehlt Safari 17.4 oder neuer, also genau die Fassung, die die Kurven hat.
 
 ### Was diese Antwort gekostet hat, und warum es hierhin gehört
 
-Sie steht erst im **sechsten** Lauf. Die drei davor haben eine Zahl gemeldet, die falsch
-war, und zwar dreimal derselbe Fehler in anderem Mantel – jedes Mal eine Wartebedingung,
-die einen Zustand beschreibt, der **schon vor dem Klick** galt, und die darum den Klick
-nie melden konnte:
+Sie steht erst im **sechsten** Lauf. Die fünf davor haben keine brauchbare Zahl für
+firefox geliefert – vier davon mit demselben Fehler in anderem Mantel: eine
+Wartebedingung, die einen Zustand beschreibt, der **schon vor dem Klick** galt, und die
+darum den Klick nie melden konnte.
+
+Die Läufe stehen hier mit **Uhrzeit**, nicht mit Nummer. Die Nummern gab es an zwei
+Stellen – in meiner Lastliste und in den Commit-Nachrichten – und sie meinten dort zwei
+verschiedene Läufe: `b26e1d32` nennt den Knöpfe-Lauf „Run 3", die Lastliste nennt
+denselben Lauf „2". Eine Uhrzeit lässt sich nicht verschieben, eine Ordnungszahl schon.
+Aus demselben Grund fällt der frühere Satz „die **drei** davor" weg: es waren **vier**
+Läufe mit falscher Bedingung.
 
 | Lauf | Bedingung | Warum sie in firefox nicht gilt |
 |---|---|---|
-| 2 | kein Warten, sofort gelesen | der Start war noch nicht fertig |
-| 3 | „der Versuch läuft, solange ALLE Knöpfe aus sind" | „Anmelden" ist dort **dauerhaft** aus |
-| 4, 5 | „eine Warnung mit Text ist ein Ende" | der Hinweis zur Passwort-Anmeldung trägt `role="alert"` und **steht von Anfang an da** |
-| 6 | „ein Ende ist, was vorher NICHT da war" | engine-unabhängig – trägt |
+| 13:55 | kein Warten, sofort gelesen | der Start war noch nicht fertig – und es fehlte der Platzhalter, darum fiel schon **chromium** |
+| 14:39 | „der Versuch läuft, solange ALLE Knöpfe aus sind" | „Anmelden" ist dort **dauerhaft** aus |
+| 14:46, 14:48, 14:49 | „eine Warnung mit Text ist ein Ende" | der Hinweis zur Passwort-Anmeldung trägt `role="alert"` und **steht von Anfang an da** |
+| 14:51 | „ein Ende ist, was vorher NICHT da war" | engine-unabhängig – trägt |
 
-**Und die Kontrolle hat keinen der drei gefangen.** chromium kam jedes Mal auf beiden
+Die Warnungs-Zeile sind **drei Läufe, nicht einer**. Dass alle drei an derselben Bedingung
+hingen, ist belegt; welcher davon welche Zahl gemeldet hat, ist aus den Aufzeichnungen
+nicht mehr je Lauf zu trennen, und eine Zuordnung Lauf für Lauf wäre geraten.
+
+**Und die Kontrolle hat keinen der vier gefangen** – ab 14:39, denn um 13:55 fiel sie
+selbst und meldete darum richtig gar nichts. chromium kam jedes Mal auf beiden
 Wegen zum Schreibtisch, die Kontrolle war jedes Mal grün – weil chromium die Eigenschaft
 nicht hat, an der die Bedingung scheiterte: einen dauerhaft abgeschalteten Knopf und
 einen dauerhaft stehenden Hinweis. Daraus die Verschärfung der Regel, die ihren Platz in
@@ -372,6 +384,23 @@ der Unterschied zwischen einem Befund und einer Gewohnheit. Ein Satz wie „in S
 kann sich niemand bei NGC anmelden" ist durch diesen Prüfsatz **nicht** belegt. Was ihn
 belegen oder widerlegen würde, ist ein echtes Safari auf einem Apple-Gerät – auf diesem
 Rechner nicht vorhanden, und darum hier als offener Punkt und nicht als Ergebnis.
+
+### Drei Zeilen, die man weitersagen kann
+
+Diese drei Zeilen sind die ganze Antwort. Sie stehen hier, damit niemand sie neu
+formulieren muss – jede Umformulierung wird entweder länger oder falsch:
+
+> 1. **Firefox: die Anmeldung geht.** Nicht mit Passwort, aber mit Passkey, und die Maske
+>    sagt es vorher – gemessen, bis zum Schreibtisch.
+> 2. **Chrome: die Anmeldung geht**, auf beiden Wegen.
+> 3. **Safari: nicht gemessen, also nicht gewusst.** Geprüft wurde Playwrights webkit,
+>    und das ist nicht Safari. Dort kommt niemand hinein – über ein echtes Safari sagt
+>    das nichts, und NGCs eigene Meldung empfiehlt gerade Safari 17.4, also die Fassung,
+>    die die fehlenden Kurven hat.
+
+Der Satz „in zwei von drei Browsern kann sich niemand anmelden" ist damit **in beiden
+Hälften unbelegt**: in firefox kann sich jemand anmelden, und über Safari ist nichts
+gemessen.
 
 ---
 
