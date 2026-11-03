@@ -231,6 +231,7 @@ gibt, aber erst nach dem Schreiben.
 | 97 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
 | 98 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; zwei Wände: gehärtete Vorlage lässt nur Port 22 durch, Wurzel-Dateisystem ohne `encrypt` — beide behoben, Station 2a neu; der offene Befund zu anna ist in **Punkt 99** berichtigt | Messung |
 | 99 | Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur | gilt – **berichtigt Punkt 98**; Meldung absichtlich erzeugt, Rechteänderung wirkt sofort; dazu: zweiter `install` mit anderem Namen sperrt alle aus, eine unlesbare Zeile verwirft das ganze Protokoll, Firewall-Regel überlebte kein Neuladen | Messung |
+| 100 | Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden offen | gilt – **berichtigt eine eigene Abwägung dieser Prüfrunde**; Startseite byte-gleich (451), aber `/api/v1/setup` gepaart 404 / ungepaart 200 mit vollständiger Auskunft samt MAC, `config.json` ohne `anchor`; 302 Klagen in sieben Tagen sind der dokumentierte Normalfall | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7855,7 +7856,7 @@ die Abwesenheit des Schlüssels auf den erreichbaren Maschinen und die 11 Statio
 Behebung. Abgewogen ist, dass Station 2w einen Buchstaben bekommt statt acht Nummern zu
 verschieben, und jede Zeile der letzten Liste. **Nicht gemessen** ist alles ab Station 3 — kein
 Controller ist gekoppelt, keiner aufgenommen, keine App eingerichtet, kein Fenster geöffnet. Die
-Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.
+Maschine 310 **ist am 30.10.2026 abgebaut** (VMID und Adresse 10.2.3.219 frei). Sie stand, bis der rote Befund in Punkt 99 geklärt war; was dort offenblieb, ist nicht an der Maschine, sondern an der fehlenden Aufschreibung nicht mehr zu holen.
 
 ---
 
@@ -8060,13 +8061,13 @@ derselben Minute, das Fehlen jeder Protokollzeile auf beiden Seiten, die Merkmal
 Sackgassen nach dem Schließen des Fensters. Abgewogen ist die Einordnung der drei Meldungen als
 „Erscheinung statt Ursache" und jede Zeile der letzten Liste. **Nicht gemessen** ist, woran der
 Aufruf der zweiten Person scheitert — nur, dass er scheitert und dass es an keinem der drei
-geprüften Rechte liegt. Die Maschine 310 **bleibt stehen**, damit genau das nachprüfbar bleibt.
+geprüften Rechte liegt. Die Maschine 310 **ist am 30.10.2026 abgebaut** (VMID und Adresse 10.2.3.219 frei). Sie stand, bis der rote Befund in Punkt 99 geklärt war; was dort offenblieb, ist nicht an der Maschine, sondern an der fehlenden Aufschreibung nicht mehr zu holen.
 
 ---
 
 ## Punkt 99: Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur
 
-**Gemessen am 30.10.2026** auf derselben Maschine wie Punkt 97 und 97 (VMID 310). Punkt 98
+**Gemessen am 30.10.2026** auf derselben Maschine wie Punkt 97 und 98 (VMID 310). Punkt 98
 endete mit einem roten Befund: anna hielt alle drei Rechte und bekam die App trotzdem nicht,
 und **auf keiner Seite stand eine Zeile**. Dieser Punkt geht dem nach. Er berichtigt Punkt 98
 in einem Teil und erklärt, warum dort nichts zu finden war.
@@ -8218,4 +8219,96 @@ die Einordnung der Meldung als „falsche Fährte" und jede Zeile der letzten Li
 gemessen** ist, warum anna am 29.10.2026 ohne Wirkung blieb, obwohl die Seite ihre Rechte als
 gesetzt zeigte — und das ist kein Versäumnis dieses Punktes, sondern sein Gegenstand: die
 Anlage hat darüber nichts aufgeschrieben, und nachträglich ist nichts mehr zu holen. Die
-Maschine 310 bleibt stehen.
+Maschine 310 ist am 30.10.2026 abgebaut, nachdem dieser Punkt geschrieben war; nachzuprüfen ist er an der Aufschreibung, nicht an ihr.
+
+## Punkt 100: Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden offen
+
+**Gemessen am 3.11.2026** an zwei Anlagen gleichzeitig: `ngc-ein` (10.2.3.216, eingerichtet
+und nie gepaart) und der kleinen Anlage (Web-Knoten 10.2.3.210, gepaart, Anker bei `seq 8`).
+Der Punkt entstand aus einer Frage einer anderen Sitzung, die 302 Klagen „state: no trust
+list yet" in sieben Tagen gezählt und daraus geschlossen hatte, die Maschine sei tot.
+
+### Die Berichtigung zuerst, und sie trifft eine eigene Abwägung
+
+In dieser Prüfrunde habe ich gesagt, eine ungepaarte Maschine sehe von aussen **genau wie
+eine gesunde aus**. Gemessen ist das **falsch**, und zwar im entscheidenden Teil: zwei der
+drei öffentlichen Antworten unterscheiden sich deutlich. Richtig ist die schärfere Fassung:
+der Unterschied ist für den **Menschen vor der Seite** nicht zu sehen und für **jeden, der
+den richtigen Endpunkt fragt**, vollständig zu lesen.
+
+### Die Gegenprobe, drei Antworten, zwei Anlagen
+
+| Abfrage | gepaart (10.2.3.210) | ungepaart (`ngc-ein`) |
+|---|---|---|
+| `/` | 200, **451 Byte** | 200, **451 Byte** – `diff` leer, byte-gleich |
+| `/config.json` | enthält `anchor: {"seq": 8, "hash": …}` | **kein `anchor`-Schlüssel** |
+| `/api/v1/setup` | **404**, 66 Byte, `E_NOTFOUND` | **200**, 711 Byte, vollständige Auskunft |
+
+Die ausgelieferte Startseite ist dieselbe Datei. Wer die Maschine im Browser aufruft, sieht
+in beiden Fällen dasselbe Gerüst; was danach erscheint, entscheidet erst das Programm im
+Browser. Ein Betreiber, der nachsieht, ob „die Maschine läuft", bekommt in beiden Fällen 200.
+
+### Was die ungepaarte Maschine von sich erzählt
+
+Die 711 Byte sind keine Fehlermeldung, sondern die **Einrichtungsauskunft**: Kennung der
+Installation, der einzige Knoten (`id`/`kind`/`name`, dazu `noise`, `sign` und `tls`), die
+Adresse `wss://…:7443/tunnel`, der `releaseKey`, der Laden mit `id`, Name, Adresse und
+Schlüssel — und ein `mac`.
+
+Der `mac` ist der Beleg, der diesen Punkt vom Verdacht trennt: er ist mit dem
+Einrichtungscode geschlüsselt. Die Maschine **könnte ihn nicht rechnen**, wenn
+`/var/lib/ngc/setup-code` weg wäre. Das ist ein Beleg aus dem Mechanismus und nicht aus einer
+Abwesenheit — ein `200` allein hätte das nicht gesagt.
+
+### Warum das kein Fehler des Erstlaufs ist
+
+- `apps/server-api/classes/server/server.go` nennt den Zustand in eigenen Worten „the
+  expected state of an installation that is set up and not yet paired", mit einer Messung vom
+  18.10.2026 daneben (54 gleiche Zeilen in 54 Minuten). Die 302 Klagen sind damit der
+  **dokumentierte Normalfall**, kein Befund.
+- `apps/server-api/classes/login/finish.go`: ohne Liste schlägt `h.S.Trust(ctx)` fehl, die
+  Antwort ist `FailCoded(wire.CodeUnreachable)`. Vertragsgemäss — die Folge, nicht die Ursache.
+- Die Vertrauensliste kann **nur im Browser** entstehen: der eigene Schlüssel der Person
+  unterschreibt die erste Fassung. Kein Skriptweg schreibt sie. Das `pair` in
+  `apps/server-controller/classes/node/main.go` paart einen **Knoten** in eine bestehende
+  Installation, nicht die erste Person.
+
+Darum endet der Prüflauf bei Station 3 absichtlich, und dieser Riegel steht als Meldung in
+`tools/erstlauf-maschine.sh`. `ngc-ein` fehlt kein Schritt des Skripts, sondern der
+menschliche: Seite aufrufen, Paarungscode eingeben, Passkey anlegen, erste Fassung
+unterschreiben — **in einem Browserlauf**, denn dazwischen schliessen zerstört die
+Installation ohne Rückweg (Punkt 97, und `docs/installation-kleines-system.md`, Schritt 7).
+
+### Die zwei Seiten des Befundes
+
+**Für den Betreiber blind:** eine Maschine, auf der sich **niemand** anmelden kann, sagt das
+nur in einer Logzeile, die absichtlich nur bei Änderung erscheint. Sieben Tage unbemerkt sind
+damit nicht Nachlässigkeit, sondern Bauart.
+
+**Für den Fremden offen:** derselbe Zustand wird an einem unauthentifizierten Endpunkt
+vollständig ausgeplaudert. Wer eine ungepaarte Installation findet, weiss, dass hier eine
+Einrichtung aussteht, und kennt Knoten, Laden und Schlüssel.
+
+### Was daraus noch zu bauen wäre
+
+1. **Erst die Frage, dann die Meldung.** Vor jeder Gestaltung steht: darf die
+   Einrichtungsauskunft überhaupt öffentlich sein? Heute ist sie es. Die naheliegende
+   Antwort — der ungepaarten Maschine eine sichtbare Aussage auf der Seite geben — macht das
+   Problem für den Fremden **grösser**, nicht kleiner, solange der Endpunkt offen ist.
+2. **Die Aussage, wenn sie kommt**, muss dem Menschen vor der Seite genug sagen („diese
+   Installation ist noch nicht benutzbar, der Betreiber muss die Einrichtung abschliessen")
+   und dem Fremden nichts — insbesondere nicht, dass ein lebender Einrichtungscode daliegt
+   und wie man ihn benutzt.
+3. **Der Betreiber braucht den Hinweis dort, wo er hinsieht**, nicht im Journal: eine
+   Installation ohne Vertrauensliste ist kein laufender Betrieb und sollte in keiner
+   Zustandsabfrage als gesund gelten.
+
+**Getrennt gehalten:** gemessen sind die neun Zahlen der Gegenprobe-Tabelle, der byte-gleiche
+`diff` der beiden Startseiten, der Inhalt der 711 Byte samt `mac`, das Fehlen des
+`anchor`-Schlüssels in `config.json` der ungepaarten Maschine und die vier Quellstellen.
+Abgewogen ist die Einordnung als zwei Seiten eines Befundes und jede Zeile der letzten Liste.
+**Nicht gemessen** ist, ob ein Fremder mit dieser Auskunft die Installation tatsächlich
+übernehmen könnte — dazu hätte ich den Paarungsweg an einer fremden Maschine gehen müssen,
+und das war nicht meine Maschine. Es ist die erste Frage, die der Bau zu klären hat, und bis
+dahin ist dieser Punkt eine offene Frage und keine belegte Lücke. `ngc-ein` ist unverändert;
+an ihr wurde nur gelesen (vier Abfragen), nichts eingerichtet und nicht gepaart.
