@@ -589,7 +589,7 @@ func TestExecWithoutACgroupRunsRatherThanRefusing(t *testing.T) {
 // 16. KillCgroup ends every task of a cgroup and does not come back before the
 // cgroup is empty. The emptiness is what it promises: whoever calls it starts a
 // container next, and a task left behind would be the second writer on one
-// data directory (point 98).
+// data directory (point 102).
 func TestKillCgroupEndsTheTasksAndWaitsForTheCgroupToBeEmpty(t *testing.T) {
 	k := aKernel(t)
 	var waited int

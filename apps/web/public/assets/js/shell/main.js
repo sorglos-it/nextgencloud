@@ -155,6 +155,15 @@ async function start() {
     // Held against each other by a case now, in all five languages
     // (apps/web/tests/shell/engines.spec.js), so the two sentences cannot
     // drift apart again.
+    //
+    // AND IT NO LONGER RECOMMENDS A VERSION NUMBER EITHER. It read "Bitte
+    // Chrome 137 oder Safari 17.4 oder neuer benutzen.", and that number is
+    // measured to point at the wrong thing: Safari 17.4 HAS the curves this
+    // gate just missed, so the sentence named a remedy the reader may already
+    // be running, while the gap itself - the engine cannot MAKE the keys - was
+    // not named at all. What this gate asks is generateKey, so that is what
+    // the sentence says now. A case reads it off the screen in two languages
+    // and goes red on any digit (apps/web/tests/shell/engines.spec.js).
     message(t("boot.tooold"));
     return;
   }

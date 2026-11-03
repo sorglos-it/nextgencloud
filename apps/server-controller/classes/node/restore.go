@@ -242,7 +242,7 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 	// And the other way round: podman says nothing of this app runs, while its
 	// cgroup still holds a task. Then a process set of this app is up that
 	// podman has forgotten - after a hard death of the controller one set per
-	// start of it, three per app on svc-1 after two starts (point 98). Podman
+	// start of it, three per app on svc-1 after two starts (point 102). Podman
 	// forgot them because it refreshes its own state when its runtime
 	// directory is gone, which systemd deletes with the unit; the processes
 	// did not notice, because since the limits are real they no longer sit in

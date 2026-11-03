@@ -377,7 +377,7 @@ func HasCgroup(name string) bool {
 // Hence the sum below, and not a round number somebody cannot explain later:
 // the deadline itself, plus a slack for the kernel to reap the last task and
 // for conmon to leave. An ordinary stop is over when this is up, and the
-// cgroup is empty; an orphan stands (on svc-1 for hours, point 98). A
+// cgroup is empty; an orphan stands (on svc-1 for hours, point 102). A
 // contradiction that survives this wait is no state of operation.
 const OrphanWait = StopGrace + 2*time.Second
 
@@ -387,7 +387,7 @@ const OrphanWait = StopGrace + 2*time.Second
 // It writes cgroup.kill, which the kernel turns into a SIGKILL for every task
 // in that cgroup, however many there are. That number matters: after a hard
 // death of the controller there is not ONE surplus process set but one per
-// start of the controller - three per app on svc-1 after two starts, point 98.
+// start of the controller - three per app on svc-1 after two starts, point 102.
 // Something that handled "the one orphan" would leave the third standing.
 //
 // It kills and does not ask podman to stop: podman knows only the set its own
@@ -405,7 +405,7 @@ func KillCgroup(name string) error {
 	// And then it is read back, like every other write in this file: a kill
 	// that was accepted and left a task behind is not a kill, and a caller
 	// that started a container next would be the second writer on one data
-	// directory (point 98).
+	// directory (point 102).
 	for i := 0; i < 50; i++ {
 		if !HasCgroup(name) {
 			return nil
