@@ -58,6 +58,18 @@ test("a client certificate that does not hold the contract never leaves the brow
         return e.message;
       }
     };
+    // The KIND of error, not its wording: an engine writes its own text for a
+    // TypeError ("Cannot read properties of null" in V8, "keys is null" in
+    // SpiderMonkey), so a case that pinned the text would be a case about one
+    // engine.
+    const kind = (over) => {
+      try {
+        keys.buildClientCert({ ...good, ...over });
+        return "accepted";
+      } catch (e) {
+        return e.constructor.name;
+      }
+    };
     return {
       // The control that has to LIVE: the same call without a change is
       // accepted. Without it a case that refused everything - a typo in the
@@ -74,8 +86,15 @@ test("a client certificate that does not hold the contract never leaves the brow
         "DH key of 33 bytes": run({
           keys: { ...good.keys, dh: { publicRaw: new Uint8Array(33) } } }),
         "issued at zero": run({ now: 0 }),
-        "no keys at all": run({ keys: null }),
       },
+      // MEASURED and not what this case first asserted: a `keys` of null does
+      // NOT get the one sentence. buildClientCert reads keys.sign.publicRaw
+      // and keys.dh.publicRaw into the certificate BEFORE
+      // session.validateClientCert is asked (auth/keys.js:46-52), so an
+      // argument of the wrong SHAPE crashes a line earlier than the contract.
+      // Written down rather than dropped: the contract guards the certificate,
+      // not the call.
+      nullKeys: kind({ keys: null }),
       // What the contract CANNOT be talked into from here, and it is asked
       // rather than assumed: buildClientCert clamps the lifetime itself with
       // Math.min(maxLifetime, MAX_LIFETIME), so a caller who asks for a year
@@ -94,8 +113,8 @@ test("a client certificate that does not hold the contract never leaves the brow
     "signing key of 31 bytes": one,
     "DH key of 33 bytes": one,
     "issued at zero": one,
-    "no keys at all": one,
   });
+  expect(got.nullKeys, "a keys of null crashes before the contract is asked").toBe("TypeError");
   expect(got.aYear, "a lifetime over the maximum is clamped, not refused").toBe("accepted");
 });
 

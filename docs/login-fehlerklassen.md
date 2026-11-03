@@ -71,7 +71,7 @@ Spalte „Herkunft": **außen** = der Server hat ein Nein geschickt,
 | 21 | **„session: bad signature"** | `contracts/session.js:332` | innen (nackt) |
 | 22 | API-Zertifikat zur Uhrzeit der API nicht gültig | `contracts/session.js:352` | innen (nackt) |
 | 23 | „trust: invalid list" | `contracts/trust.js:238` | innen (nackt) |
-| 24 | „link: no connection" (Socket zu, falsches Unterprotokoll, Text statt Rahmen) | `net/link.js:80`, `:96` | innen (nackt) |
+| 24 | „link: no connection" (Socket zu, falsches Unterprotokoll, Text statt Rahmen) | `net/link.js:72`, `:73`, `:80`, `:96`, `:101`, `:102` – **sechs** Stellen, gezählt am 03.11.2026; hier standen zwei | innen (nackt) |
 | 25 | Noise-Handschlag scheitert (falscher Schlüssel, falscher Rahmen) | `contracts/noise.js:41`, `:276`–`:312` | innen (nackt) |
 
 ### Zwei Korrekturen am Befund – gültig für `origin/main` 0471b02d, VOR PR 164
