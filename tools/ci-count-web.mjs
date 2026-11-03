@@ -36,11 +36,30 @@ try {
 const per = new Map();
 const red = [];
 
-function count(suite, project) {
-  const name = suite.title && suite.suites === undefined ? project : project;
+// A case is named by its whole TITLE CHAIN, never by file:line.
+//
+// Both halves of that are measured (3.11.2026). The chain, because
+// shell/engines.spec.js builds its cases out of two nested loops around ONE
+// test() - two languages times three keys - so several cases share the leaf
+// title AND the source line, and they differ only in the suite above them.
+// Printed by leaf alone, seven red cases read as six with one of them twice,
+// which is exactly the shape of a double-counting bug and is not one.
+//
+// And NOT file:line, because playwright's line for a case is not the line
+// test() stands on: boot.spec.js has its cases on 30 and 95 and is reported
+// as 28 and 105 - 105 in a file of 101 lines, so the number is not merely
+// shifted, it is outside the file. engines.spec.js: 60/81/96/119/150/308
+// reported as 68/91/110/141/182/353. Not the line endings (an LF copy of the
+// same file gives the same wrong numbers) and not the fixtures (plain
+// @playwright/test does it too). No mechanism is known, and the numbers
+// differ between machines, so nothing is claimed here beyond this: a case
+// header's number must not be passed on as a source line. The numbers in the
+// STACK of a failure are right - those are the ones to quote.
+function count(suite, titles) {
+  const chain = suite.title ? [...titles, suite.title] : titles;
   for (const spec of suite.specs ?? []) {
     for (const test of spec.tests ?? []) {
-      const engine = test.projectName || name || "?";
+      const engine = test.projectName || "?";
       const row = per.get(engine) ?? { passed: 0, failed: 0, skipped: 0, flaky: 0 };
       // status is playwright's own verdict over all retries of this case.
       if (test.status === "expected") row.passed += 1;
@@ -48,14 +67,16 @@ function count(suite, project) {
       else if (test.status === "flaky") row.flaky += 1;
       else {
         row.failed += 1;
-        red.push(`${engine}  ${spec.file}:${spec.line}  ${spec.title}`);
+        // The chain already begins with the file, so it is not printed twice.
+        const where = chain[0] === spec.file ? chain : [spec.file, ...chain];
+        red.push(`${engine}  ${[...where, spec.title].join(" > ")}`);
       }
       per.set(engine, row);
     }
   }
-  for (const inner of suite.suites ?? []) count(inner, name);
+  for (const inner of suite.suites ?? []) count(inner, chain);
 }
-for (const suite of report.suites ?? []) count(suite, undefined);
+for (const suite of report.suites ?? []) count(suite, []);
 
 let passed = 0, failed = 0, skipped = 0, flaky = 0;
 for (const [engine, row] of [...per].sort()) {
