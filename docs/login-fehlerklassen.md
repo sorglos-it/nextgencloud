@@ -74,30 +74,56 @@ Spalte „Herkunft": **außen** = der Server hat ein Nein geschickt,
 | 24 | „link: no connection" (Socket zu, falsches Unterprotokoll, Text statt Rahmen) | `net/link.js:80`, `:96` | innen (nackt) |
 | 25 | Noise-Handschlag scheitert (falscher Schlüssel, falscher Rahmen) | `contracts/noise.js:41`, `:276`–`:312` | innen (nackt) |
 
-**Zwei Korrekturen am Befund des Auftrags**, beide gemessen:
+### Zwei Korrekturen am Befund – gültig für `origin/main` 0471b02d, VOR PR 164
+
+Beide Korrekturen sind gemessen, und beide **verfallen mit PR 164**
+(`anmeldung-erster-versuch`, läuft zum Zeitpunkt dieser Messung bei einem
+anderen Strang). PR 164 entfernt die Behelfslösung, auf die sich beide stützen:
+`openTrust` wird Pflichtangabe, `openTrustFromChain` fällt weg, und
+`shell/main.js` übergibt einen echten Öffner. Wer dieses Blatt nach dem Merge
+von 164 liest, liest hier den Stand davor.
 
 - `login: no way to open the trust list` gibt es in `origin/main` **nicht**
-  (`grep` über `apps/web/public/assets/js`: 0 Treffer). Entweder liegt der Satz
-  auf einem anderen Zweig oder er ist aus der Erinnerung.
+  (`grep` über `apps/web/public/assets/js`: 0 Treffer).
+  **Kommt mit PR 164:** dann ist es der Fehler, den die neue Pflichtangabe
+  wirft – also Klasse 26 dieser Liste, innen (nackt).
 - `TrustBroken` (`shell/trustlist.js:68`) erreicht die Anmeldemaske **nicht**.
   `shell/main.js:268` übergibt **kein** `openTrust`, also läuft die
   Behelfslösung `openTrustFromChain` (login.js:99–104); `trustlist.js` greift
   erst **hinter** der Anmeldung, und `shell/main.js:270–276` hat dafür einen
-  eigenen Satz („NGC konnte nicht geladen werden."). `TrustBroken` ist eine
-  Klasse eines anderen Schirms.
+  eigenen Satz („NGC konnte nicht geladen werden.").
+  **Kommt möglicherweise mit PR 164:** sobald `trustlist.js` beim Anmelden ins
+  Spiel kommt, kann `TrustBroken` in `attempt()` landen – also Klasse 27,
+  innen (nackt). Ob es wirklich so ist, muss **nach** dem Merge gemessen
+  werden, nicht hier vermutet.
 
-**Ein Fund nebenbei, und er ist der Kern der Blindheit:**
+Die Klassen 26 und 27 sind darum in der Tabelle oben **nicht** gezählt: heute
+sind es 25. Wer Schritt 3 nach dem Merge von 164 baut, fängt mit diesen zwei
+an, denn sie sind die einzigen, die ohne Messung hinzukommen.
+
+## Der Kern der Blindheit liegt eine Schicht unter der Maske
+
+Das ist der Fund, der über den Auftrag hinausgeht, und er ist **kein Versehen,
+sondern eine Entscheidung mit Preis.**
+
 `net/http.js:50–56` fängt jeden Fehler des Vertragslesers und ersetzt ihn durch
 `E_PROTOCOL`. Die genauere Ursache (`session: malformed message`,
-`contracts/session.js:446`, `:449`, `:458`, `:473`) ist damit **schon eine Schicht
-unter der Maske verloren** – nicht erst an der Maske. Der Kommentar darüber
-(http.js:44–49) sagt das ausdrücklich und nennt den Preis sowie den einzigen Weg
-daran („einen Haltepunkt auf das `throw` setzen"). Das Verschlucken ist begründet:
-die Antwort kann ein Zertifikat tragen, und die ginge mit in jedes Protokoll.
+`contracts/session.js:446`, `:449`, `:458`, `:473`) ist damit **schon unter der
+Maske verloren** – nicht erst an ihr. Keine Änderung an `auth/login.js` kann sie
+zurückholen.
 
-Und: ein `code` am Fehler bedeutet **nicht** „der Server hat das gesagt".
-Die Klassen 3 bis 7 setzt der Browser selbst. Wer die Klasse am `code` ablesen
-will, liest an fünf Stellen die eigene Vorrichtung.
+Der Kommentar darüber (http.js:44–49) nennt den Preis selbst und begründet ihn:
+die Antwort kann ein Zertifikat tragen, und das ginge mit in jedes Protokoll.
+Als einzigen Weg daran nennt er einen Haltepunkt auf das `throw`. Das ist eine
+abgewogene Entscheidung, und sie bleibt – sie ist nur der Grund, warum Weg 3
+unten die Klasse **dort** abfängt, wo sie entsteht, statt sie durch diese
+Schicht zu schleppen.
+
+**Und ein Satz, der in einem Jahr eine falsche Deutung erspart: ein `code` am
+Fehler heißt NICHT „der Server hat das gesagt".** Die Klassen 3 bis 7 setzt der
+Browser selbst (`net/http.js:54`, `:144`, `:194`, `:227`, `:268`). Wer die
+Klasse am `code` ablesen will, liest an fünf Stellen die eigene Vorrichtung
+statt die Antwort der API.
 
 ## Schritt 1b – was heute abgedeckt ist, in Fällen
 
@@ -282,13 +308,33 @@ ein Schalter, den jemand findet. Weg 1 ist abzulehnen.
 
 ## Was Schritt 3 beweisen muss
 
+Weg 3 ist am 03.11.2026 von der Leitsitzung freigegeben, mit vier Auflagen.
+Sie stehen hier, weil sie beim Bauen gelten und nicht in einer Nachricht:
+
+1. **Die Grenze liegt bei `apps/web/tests`, und sie trägt.** Die Prüftür
+   `/api/v1/mock` und jeder `fault=`-Schalter bleiben dort. Kein Byte davon
+   wandert nach `apps/web/public`, und kein Schalter ist von der ausgelieferten
+   Oberfläche lesbar. Warum die Grenze trägt: `apps/web/tests` ist das einzige
+   npm-Gebiet des Projekts (CLAUDE.md, „npm nur in `apps/web/tests/`") und wird
+   nicht ausgeliefert; `mock/api.js` ist der Prüfserver, auf einer echten Anlage
+   antwortet dort Apache. Jeder PR aus Schritt 3 schreibt diesen Satz mit.
+2. **`shell/login.spec.js:224` ist die lebende Gegenprobe.** Die Oberfläche
+   zeichnet nach außen weiter genau einen Satz. Stirbt dieser Fall, ist der Bau
+   zu weit gegangen und ein **Sicherheitsmangel** – nicht ein roter Fall, den
+   man anpasst.
+3. **Je neuem `fault=`-Schalter ein sterbender Mutant UND ein Gegenfall**, der
+   zeigt, dass der Schalter nur im Prüfserver wirkt. Ein Schalter, der nur
+   gesetzt und nie abgewiesen wurde, ist ungeprüft.
+4. **Die drei Klassen mit eigener Antwort bleiben unangetastet** (`NeedTOTP`,
+   `E_LOCKED`, `E_UNREACHABLE`). Die Maske ist dort feiner als der Befund sagte,
+   und das ist eine gute Nachricht, die man leicht wegbaut.
+
+Dazu, unverändert:
+
 - **Je Fehlerklasse ein sterbender Mutant:** wird die Klasse nicht mehr erkannt
   (der `throw` entfernt oder der Text geändert), muss ein Fall fallen.
-- **Eine lebende Gegenprobe:** `shell/login.spec.js:224` muss grün bleiben – die
-  Oberfläche zeichnet nach außen weiter genau einen Satz. Stirbt dieser Fall,
-  ist die Behebung zu weit gegangen und ein Sicherheitsmangel.
-- Dazu nach `messen.md` je Mutantenlauf eine Kontrolle, die **sterben** muss,
-  und eine, die **leben** muss.
+- Je Mutantenlauf nach `messen.md` eine Kontrolle, die **sterben** muss, und
+  eine, die **leben** muss. Eine Kontrolle, die nicht lädt, ist keine.
 
 ## Ein Fund über die Messvorrichtung, der jede künftige Zahl betrifft
 
