@@ -164,6 +164,14 @@ knapp. Das Bild dazu: **offene Akte, verschlossene Tür** — die Tür ist durch
 belegt verschlossen (keine Übernahme), die Akte liegt ohnehin offen; die Meldung soll die Akte nicht
 noch einmal vorlesen.
 
+**Und eine Berichtigung der Reihenfolge, die beim Bau auffiel:** die Seite war an einer Stelle
+**gesprächiger als der Endpunkt**. Die Auskunft am Endpunkt trägt den Code nicht und sagt auch
+nicht, wo er liegt; die alte Lead-Zeile der ungepaarten Seite sagte jedem „auf dem Bildschirm des
+Servers steht ein Einmal-Code" — und das an der Stelle mit der niedrigsten Schwelle, ohne dass man
+einen Endpunkt kennen muss. Nicht „erst der Endpunkt, dann kann die Meldung es nur schlimmer machen",
+sondern umgekehrt: die Meldung verriet etwas, was der Endpunkt nicht verrät. Das ist der Satz, der
+diesen Umbau rechtfertigt.
+
 Darum sagt die Meldung dem, der davorsteht, genug, und dem Fremden nichts:
 
 > **Diese Anlage ist noch nicht benutzbar. Der Betreiber muss die Einrichtung abschließen.**
