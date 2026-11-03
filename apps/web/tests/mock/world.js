@@ -224,6 +224,14 @@ export async function buildWorld() {
       [BOTH_NAME, { id: DORA_ID, totp: false }],
     ]),
     api: { id: "api-1", sign: apiSign, noise: apiNoise },
+    // The key the version above is signed with. It is handed out for ONE
+    // thing: mock/api.js builds a DELIBERATELY BROKEN list with it (the
+    // `break=badlist` switch of its test door), and signing that one properly
+    // is what makes the case measure what it names. A list that was broken AND
+    // unsigned would be turned away by the signature first, and the case would
+    // be green for the wrong reason - after PR 164, which checks the signature
+    // before the content, it would stop measuring the content at all.
+    listSigner,
     controller: { id: "ctl-1", noise: ctlNoise },
     results: results(),
   };
