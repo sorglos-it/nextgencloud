@@ -265,7 +265,7 @@ func (c RestoreConfig) one(ctx context.Context, log *slog.Logger, a dbapi.App) {
 	// watchdog useless. A watchdog is a new decision and needs its own
 	// measurement.
 	// A container the engine KNOWS, with tasks of earlier lives hanging beside
-	// it in the same cgroup. That is the other half of point 98, and it needs
+	// it in the same cgroup. That is the other half of point 102, and it needs
 	// the other tool: here cgroup.kill would take the healthy container with
 	// it, so the surplus is named task by task (runtime/surplus.go).
 	//

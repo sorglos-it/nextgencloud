@@ -11,7 +11,7 @@ import (
 // Surplus process sets: what to do when podman knows a running container of an
 // app and OTHER tasks hang in that app's cgroup beside it.
 //
-// This is the second half of point 98 of the book, and it needs a different
+// This is the second half of point 102 of the book, and it needs a different
 // tool than the first. Where podman knows NO container, cgroup.kill empties
 // the whole cgroup and there is no healthy process in it that the kill could
 // take. Here there IS one: the container podman knows. Emptying the cgroup

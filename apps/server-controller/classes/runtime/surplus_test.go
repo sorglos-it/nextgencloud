@@ -121,7 +121,7 @@ func TestEndSurplusLeavesAHealthyContainerAlone(t *testing.T) {
 
 // 2. One set of an earlier life beside it: exactly its two numbers go, and the
 // two of the container podman knows stay. That is the state of svc-1 after a
-// hard death of the controller (point 98).
+// hard death of the controller (point 102).
 func TestEndSurplusEndsTheSetOfAnEarlierLifeAndKeepsTheKnownOne(t *testing.T) {
 	f := aProc(t, anAppName,
 		task{pid: 100, ppid: 7, start: 500},   // old conmon
