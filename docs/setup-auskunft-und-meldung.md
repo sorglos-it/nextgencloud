@@ -166,7 +166,7 @@ noch einmal vorlesen.
 
 Darum sagt die Meldung dem, der davorsteht, genug, und dem Fremden nichts:
 
-> **Diese Installation ist noch nicht benutzbar. Der Betreiber muss die Einrichtung abschließen.**
+> **Diese Anlage ist noch nicht benutzbar. Der Betreiber muss die Einrichtung abschließen.**
 
 Kein Wort von einem Code, von einem Zustand „wartet auf Paarung", von einem Weg, die Einrichtung
 selbst zu beenden.
@@ -191,8 +191,14 @@ Erstlauf-Gegenprobe (Auflage 3) — dann wäre keine neue Installation mehr paar
   offenen Seite liegt (nur aus vertrauter Herkunft/lokal). Das ist eine größere Änderung über das
   Web hinaus und braucht einen neuen, belegten Erstlauf-Weg, sonst bricht Auflage 3.
 
-Dieser Punkt wird vor dem Bau mit der Leitsitzung entschieden; gebaut wird B1, falls sie nicht B2
-ausdrücklich will.
+**Entschieden von der Leitsitzung (03.11.2026): B1.** B2 bräche Auflage 3 und kaufte fast nichts —
+der Zustand ist über `/api/v1/setup` ohnehin für jeden lesbar, der den Endpunkt kennt; die Maske
+wegzunehmen verbirgt also nichts, sondern macht nur den Erstlauf unmöglich, bis ein Ersatzweg
+gebaut **und** belegt ist. Ein Gewinn, der erst mit einer späteren Lieferung entsteht, ist eine
+Schuld, kein Gewinn. Gebaut wird B1: `NGC einrichten` und die heutige Lead-Zeile — die einem
+Fremden heute „auf dem Bildschirm des Servers steht ein Einmal-Code" vorliest — weichen dem
+Zustandssatz; das Code-Feld bleibt. „Der Betreiber", nicht „Sie": wer davorsteht, ist vielleicht
+nicht der Betreiber, und der Satz soll ihm nicht sagen, dass er etwas tun kann.
 
 ### Die fünf Sprachen und `BUILT_IN`
 
@@ -208,7 +214,7 @@ Vorschlag der fünf Werte (Schlüssel `setup.notready`):
 
 | Sprache | Text |
 |---|---|
-| de | Diese Installation ist noch nicht benutzbar. Der Betreiber muss die Einrichtung abschließen. |
+| de | Diese Anlage ist noch nicht benutzbar. Der Betreiber muss die Einrichtung abschließen. |
 | en | This installation is not ready to use yet. Its operator still has to finish the setup. |
 | fr | Cette installation n'est pas encore utilisable. L'exploitant doit terminer la configuration. |
 | it | Questa installazione non è ancora utilizzabile. Il gestore deve completare la configurazione. |
