@@ -18,3 +18,7 @@ body {
 }
 .hinweis { margin: 0 0 1.25rem; opacity: .7; font-size: .875rem; }
 button { font: inherit; padding: .4rem 1rem; }
+.zaehler { margin: 0 0 1.25rem; font-size: .875rem; }
+/* The version is the quietest thing in the window and the one a reader goes
+   looking for after an update, so it sits at the bottom and stays legible. */
+.fassung { margin: 1.25rem 0 0; opacity: .55; font-size: .75rem; }
