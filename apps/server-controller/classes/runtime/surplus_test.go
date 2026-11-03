@@ -207,8 +207,13 @@ func TestEndSurplusNeverTakesNumberOneForTheWatchman(t *testing.T) {
 	if !errors.Is(err, ErrSurplus) {
 		t.Fatalf("err = %v, want it to report the 1 it found", err)
 	}
-	if !strings.Contains(err.Error(), "the number 1 stands in") {
-		t.Fatalf("err = %v, want it to say what it refused to touch", err)
+	// It has to name the NUMBER and the cgroup - that is what a reader needs
+	// to look further. Not the wording: a case that pinned the phrase would
+	// kill a mutant that only rewrites the message, and then the wording
+	// would be the promise (messen.md, and a mutant of 30.10.2026 that died
+	// on exactly that).
+	if !strings.Contains(err.Error(), "1") || !strings.Contains(err.Error(), cgroupDirOf(anAppName)) {
+		t.Fatalf("err = %v, want it to name the number and the cgroup it refused to touch", err)
 	}
 	if slices.Contains(f.numbers(), 1) {
 		t.Fatalf("killed %v - the init of the machine was taken for a surplus task", f.numbers())
@@ -324,5 +329,85 @@ func TestEndSurplusRefusesANameThatIsNoName(t *testing.T) {
 	}
 	if len(f.killed) != 0 {
 		t.Fatalf("killed %v for a name that is no name", f.numbers())
+	}
+}
+
+// 12. What podman answered becomes a process number only if it IS one. A value
+// that is not a number must never become a pid, because something gets killed
+// over that pid.
+//
+// The four warning lines of rootless podman (the 477 bytes of point 78) go to
+// standard error, so they cannot land in this string - but they have corrupted
+// a measured value three times in one day, and this is the wall that holds if
+// the two buffers of one call are ever confused: the LAST field, and it has to
+// be a number.
+func TestOnlyANumberBecomesAProcessNumber(t *testing.T) {
+	warnungen := `time="..." level=warning msg="The cgroupv2 manager is set to systemd but there is no systemd user session available"
+time="..." level=warning msg="For using systemd, you may need to log in using a user session"
+time="..." level=warning msg="Alternatively, you can enable lingering with: ` + "`loginctl enable-linger 1002`" + `"
+time="..." level=warning msg="Falling back to --cgroup-manager=cgroupfs"
+`
+	gut := []struct {
+		was  string
+		want int
+	}{
+		{"4711\n", 4711},
+		{"  4711  \n", 4711},
+		// The case this is really about: the warnings in front of the value.
+		{warnungen + "4711\n", 4711},
+	}
+	for _, c := range gut {
+		pid, err := pidFromInspect(c.was)
+		if err != nil || pid != c.want {
+			t.Fatalf("pidFromInspect(%q) = %d, %v, want %d", c.was, pid, err, c.want)
+		}
+	}
+	schlecht := []string{
+		"",
+		"\n",
+		// Only warnings and no number: nothing may come out of this.
+		warnungen,
+		"level=warning\n",
+		"abc\n",
+		// A container that is not running answers 0 - and that is NOT refused
+		// here but in endSurplus, which says so with the name of the app. This
+		// line only holds that 0 arrives as a number and not as a refusal.
+	}
+	for _, w := range schlecht {
+		if pid, err := pidFromInspect(w); err == nil {
+			t.Fatalf("pidFromInspect(%q) = %d and no error - a value that is no number became a pid", w, pid)
+		}
+	}
+	if pid, err := pidFromInspect("0\n"); err != nil || pid != 0 {
+		t.Fatalf("pidFromInspect(\"0\") = %d, %v - the 0 belongs to endSurplus, not here", pid, err)
+	}
+}
+
+// 13. And the first wall of endSurplus earns its own place beside the second.
+// Without a usable number NOTHING is read: this case has no cgroup at all, so
+// the later wall ("the known container does not stand in this cgroup") cannot
+// speak - it would answer "no cgroup, no surplus, no error". The error has to
+// come from the first wall.
+//
+// This is what the mutation run of 3.11.2026 found: with the first wall taken
+// out, case 7 stayed green because the SECOND one refused. A case that is only
+// green because another wall already refused measures that other wall
+// (messen.md).
+func TestTheRefusalWithoutAUsableNumberIsItsOwnWall(t *testing.T) {
+	f := aProc(t, anAppName, task{pid: 200, ppid: 9, start: 900})
+	if err := os.RemoveAll(cgroupDirOf(anAppName)); err != nil {
+		t.Fatal(err)
+	}
+	// Control first: WITH a usable number this very state is quiet (case 10).
+	if n, err := endSurplus(anAppName, 200); err != nil || n != 0 {
+		t.Fatalf("the preparation of this case did not hold: n = %d, err = %v", n, err)
+	}
+	// And without one it is an error, although there is no cgroup to look in.
+	n, err := endSurplus(anAppName, 0)
+	if !errors.Is(err, ErrSurplus) {
+		t.Fatalf("err = %v, want ErrSurplus from the first wall", err)
+	}
+	if n != 0 || len(f.killed) != 0 {
+		t.Fatalf("ended %d (%v)", n, f.numbers())
 	}
 }
