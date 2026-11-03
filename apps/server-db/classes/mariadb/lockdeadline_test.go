@@ -2,9 +2,12 @@ package mariadb_test
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/mariadb"
+	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/migrate"
+	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/sqlstore"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 )
 
@@ -42,8 +45,16 @@ func bentLock(t *testing.T, typ string) (dbapi.Store, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		// The column goes back, or every later test in this package would
-		// run against a schema this one bent.
+		// The column goes back, or every later test in this package would run
+		// against a schema this one bent - and that is not a theory: the rows
+		// go FIRST, because a row that carries a text no BIGINT can hold
+		// makes the ALTER fail (measured: "Error 1292: Truncated incorrect
+		// INTEGER value: 'irgendwann'"), the column stays bent, and the next
+		// run of this package answered with 19 red cases over a schema this
+		// test left behind.
+		if _, err := admin.ExecContext(ctx, "DELETE FROM ngc_lock"); err != nil {
+			t.Errorf("ngc_lock leeren: %v", err)
+		}
 		if _, err := admin.ExecContext(ctx, "ALTER TABLE ngc_lock MODIFY until BIGINT NOT NULL"); err != nil {
 			t.Errorf("die Spalte zurueckbauen: %v", err)
 		}
@@ -129,5 +140,81 @@ func TestLockTakeOnATextColumnDoesNotOrderByDigits(t *testing.T) {
 	holdRow(t, db, "api-1", "999999999")
 	if ok, err := s.LockTake(ctx, dbapi.LockUpdate, "api-2", lockNow, lockUntil); err != nil || !ok {
 		t.Errorf("nine digits, deadline long passed: %v, %v, want true", ok, err)
+	}
+}
+
+// holdMigrate puts a foreign run's row into the migration lock, under the
+// name the runner uses.
+func holdMigrate(t *testing.T, db *sql.DB, until any) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx, "DELETE FROM ngc_lock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO ngc_lock (name, owner, until) VALUES (?, ?, ?)",
+		[]byte("migrate"), []byte("ein-fremder-lauf"), until); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMigrateTakeOnAWholeColumn is the control for the runner's own lock: a
+// held lock stops the second server, a deadline that has passed lets it
+// through. Without the second half a runner that refuses everything would
+// pass the first.
+func TestMigrateTakeOnAWholeColumn(t *testing.T) {
+	_, db := bentLock(t, "BIGINT")
+	holdMigrate(t, db, lockNow+900)
+	if _, err := migrate.Apply(ctx, db, sqlstore.MariaDB, "zweiter-server", lockNow); err == nil ||
+		!strings.Contains(err.Error(), "the lock is held") {
+		t.Errorf("while a foreign run holds it: %v, want \"the lock is held\"", err)
+	}
+	holdMigrate(t, db, lockNow-1)
+	if _, err := migrate.Apply(ctx, db, sqlstore.MariaDB, "zweiter-server", lockNow); err != nil {
+		t.Errorf("after the deadline: %v, want <nil>", err)
+	}
+}
+
+// TestMigrateTakeOnADeadlineThatIsNoNumber: a deadline nobody can read as a
+// number. I expected MariaDB to convert "irgendwann" to 0, read the lock as
+// long expired and hand it over - measured, it does not. It refuses the
+// comparison itself:
+//
+//	Error 1292 (22007): Truncated incorrect DECIMAL value: 'irgendwann'
+//
+// So the UPDATE fails, the runner reports that error, and nobody takes the
+// lock. With a deadline that IS a number as text ("1790000600") MariaDB
+// converts and answers right, which the tests above measure; only the value
+// that is no number at all is refused outright.
+//
+// Which means: on BOTH databases such a row is stopped by the SQL today, by
+// two completely different answers - SQLite orders every text behind every
+// number and says "held", MariaDB refuses the statement. The second bolt in
+// Go is not reached on either of them, and that is why it is measured against
+// the mutant and not here (docs/schloss-ablauf-riegel.md). This test holds
+// the two answers, because a change to either of them changes who guards
+// this row.
+func TestMigrateTakeOnADeadlineThatIsNoNumber(t *testing.T) {
+	_, db := bentLock(t, "VARCHAR(64)")
+	holdMigrate(t, db, "irgendwann")
+	_, err := migrate.Apply(ctx, db, sqlstore.MariaDB, "zweiter-server", lockNow)
+	if err == nil {
+		t.Fatal("deadline \"irgendwann\" was accepted, want an error")
+	}
+	if !strings.Contains(err.Error(), "1292") {
+		t.Errorf("deadline \"irgendwann\": %v, want the refusal of the comparison (Error 1292)", err)
+	}
+	// It must not read as "somebody else is migrating": that would send
+	// whoever reads the journal looking for a second server.
+	if strings.Contains(err.Error(), "another server is running the migrations") {
+		t.Errorf("the answer reads as a second server: %v", err)
+	}
+	// And the row still stands as it stood - nothing of this take was kept.
+	var owner []byte
+	if err := db.QueryRowContext(ctx,
+		"SELECT owner FROM ngc_lock WHERE name = ?", []byte("migrate")).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if string(owner) != "ein-fremder-lauf" {
+		t.Errorf("the lock now belongs to %q: the take was not taken back", owner)
 	}
 }
