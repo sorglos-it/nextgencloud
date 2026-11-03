@@ -38,7 +38,16 @@ nicht angefasst, `shared/` nicht geändert.
 
 - **Gepaart sieht anders aus als ungepaart.** `GET` antwortet gepaart **404** (`Serve` prüft zuerst
   die Trust-Liste), ungepaart **200**. Die 200 ist damit ein sichtbares Zustandsmerkmal — der
-  leise Befund.
+  leise Befund. An zwei echten Maschinen gemessen (03.11.2026, Nachbarstrang: gepaarte kleine
+  Anlage 10.2.3.210, Anker `seq 8`, gegen ngc-ein):
+
+  | Abfrage | gepaart (.210) | ungepaart (ngc-ein) |
+  |---|---|---|
+  | `/` | 200, 451 Byte | 200, 451 Byte — byte-gleich |
+  | `/config.json` | `anchor: {"seq": 8, …}` | kein `anchor`-Schlüssel |
+  | `/api/v1/setup` | 404, 66 Byte, `E_NOTFOUND` | 200, 711 Byte, volle Auskunft |
+
+  Also ist die 200 nicht nur aus dem Code gelesen, sondern gemessen ein Zustandsmerkmal.
 
 **Ergebnis:** Der ernste Befund („wer die Auskunft hat, übernimmt die Anlage") ist als
 Übernahmeweg widerlegt. Was bleibt, ist der leise Befund (Zustand und Identität sichtbar, geringe
@@ -132,10 +141,19 @@ Anmeldung stünde.
 ### Der Riegel, an dem der Bau sich messen muss
 
 Die Aussage darf **nicht** verraten, dass hier ein lebender Einrichtungscode liegt, nicht seinen
-Zustand, nicht den Weg dorthin. Nach der Messung ist der Schaden geringer als befürchtet — ein
-Fremder kommt mit der Auskunft nicht hinein —, aber „noch nicht gepaart" **plus** „hier ist ein
-Code" bleibt eine Aufforderung, den Code zu suchen, und Codes werden auch anders gefunden als durch
-Rechnen. Darum sagt die Meldung dem, der davorsteht, genug, und dem Fremden nichts:
+Zustand, nicht den Weg dorthin, nicht seit wann, und sie trennt nicht „nie gepaart" von „Paarung
+abgebrochen" — wer das trennt, sagt einem Fremden, ob ein Versuch sich lohnt.
+
+**Die Begründung ist nicht „sonst erfährt er es".** Gemessen (Tabelle oben) verrät die ungepaarte
+Anlage einem Fremden heute schon mehr: Kennung, Knoten mit `noise`/`sign`/`tls`, Tunneladresse,
+`releaseKey`, Laden mit Adresse und Schlüssel — nicht den Code, aber die ganze innere Aufstellung.
+Die Begründung lautet darum: **sonst sagt es ihm die Seite auch noch, ohne dass er den Endpunkt
+kennen muss.** Die Meldung ist der Weg mit der niedrigsten Schwelle, und genau darum bleibt sie
+knapp. Das Bild dazu: **offene Akte, verschlossene Tür** — die Tür ist durch den sterbenden Mutanten
+belegt verschlossen (keine Übernahme), die Akte liegt ohnehin offen; die Meldung soll die Akte nicht
+noch einmal vorlesen.
+
+Darum sagt die Meldung dem, der davorsteht, genug, und dem Fremden nichts:
 
 > **Diese Installation ist noch nicht benutzbar. Der Betreiber muss die Einrichtung abschließen.**
 
@@ -144,11 +162,26 @@ selbst zu beenden.
 
 ### Wie die Seite es erfährt
 
-Die ungepaarte Lage ist von außen am `GET /api/v1/setup` = **200** erkennbar (gepaart: **404**).
-Die Seite stellt die Meldung also dort, wo sie heute die Anmeldemaske aufbaut, sobald der Erstlauf
-noch offen ist. Die Maske selbst wird **nicht** gezeigt — nur der eine Satz. Der Weg zur Paarung
-(Code eingeben, unterschreiben) bleibt dem Betreiber vorbehalten und erscheint nicht auf der
-offenen Seite.
+Die ungepaarte Lage erfährt die Seite heute schon: `shell/main.js` zeigt die Setup-Maske
+(`auth/setup.js`), sobald kein Anker da ist (`anchor === null`). Genau dort, wo sonst die Anmeldung
+stünde, gehört der ehrliche Satz hin.
+
+**Offene Entscheidung für den Bau — Erstlauf gegen „Maske nicht zeigen".** Mein erster Entwurf
+schrieb, die Maske werde gar nicht gezeigt, nur der Satz. Nachgemessen hält das nicht ohne Weiteres:
+der Erstlauf **paart im Browser** über genau diese Maske (`tools/erstlauf-verteilt.sh`:
+„first setup of an installation happens in a BROWSER — GET/POST /api/v1/setup"; der neue Admin wird
+im Browser unterschrieben). Nimmt man die Maske von der offenen Seite, stirbt die
+Erstlauf-Gegenprobe (Auflage 3) — dann wäre keine neue Installation mehr paarbar. Zwei Wege:
+
+- **B1 (empfohlen):** Der ehrliche Satz ist das, was die ungepaarte Seite als Zustand zeigt; das
+  Code-Feld des Betreibers bleibt als Erstlauf-Weg erreichbar. Der Satz nennt nur den Zustand, nicht
+  den Code — das Feld selbst verrät keinen Code. Erstlauf unverändert.
+- **B2:** Die offene Seite zeigt nur den Satz; die Paarung zieht auf einen Weg um, der nicht auf der
+  offenen Seite liegt (nur aus vertrauter Herkunft/lokal). Das ist eine größere Änderung über das
+  Web hinaus und braucht einen neuen, belegten Erstlauf-Weg, sonst bricht Auflage 3.
+
+Dieser Punkt wird vor dem Bau mit der Leitsitzung entschieden; gebaut wird B1, falls sie nicht B2
+ausdrücklich will.
 
 ### Die fünf Sprachen und `BUILT_IN`
 
