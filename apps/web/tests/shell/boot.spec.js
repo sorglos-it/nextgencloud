@@ -15,8 +15,8 @@ import {
 // worse than coming up:
 //
 //   1. the desktop - the engine can finish a password login;
-//   2. "Dieser Browser ist zu alt für NGC." - not even the two curves
-//      (Playwright's WebKit, measured: NotSupportedError at generateKey);
+//   2. the boot.tooold message - not even the two curves (Playwright's
+//      WebKit, measured: NotSupportedError at generateKey);
 //   3. the mask WITHOUT the password route, and a sentence that says why -
 //      the curves are there and a passkey would get in, but the engine hands
 //      out no public half of a password seed (Firefox 141, measured:
@@ -35,7 +35,42 @@ test("the shell either brings the desktop up or says why it cannot", async ({ sh
     return;
   }
   if ((await shellGap(shell)) !== "") {
-    await expect(shell.locator(".msg")).toContainText("Dieser Browser ist zu alt für NGC.");
+    // THE SENTENCE IS NOT WRITTEN OUT HERE, and that is the whole repair of
+    // this branch. Until 03.11.2026 it read
+    //
+    //   toContainText("Dieser Browser ist zu alt für NGC.")
+    //
+    // and it had been RED on WebKit since 18.10.2026 - sixteen days, seen by
+    // nobody, because the shell's wording was rewritten in 95a95476 while
+    // this copy of it stayed behind. Measured then: "zu alt für NGC" existed
+    // in this file and in no line of the shipped shell.
+    //
+    // It was not found by a case failing. The whole web suite runs in no CI
+    // step (the Linux workflow names neither playwright nor web/tests), and
+    // nobody drives WebKit by hand - so this branch, which exists precisely
+    // for the engine that can do least, is the one nobody ever saw.
+    //
+    // THE WORDING IS GUARDED, once: shell/engines.spec.js:275 holds
+    // boot.tooold with its exact text in all five languages, plus a check
+    // that it names no version number, and that case is GREEN on WebKit
+    // (measured 03.11.2026, "turned away in de-DE"). So this branch asks a
+    // different question - WHICH message the boot ends in - and takes the
+    // text from the file the shell itself serves. Two checks for two
+    // mistakes, and the wording lives in one place.
+    //
+    // NOT read from shell/lang.js BUILT_IN: that is the fallback for a release
+    // without assets/lang/, and the shell here serves de.json. Asking the
+    // served file is asking what this page was actually given.
+    const advise = await shell.evaluate(async () => {
+      const r = await fetch("/assets/lang/de.json", { cache: "no-store" });
+      return r.ok ? (await r.json())["boot.tooold"] : "";
+    });
+    // The grundmenge, and it is not decoration: toContainText("") passes on
+    // every page there is, so a key that went missing would turn this case
+    // into one that measures nothing while staying green - the exact failure
+    // mode this repair exists to end.
+    expect(advise.length, "de.json carries boot.tooold").toBeGreaterThan(20);
+    await expect(shell.locator(".msg")).toContainText(advise);
     await expect(shell.locator("#taskbar")).toHaveCount(0);
     return;
   }
