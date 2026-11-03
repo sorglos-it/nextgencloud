@@ -28,6 +28,17 @@ nicht angefasst, `shared/` nicht geändert.
   - Sterbender Mutant (Code-Prüfung in `take()` entfernt, per `-overlay`, `shared/` nicht berührt):
     der fremde Versuch antwortet **204** und die negative Kontrolle wird rot. Also IST der
     code-geschlüsselte MAC der tragende Riegel, nicht nur „auch noch eine Prüfung".
+- **Zwei MACs mit getrennten Namen, nicht einer** (fremde Gegenlesung, 03.11.2026,
+  `shared/session/session.go`): die Auskunft trägt `OfferMAC` über das Label `"ngc/setup-offer/v1"`,
+  das POST verlangt `SetupMAC` über `"ngc/setup/v1"`, und `setupHMAC` hält beide per Label
+  auseinander („so a MAC made for one direction never passes for the other"). Der öffentliche MAC
+  ist damit nicht einmal **wiederverwendbar**: ein Wiedereinspielen scheitert schon an der Richtung,
+  bevor der Code überhaupt gebraucht wird. Zwei verschiedene Aussagen — der Mutant zeigt, dass der
+  code-geschlüsselte MAC der Riegel ist; die Labeltrennung zeigt, dass der öffentliche MAC nicht als
+  dieser Riegel durchgeht — und zusammen sind sie stärker als jede allein.
+- **Die Reihenfolge ist Teil des Riegels** (dieselbe Gegenlesung): `VerifySetup` prüft
+  `ValidSetupCode` und `hmac.Equal` als Erstes, bevor irgendetwas entschlüsselt wird. Ein Riegel
+  hinter einer Entschlüsselung wäre ein anderer.
 - **Der Code ist nicht zu erraten.** Alphabet 32 Zeichen (`A-H J-N P-Z 2-9`), 20 Stellen,
   `crypto/rand`, Abbildung `byte % 32` unverzerrt, weil 256 = 8·32. Macht **genau 100 Bit**. Ein
   HMAC über die öffentliche Auskunft lässt sich damit nicht zurückrechnen und gibt den Code nicht
