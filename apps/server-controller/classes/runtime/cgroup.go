@@ -408,7 +408,22 @@ func KillCgroup(name string) error {
 	// directory (point 102).
 	for i := 0; i < 50; i++ {
 		if !HasCgroup(name) {
-			return nil
+			// The cgroup is empty, and it STILL has to go. Measured on svc-1
+			// on 3.11.2026, three readings against each other: a child born
+			// into a fresh cgroup lives; a child born into the same cgroup
+			// after a write to cgroup.kill is killed; a process MIGRATED into
+			// it (echo pid > cgroup.procs) survives either way. So the kill is
+			// not the one-shot it reads like - the cgroup keeps killing what
+			// is cloned into it, and Start clones podman into exactly this
+			// cgroup (cgroupJoin, UseCgroupFD).
+			//
+			// Without this line the kill takes the orphans AND makes the app
+			// unstartable, for every version of this program: it cost the
+			// plant six minutes of two apps being down, and the old binary
+			// could not bring them back either, because the damage sits in
+			// the directory and not in the code. A fresh directory carries no
+			// flag, and Start makes one.
+			return DropCgroup(name)
 		}
 		paths.sleep(10 * time.Millisecond)
 	}
