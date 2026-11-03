@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { b64decode, b64encode, utf8 } from "../../public/assets/js/contracts/b64.js";
 import * as trust from "../../public/assets/js/contracts/trust.js";
-import { SEED, ed25519FromSeed, ed25519FromBytes, x25519FromSeed } from "./seeded.js";
+import { SEED, ed25519FromSeed, x25519FromSeed } from "./seeded.js";
 import * as sign from "../../public/assets/js/contracts/sign.js";
 import * as proof from "../../public/assets/js/contracts/proof.js";
 import * as core from "../../public/assets/js/contracts/core.js";
@@ -210,12 +210,27 @@ export async function buildWorld() {
   // all -- which is the other half of why the cases had to bypass the anchor
   // check. anna is ROLE_ADMIN and her password key is in the list, so she is
   // who signs here.
-  const annaKey = await ed25519FromBytes(seed);
+  //
+  // THROUGH proof.privateFromSeed AND NOT THROUGH A SECOND IMPORT OF THE SAME
+  // SEED. The public key in the list comes out of proof.publicFromSeed(seed)
+  // above, so the private half comes out of the same function rather than out
+  // of a second, hand-rolled PKCS#8 wrapper in the mock -- a number in a mock
+  // that mirrors a number of the contract comes from the same source as the
+  // real one.
+  //
+  // Measured on 03.11.2026, and said here because the wrong cause was written
+  // down first: the hand-rolled import produced the SAME key and a VALID
+  // signature. It was not the reason version 1 would not open against the
+  // anchor. That reason was in the test, not here -- trust.open wants a chain
+  // whose proofs have been through session.parseTrustChain, where sig is bytes,
+  // and the case handed it the base64 text straight out of the JSON.
+  // contracts/trustchain.spec.js carries the rest of it.
+  const annaPriv = await proof.privateFromSeed(seed);
   const annaKid = await sign.keyID(userPub);
   const signWith = async (bytes) => ({
     kind: proof.KIND_PASSWORD, kid: annaKid,
     sig: b64encode(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" },
-      annaKey.priv, sign.message(sign.PURPOSE_TRUST_LIST, bytes)))),
+      annaPriv, sign.message(sign.PURPOSE_TRUST_LIST, bytes)))),
     authData: "", clientData: "",
   });
 

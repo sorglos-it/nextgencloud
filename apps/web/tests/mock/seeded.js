@@ -66,24 +66,6 @@ export const SEED = Object.freeze({
   apiTls2: "api-2-tls",
 });
 
-// ed25519FromBytes is the same thing for a seed that already exists as bytes:
-// the password key of an admin of the mock world, which proof.deriveSeed makes
-// out of the test password. Version 1 of a list SIGNS ITSELF and only an admin
-// of it may have signed (contracts/trust.js, open), so the mock has to sign
-// with a key the list really carries -- and that is this one.
-export async function ed25519FromBytes(seed) {
-  if (!(seed instanceof Uint8Array) || seed.length !== 32) {
-    throw new Error("seeded: a seed is 32 bytes");
-  }
-  const hex = [...seed].map((b) => b.toString(16).padStart(2, "0")).join("");
-  const priv = await crypto.subtle.importKey("pkcs8", unhex(PKCS8_ED25519 + hex),
-    { name: "Ed25519" }, false, ["sign"]);
-  const k = await crypto.subtle.importKey("pkcs8", unhex(PKCS8_ED25519 + hex),
-    { name: "Ed25519" }, true, ["sign"]);
-  const jwk = await crypto.subtle.exportKey("jwk", k);
-  return { priv, pub: b64urlBytes(jwk.x) };
-}
-
 export async function ed25519FromSeed(name) {
   const priv = await crypto.subtle.importKey(
     "pkcs8", unhex(PKCS8_ED25519 + [...seedBytes(name)].map(
