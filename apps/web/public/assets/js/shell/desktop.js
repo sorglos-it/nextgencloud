@@ -5,6 +5,7 @@
 // prototype in docs/prototype.html builds the same surface with innerHTML;
 // look and handling are taken from it, that habit is not.
 import { el, button, text, clear } from "./dom.js";
+import { t, language } from "./lang.js";
 import * as core from "../contracts/core.js";
 import { Win, minSize } from "./window.js";
 import { storeApp } from "../apps/store.js";
@@ -45,14 +46,34 @@ const BUILTIN = {
   "ngc.users": usersApp,
 };
 
+// tintOf picks one of the six by the app's id. A sum of the characters, which
+// is enough: this is not a hash anybody has to trust, only a way to spread the
+// apps over the six and land on the same one every time. An id is the thing
+// about an app that cannot change without it being another app, so the colour
+// cannot drift while a name or a version does.
+function tintOf(id) {
+  let n = 0;
+  for (let i = 0; i < id.length; i++) n = (n + id.charCodeAt(i)) % ACCENTS.length;
+  return ACCENTS[n];
+}
+
 // The id of the Store, written once. The empty desktop offers it by name, and
 // a second spelling of it somewhere else is a button that opens nothing.
 const STORE_APP = "ngc.store";
 
-// Accent colours in the order of theme.js, with the name the swatch carries
-// for a screen reader. Six colours, no colour picker: a wall of choices is
-// what the design rules forbid, and a name is easier to hit than a hex value.
-const ACCENT_NAMES = ["Blau", "Türkis", "Pink", "Orange", "Violett", "Grün"];
+// Accent colours in the order of theme.js, with the KEY of the name the swatch
+// carries for a screen reader. Six colours, no colour picker: a wall of choices
+// is what the design rules forbid, and a name is easier to hit than a hex
+// value.
+//
+// The names used to stand here, in German, in a shell that promises five
+// languages: a Spanish user got "Farbe Türkis" read out. They are sentences
+// now, in assets/lang/*.json and in BUILT_IN - the same six colours and the
+// same six German words, moved and not changed.
+const ACCENT_KEYS = [
+  "look.accent.blue", "look.accent.teal", "look.accent.pink",
+  "look.accent.orange", "look.accent.violet", "look.accent.green",
+];
 
 // How long two returns to this window have to be apart before the apps are
 // asked for a second time. Switching back to a tab raises "visibilitychange"
@@ -121,11 +142,44 @@ class Desktop {
     this.startBtn.id = "startbtn";
     const logo = el("span", "logo", "⊞");
     logo.setAttribute("aria-hidden", "true");
-    this.startBtn.append(logo, el("span", null, "Start"));
+    // ONLY THE MARK, no word any more: in a band of 28 the word took the room
+    // the app's name needs, and macOS and Lord Flow both put a mark alone at
+    // the far left.
+    //
+    // THE NAME HAS TO BE WRITTEN OUT NOW, and that is MEASURED, not foreseen.
+    // The name of this button was never a label - it came out of the word
+    // "Start" standing in it. Taking the word away took the name with it: the
+    // first run after that had aria-label null and 62 red cases, because 89
+    // places aim at this button by the name "Start". The mark itself says
+    // nothing a screen reader can read, so without this line the way into the
+    // app list has no name at all.
+    this.startBtn.setAttribute("aria-label", t("bar.start"));
+    this.startBtn.append(logo);
     this.startBtn.setAttribute("aria-expanded", "false");
     this.startBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.toggleMenu();
+    });
+
+    // The name of the app in front, with its menu. It stands right of the mark,
+    // where macOS and Lord Flow put it.
+    this.appBtn = button(null, null, null);
+    this.appBtn.id = "appbtn";
+    this.appBtn.setAttribute("aria-expanded", "false");
+    this.appBtn.setAttribute("aria-haspopup", "menu");
+    this.appBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleAppMenu();
+    });
+    // Down opens the menu onto its first entry, up onto its last - the way a
+    // menu bar works everywhere, and the only way to reach the menu at all
+    // without a mouse: the entries are built when it opens, so there is
+    // nothing to Tab into until it is open.
+    this.appBtn.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      this.toggleAppMenu(true);
+      this.appMove(e.key === "ArrowDown" ? "first" : "last");
     });
 
     this.tasks = el("div", null);
@@ -141,8 +195,26 @@ class Desktop {
     this.clock.id = "clock";
     tray.append(themeBtn, this.clock);
 
-    bar.append(this.startBtn, this.tasks, tray);
+    bar.append(this.startBtn, this.appBtn, this.tasks, tray);
     root.append(bar);
+
+    // The dock. It is built here with the bar because both are frame of the
+    // shell and neither belongs to a window. It stays empty - and therefore
+    // invisible, #dock:empty - until the list of apps has come back.
+    this.dock = el("div", null);
+    this.dock.id = "dock";
+    this.dock.setAttribute("role", "toolbar");
+    this.dock.setAttribute("aria-label", t("bar.dock"));
+    root.append(this.dock);
+
+    // The app menu hangs off the shell and not off the band: the band clips
+    // what is wider than itself, and a menu is wider than its button.
+    this.appDrop = el("div", null);
+    this.appDrop.id = "appdrop";
+    this.appDrop.setAttribute("role", "menu");
+    this.appDrop.addEventListener("keydown", (e) => this.appKey(e));
+    root.append(this.appDrop);
+    this.markBar();
     this.tick();
     // Every 15 seconds, as in the prototype. The clock shows no seconds, so
     // this is only about how long a minute may look stale: a quarter of one,
@@ -153,9 +225,23 @@ class Desktop {
   tick() {
     const d = new Date();
     clear(this.clock);
+    // THE SHELL'S OWN LANGUAGE, not "de-DE". It stood nailed to German here,
+    // in a shell that offers five languages: a Spanish user was handed a
+    // German weekday and a German order of day and month. language() answers
+    // with the one of the five that is in force, which is the same one every
+    // sentence beside this clock is written in.
+    //
+    // DATE FIRST, then the time, and the year is gone. That is the macOS and
+    // Lord Flow order, and the year is the part nobody reads off a clock -
+    // in a band of 28 the room it took is the room the app's name needs.
+    const lang = language();
     this.clock.append(
-      el("b", null, d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })),
-      el("span", null, d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })),
+      el("span", null, d.toLocaleDateString(lang, { weekday: "short", day: "numeric", month: "short" })),
+      // The space belongs IN the text and not only in the flex gap. MEASURED:
+      // with the gap alone the two read as one word - "Nov 106:13 PM" - which
+      // is what a screen reader says out loud. The gap puts the air on the
+      // screen, this puts it in the sentence.
+      el("b", null, " " + d.toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" })),
     );
   }
 
@@ -293,7 +379,7 @@ class Desktop {
 
     const colors = el("div", "swatches");
     ACCENTS.forEach((c, i) => {
-      const b = button(null, null, "Farbe " + ACCENT_NAMES[i]);
+      const b = button(null, null, t("look.accent", { name: t(ACCENT_KEYS[i]) }));
       b.style.background = c;
       b.dataset.accent = c;
       b.addEventListener("click", () => {
@@ -377,8 +463,6 @@ class Desktop {
     this.layer.id = "desktop";
     this.wallpaper = el("div", null);
     this.wallpaper.id = "wallpaper";
-    this.icons = el("div", null);
-    this.icons.id = "icons";
     this.snapHint = el("div", null);
     this.snapHint.id = "snaphint";
     // The desktop with nothing on it (docs/gestaltung.md point 3). It is
@@ -386,13 +470,13 @@ class Desktop {
     // list that came back empty, and that is the worst moment to be creating
     // elements.
     //
-    // It is NOT inside #icons. #icons is taken off the screen under 640 px,
-    // and the one sentence that says where the apps are is the last thing a
+    // It stands on its own, not inside anything that a narrow screen takes
+    // away: the one sentence that says where the apps are is the last thing a
     // phone may lose.
     this.empty = el("div", null);
     this.empty.id = "deskempty";
     this.empty.hidden = true;
-    this.layer.append(this.wallpaper, this.icons, this.empty, this.snapHint);
+    this.layer.append(this.wallpaper, this.empty, this.snapHint);
     root.append(this.layer);
   }
 
@@ -424,9 +508,23 @@ class Desktop {
     // does it, and the only way out that needs no explaining.
     document.addEventListener("pointerdown", (e) => {
       if (!this.menu.contains(e.target) && !this.startBtn.contains(e.target)) this.toggleMenu(false);
+      // The app menu goes the same way, and by the same rule: a click outside
+      // it closes it. Two menus that close by two different rules are two
+      // things to learn.
+      if (!this.appDrop.contains(e.target) && !this.appBtn.contains(e.target)) {
+        this.toggleAppMenu(false);
+      }
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && this.menu.classList.contains("open")) this.toggleMenu(false);
+      if (e.key !== "Escape") return;
+      if (this.menu.classList.contains("open")) this.toggleMenu(false);
+      if (this.appDrop.classList.contains("open")) {
+        this.toggleAppMenu(false);
+        // The focus goes back to the button that opened it, or it is left
+        // nowhere - which in a browser means the page, and then the next Tab
+        // starts over at the top.
+        this.appBtn.focus();
+      }
     });
     window.addEventListener("resize", () => {
       for (const w of this.windows.values()) w.keepInView();
@@ -539,6 +637,21 @@ class Desktop {
   glyph(a) {
     const g = el("span", "g", null);
     g.setAttribute("aria-hidden", "true");
+    // EVERY BADGE WORE THE SAME COLOUR until 2026-11-01: the accent, which is
+    // one colour for the whole shell, so seven apps side by side in the dock
+    // were seven identical tiles that could be told apart only by the small
+    // shape inside them. An accent is for what is SELECTED - a focus ring, a
+    // marked swatch, the key under a finger. Giving it to every app at once
+    // spends the one colour that means "this one" on everything at once.
+    //
+    // The tint comes out of the SIX colours this shell already has - Thomas'
+    // decision of 2026-10-30 that the colours stay - so not one new number
+    // enters the repo for this. Which of the six an app wears is read off its
+    // id, so it is the same colour on the desktop, in the dock, in the start
+    // menu and in the title bar, and the same one again after a reload. With
+    // more than six apps two of them share a colour; the shape inside still
+    // tells those two apart, and six tiles that differ beat seven that do not.
+    g.style.setProperty("--tint", tintOf(a.id));
     fillGlyph(g, iconName(a));
     return g;
   }
@@ -575,7 +688,8 @@ class Desktop {
     // later request that fails does not turn the desktop back into a page
     // that has not loaded yet.
     this.loaded = true;
-    this.renderIcons();
+    this.renderDock();
+    this.renderEmpty();
     this.renderMenu("");
   }
 
@@ -583,19 +697,136 @@ class Desktop {
   // roughly a hundred apps the last of them are behind that edge and cannot
   // be clicked - which is all right: the way to an app among a hundred is the
   // search in the start menu, not a wall of icons to read through.
-  renderIcons() {
-    clear(this.icons);
-    this.renderEmpty();
+  // The dock holds the same apps the desktop icons do, out of the same
+  // this.appList: a second source would be a second list to keep right, and
+  // the one that is wrong is the one nobody looks at.
+  //
+  // It carries no names, only icons - that is what a dock is - so each button
+  // gets the app's name as its label, which is what a screen reader reads and
+  // what a test can aim at.
+  renderDock() {
+    clear(this.dock);
     for (const a of this.appList) {
-      // One click opens. Double-click is the habit of an installed desktop,
-      // and the people this is built for do not have it; one click is the
-      // same gesture as in the start menu, so there is nothing to learn.
-      const d = button("dicon", null, null);
-      d.append(this.glyph(a), el("span", "n", a.name));
-      if (a.state !== "ok") d.classList.add("off");
-      d.addEventListener("click", () => this.openApp(a.id));
-      this.icons.append(d);
+      const b = button("dapp", null, a.name);
+      b.dataset.app = a.id;
+      b.title = a.name;
+      b.append(this.glyph(a));
+      if (a.state !== "ok") b.classList.add("off");
+      b.addEventListener("click", () => this.openApp(a.id));
+      this.dock.append(b);
     }
+    this.markDock();
+  }
+
+  // markBar is the ONE hook the windows call when something about them
+  // changes. Both things it refreshes - the dot in the dock and the name in
+  // the band - answer the same question, "which app is open and which is in
+  // front", so two hooks would be two chances to show two different answers.
+  markBar() {
+    this.markDock();
+    this.markApp();
+  }
+
+  // The dot under an app that is open. It is read off this.windows, the one
+  // register of open windows, and not off a count this side keeps: a second
+  // count is a second thing that can be wrong. A minimised window still
+  // counts as open, because it is.
+  markDock() {
+    if (!this.dock) return;
+    const open = new Set([...this.windows.values()].map((w) => w.appID));
+    for (const b of this.dock.querySelectorAll(".dapp")) {
+      b.classList.toggle("on", open.has(b.dataset.app));
+    }
+  }
+
+  // The name in the band is the title of the window in front, read off that
+  // window. NOT off a copy kept here: the title can change while the window
+  // stands (Win.setTitle), and a second copy is the one that goes stale.
+  //
+  // No window in front means no name and no menu. The button is hidden, not
+  // emptied: an empty button of 9 px padding is a thing a mouse can still
+  // hit, and it opens onto nothing.
+  markApp() {
+    if (!this.appBtn) return;
+    const w = this.focused && !this.focused.min ? this.focused : null;
+    if (!w) {
+      this.appBtn.classList.remove("there");
+      this.toggleAppMenu(false);
+      text(this.appBtn, "");
+      this.appBtn.setAttribute("aria-label", "");
+      return;
+    }
+    const title = w.el.querySelector(".t").textContent;
+    this.appBtn.classList.add("there");
+    // The title goes in as TEXT. An app's name comes out of a manifest on a
+    // server, and the Store's own list holds one that is markup.
+    text(this.appBtn, title);
+    this.appBtn.setAttribute("aria-label", title);
+  }
+
+  // The keys this menu promises are the ones the start menu already keeps:
+  // down and right go on, up and left go back, Home and End go to the ends,
+  // and it comes round at both.
+  appKey(e) {
+    const keys = {
+      __proto__: null,
+      ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, Home: "first", End: "last",
+    };
+    const how = keys[e.key];
+    if (how === undefined) return;
+    e.preventDefault();
+    this.appMove(how);
+  }
+
+  // A DISABLED entry is stepped over, never landed on. "Fenster anordnen" is
+  // off while there is only one window to arrange, and a walk that stops on
+  // something that cannot be pressed reads as a walk that is stuck. The place
+  // to carry on from is read off the element that HAS the focus rather than
+  // off a remembered number: the entries are thrown away and built again
+  // every time the menu opens, so a remembered number would point at an
+  // entry that no longer exists.
+  appMove(how) {
+    const items = [...this.appDrop.querySelectorAll('[role="menuitem"]:not([disabled])')];
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    const i = how === "first" ? 0
+      : how === "last" ? items.length - 1
+        : at < 0 ? (how > 0 ? 0 : items.length - 1)
+          : (at + how + items.length) % items.length;
+    items[i].focus();
+  }
+
+  // The menu of the app in front. Its entries are built when it OPENS and not
+  // kept: they say what can be done with the window as it stands right now -
+  // a maximised window offers to come back, a minimised one is not in front at
+  // all - and an entry built earlier would say what was true earlier.
+  toggleAppMenu(open) {
+    if (!this.appDrop) return;
+    const o = open === undefined ? !this.appDrop.classList.contains("open") : open;
+    this.appDrop.classList.toggle("open", o);
+    this.appBtn.classList.toggle("open", o);
+    this.appBtn.setAttribute("aria-expanded", o ? "true" : "false");
+    if (!o) { clear(this.appDrop); return; }
+    // Under the button, and never off the right edge of a narrow screen.
+    const r = this.appBtn.getBoundingClientRect();
+    this.appDrop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 268)) + "px";
+    const w = this.focused;
+    clear(this.appDrop);
+    const item = (label, enabled, run) => {
+      const b = button(null, label, null);
+      b.setAttribute("role", "menuitem");
+      b.disabled = !enabled;
+      b.addEventListener("click", () => { this.toggleAppMenu(false); run(); });
+      this.appDrop.append(b);
+    };
+    if (!w) return;
+    item(t("win.minimize"), true, () => w.minimize());
+    item(t(w.max ? "win.restore" : "win.maximize"), true, () => w.toggleMax());
+    // Arranging is about ALL the windows, not this one, so it is offered only
+    // when there is more than one to arrange.
+    const open2 = [...this.windows.values()].filter((x) => !x.min).length;
+    item(t("win.tile"), open2 > 1, () => this.tile());
+    item(t("win.close"), true, () => w.close());
   }
 
   // The one sentence and the one button of the empty desktop, and the whole
