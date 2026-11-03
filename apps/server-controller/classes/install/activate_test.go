@@ -78,6 +78,9 @@ type engine struct {
 	fail string
 	// running is what Running answers.
 	running bool
+	// limits is what the last Start was told: the ceiling of the app, which
+	// has to be the two numbers of its manifest.
+	limits runtime.Limits
 	// loaded is the reference LoadImage answers with; empty: the one in the
 	// tar, which is what the real engine answers.
 	loaded     string
@@ -126,7 +129,10 @@ func (e *engine) Create(_ context.Context, c runtime.Container) error {
 	e.mu.Unlock()
 	return e.did("Create")
 }
-func (e *engine) Start(_ context.Context, _ string) error  { return e.did("Start") }
+func (e *engine) Start(_ context.Context, _ string, l runtime.Limits) error {
+	e.limits = l
+	return e.did("Start")
+}
 func (e *engine) Stop(_ context.Context, _ string) error   { return e.did("Stop") }
 func (e *engine) Remove(_ context.Context, _ string) error { return e.did("Remove") }
 func (e *engine) Running(_ context.Context, _ string) (bool, error) {
@@ -1272,6 +1278,32 @@ func TestAnUploadedAppIsHardenedLikeABoughtOne(t *testing.T) {
 				t.Fatalf("the uploaded app runs in\n%+v\nand the bought one in\n%+v", got, want)
 			}
 		})
+	}
+}
+
+// The ceiling the activation hands Start is the one of the manifest, and the
+// same one it handed Create.
+//
+// Two places, one pair of numbers, and that is the point of the case: the
+// limits are written into a cgroup at every START, because a cgroup does not
+// survive a restart of the machine while the container does
+// (runtime/cgroup.go). An activation that passed Create the manifest's numbers
+// and Start something else would brake the app at a ceiling nobody chose, and
+// nothing else in this package would notice.
+func TestTheActivationStartsTheContainerWithTheCeilingOfItsManifest(t *testing.T) {
+	s := newStand(t)
+	s.withManifest(func(m *store.Manifest) { m.CPU, m.Memory = 1500, 512 })
+	if _, err := s.activate(); err != nil {
+		t.Fatalf("the app was not activated: %v", err)
+	}
+	// Without this the case would pass on two zeroes: an activation that never
+	// reached Start leaves the field as it was.
+	if s.eng.created.CPU != 1500 || s.eng.created.Memory != 512 {
+		t.Fatalf("Create was given %d/%d, want 1500/512",
+			s.eng.created.CPU, s.eng.created.Memory)
+	}
+	if want := (runtime.Limits{CPU: 1500, Memory: 512}); s.eng.limits != want {
+		t.Fatalf("Start was given %+v, want %+v", s.eng.limits, want)
 	}
 }
 
