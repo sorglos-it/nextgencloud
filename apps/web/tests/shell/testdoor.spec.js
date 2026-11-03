@@ -30,14 +30,25 @@ import { test, expect } from "@playwright/test";
 //                      every boot of a real installation, not only in tests
 //   shell/main.js:306  const standIn = () => window.__ngcStandIn === true
 //   shell/main.js:327  if (standIn()) the whole session becomes fakeWorld()
-//   net/testlink.js    is imported by NOBODY (0 hits over apps/web) - it is
-//                      shipped code that nothing loads
+//   net/testlink.js    is loaded by 11 places in tests/shell (attacks 1,
+//                      channels 8, world 2) - over HTTP, out of the SERVED
+//                      shell, with await import("/assets/js/net/testlink.js")
 //
 // So the shipped shell DOES carry a runtime test switch, and it is settable
 // from the page - which is exactly what the header of shell/login.spec.js
 // says must not exist ("a hook on window that changes how the LOGIN behaves
 // is a hook anything else on the page can set ... so the shell reads no such
 // thing"). That sentence is true of the LOGIN and not of the shell.
+//
+// A CORRECTION OF MY OWN, written here because the wrong sentence stood here
+// first: I wrote that testlink.js is imported by nobody and could go today.
+// It was measured with a search for static `import ... from` lines in
+// apps/web/public, and that search cannot see the only way it is actually
+// loaded - a string import of the SERVED path, from the tests. Measured again:
+//   grep -rn 'import("/assets/js/net/testlink.js")' apps/web/tests
+// names 11 places in three files. Deleting the file is not a one-liner, it is
+// 11 cases turning red on a 404. It is test scaffolding that has to be served
+// to be reachable at all - which is the finding, not that it is dead.
 //
 // WHAT IT IS AND IS NOT: it is not an escalation. __ngcStandIn swaps the
 // session for a fake one in the viewer's OWN browser, and whoever can set it
@@ -55,7 +66,9 @@ const KNOWN = [
   //   grep -rn standInOn apps/web/tests --include=*.js
   // is over when only the definition and the comments are left. Then
   // fake-link.js, standIn() in main.js and the standIn argument of signIn()
-  // go in one commit - and testlink.js, which nothing imports, can go today.
+  // go in one commit. testlink.js does NOT go with them and not today: the
+  // 11 places named above load it, so it goes when channels.spec.js,
+  // world.spec.js and attacks.spec.js stop asking the served shell for it.
   { file: "assets/js/net/testlink.js", needle: "/api/v1/mock" },
   { file: "assets/js/shell/fake-link.js", needle: "__ngcTest" },
   // The switch itself: main.js:306 reads window.__ngcStandIn and main.js:327
