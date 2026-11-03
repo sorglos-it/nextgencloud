@@ -250,9 +250,19 @@ jobs:
   # The floor is what keeps a silently empty run from passing: playwright, like
   # go test, exits 0 for a run in which everything switched itself off.
   web:
-    name: web shell in three browsers
+    # One job per engine, and the reason is measured: all three in one job ran
+    # 25 minutes into the timeout without reaching the counter (run
+    # 41703511513, 3.11.2026 - php 8.3.6 and all three browsers installed
+    # fine, the suite itself did not finish). Sharded, each engine also
+    # reports its own numbers under its own name, which is what this job is
+    # for: a single total hides which engine carried it.
+    name: web shell (${{ matrix.engine }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -266,14 +276,19 @@ jobs:
           npm ci
         working-directory: apps/web/tests
       - name: browser holen
-        run: npx playwright install --with-deps chromium firefox webkit
+        # Only the engine of this shard, not all three: the other two would be
+        # downloaded and never started.
+        run: npx playwright install --with-deps ${{ matrix.engine }}
         working-directory: apps/web/tests
       - name: laufen
         env:
-          # A port of its own, as the config asks for: a run that finds a
-          # server already answering measures another working tree.
-          NGC_WEB_TEST_PORT: "8161"
-        run: npx playwright test --reporter=json > "${{ runner.temp }}/web.json" || true
+          # A port of its own PER SHARD, as the config asks for: the three
+          # shards are three runners today, but a run that finds a server
+          # already answering measures another working tree, and that is
+          # exactly the trap the config was written against. 8161/8171/8181
+          # keep them apart whatever the runner does.
+          NGC_WEB_TEST_PORT: ${{ matrix.engine == 'chromium' && '8161' || matrix.engine == 'firefox' && '8171' || '8181' }}
+        run: npx playwright test --project=${{ matrix.engine }} --reporter=json > "${{ runner.temp }}/web.json" || true
         working-directory: apps/web/tests
       - name: zaehlen
         # No number yet ON PURPOSE. A floor is a measured value, and the real
