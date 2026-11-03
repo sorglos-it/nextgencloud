@@ -179,3 +179,155 @@ test("no language recommends a browser the shell says cannot log in", async ({ s
     }
   }
 });
+
+// An engine without the two CFRG curves, made out of whichever engine is
+// running: generateKey and importKey refuse Ed25519 and X25519 with the error
+// WebKit 26 answers, measured in shell/krypto-tafel.spec.js. This makes the
+// engine LESS able - it switches no check of the shell off - and it is what
+// lets an engine that HAS the curves read the sentence the ones without them
+// get. Without it this case could only ever run in webkit, and a sentence
+// nobody can read in two languages is not pinned.
+async function withoutCFRGCurves(page) {
+  await page.addInitScript(() => {
+    const gen = crypto.subtle.generateKey.bind(crypto.subtle);
+    const imp = crypto.subtle.importKey.bind(crypto.subtle);
+    const gone = (name) => name === "Ed25519" || name === "X25519";
+    const no = () => Promise.reject(
+      new DOMException("measurement: no CFRG curves here", "NotSupportedError"));
+    crypto.subtle.generateKey = function (algo, ...rest) {
+      return gone(algo?.name || algo) ? no() : gen(algo, ...rest);
+    };
+    crypto.subtle.importKey = function (format, data, algo, ...rest) {
+      return gone(algo?.name || algo) ? no() : imp(format, data, algo, ...rest);
+    };
+  });
+}
+
+// WHAT THE PERSON WHO IS TURNED AWAY ACTUALLY READS, off the screen and not
+// out of the file.
+//
+// The case above reads the five sentences with fetch, which pins what is
+// WRITTEN. It cannot see whether the shell renders them, in which language,
+// or at all - a key missing from a file falls back to English, and a release
+// without assets/lang/ falls back to BUILT_IN (shell/lang.js, held key for
+// key by shell/busy.spec.js). So this one presses the gate shut and reads the
+// screen.
+//
+// THE SENTENCE MUST NAME THE CAPABILITY AND NOT A VERSION NUMBER. It used to
+// read "Bitte Chrome 137 oder Safari 17.4 oder neuer benutzen." and that
+// advice is measured to be misleading: Safari 17.4 HAS the CFRG curves, and
+// the engine reading the sentence is one that lacks them, so the number names
+// a remedy the reader may already have. A version number ages, a capability
+// does not - hence the digit check below, which is the whole point of this
+// case.
+//
+// WHICH OF THE TWO ASSERTIONS ACTUALLY BITES, measured by writing "Chrome 137
+// oder Safari 17.4" back into de.json and running the case: it went red on
+// toHaveText, not on the digit. The exact sentence is the first line of
+// defence, and the digit check only fires where somebody changes the sentence
+// AND brings the expectation here along with it - which is the realistic path,
+// because that is what a person editing a sentence does. So it is two checks
+// for two different mistakes, not one check twice, and neither of them is
+// dead weight.
+// ALL THREE SENTENCES, because it is one defect in three places. Searched by
+// the NUMBER and not by the wording: `grep '"[a-z.]*": "[^"]*[0-9]'` over the
+// five files and BUILT_IN answered exactly these three keys and nothing else,
+// and it answers nothing now. A version number in a text for people is the
+// pattern; this wording was only where it was found first.
+// WHY THIS IS A WRAPPED fetch AND NOT page.route, measured: with
+// page.route(/config\.json/) and route.fetch() the run HUNG - 10 minutes and
+// no case after this one. The web server of the suite is PHP's built-in one,
+// which serves ONE request at a time: the handler holds the browser's request
+// open while asking for the same file again, and the server cannot answer the
+// second until the first is done. Deadlock, and it looks like a slow test.
+// Wrapping fetch inside the page keeps it to one request after the other.
+// An installation whose web controller is not paired: shell/main.js takes the
+// anchor from config.anchor and, where that is empty, from what the initial
+// setup kept in IndexedDB (shell/trustlist.js anchorFor), so BOTH have to go
+// or the kept one answers and the case measures nothing.
+//
+// MEASURED, AND IT COST A RUN: the first attempt emptied config.rp.id instead,
+// to make the installation half of the passkey route say no. The configuration
+// contract refuses an empty id, so the screen read "NGC ist nicht
+// eingerichtet." - the sentence of a missing installation - and four cases
+// failed against the EARLIER WALL. The comment here used to claim that could
+// not happen. It did.
+async function withoutTrustAnchor(page) {
+  await page.addInitScript(() => {
+    try { indexedDB.deleteDatabase("ngc"); } catch { /* nothing kept here */ }
+    const real = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+      const url = typeof input === "string" ? input : input?.url ?? "";
+      const res = await real(input, init);
+      if (!url.includes("config.json") || !res.ok) return res;
+      const config = JSON.parse(await res.text());
+      delete config.anchor;
+      return new Response(JSON.stringify(config), {
+        status: res.status,
+        headers: { "content-type": "application/json" },
+      });
+    };
+  });
+}
+
+const TURNED_AWAY = [
+  {
+    key: "boot.tooold",
+    // The curves go, which is the gate's own question (generateKey).
+    reach: async (page) => { await withoutCFRGCurves(page); },
+    everywhere: true,
+    de: "Dieser Browser kann die Schlüssel nicht erzeugen, die NGC für eine Anmeldung braucht. Bitte ein aktuelles Chrome oder Safari benutzen.",
+    en: "This browser cannot create the keys NGC needs for a login. Please use a current Chrome or Safari.",
+  },
+  {
+    key: "boot.noroute.password",
+    // No seed step and no anchor, so the shell takes the branch that sends the
+    // person to another browser - the passkey route exists here, it is the
+    // password one that is missing, and that is what the sentence is about.
+    reach: async (page) => { await withoutSeedStep(page); await withoutTrustAnchor(page); },
+    everywhere: false,
+    de: "Dieser Browser kann die Passwort-Anmeldung von NGC nicht ausführen: er gibt den öffentlichen Teil eines Passwort-Schlüssels nicht heraus. Bitte ein aktuelles Chrome oder Safari benutzen. Firefox kann es derzeit nicht.",
+    en: "This browser cannot do NGC's password login: it does not hand out the public half of a password key. Please use a current Chrome or Safari. Firefox cannot do it at present.",
+  },
+  {
+    key: "boot.noroute.passkeysoff",
+    // No seed step and nothing to ask for an assertion, while the
+    // installation does have a party: passkeys are off in THIS browser.
+    reach: async (page) => { await withoutSeedStep(page); await withoutAuthenticator(page); },
+    everywhere: false,
+    de: "In diesem Browser ist keine Anmeldung möglich: die Passwort-Anmeldung kann er nicht, und Passkeys sind hier abgeschaltet. Bitte Passkeys in den Browser-Einstellungen einschalten oder ein aktuelles Chrome oder Safari benutzen.",
+    en: "No login is possible in this browser: it cannot do the password login, and passkeys are switched off here. Please switch passkeys on in the browser settings, or use a current Chrome or Safari.",
+  },
+];
+
+for (const [locale, tag] of [["de-DE", "de"], ["en-US", "en"]]) {
+  test.describe(`turned away in ${locale}`, () => {
+    test.use({ locale });
+
+    for (const screen of TURNED_AWAY) {
+      test(`${screen.key} names the missing capability and no version number`, async ({ shell }) => {
+        // THE EARLIER WALL. Only the first sentence can be reached in an
+        // engine that fails browserFits; the other two live past that gate, so
+        // in webkit this case would read the too-old screen and call it theirs
+        // (messen.md: a case turned away before the intended line measures the
+        // earlier wall). The skip says which wall, not just "skipped".
+        if (!screen.everywhere) {
+          const gap = await shellGap(shell);
+          test.skip(gap !== "", `this engine stops at browserFits (${gap}), so ${screen.key} is not reachable here`);
+        }
+        await screen.reach(shell);
+        await shell.reload();
+
+        // The whole sentence, not a fragment: a fragment would still pass with
+        // a version number appended behind it.
+        const msg = shell.locator(".msg");
+        await expect(msg).toHaveText(screen[tag]);
+
+        const text = (await msg.textContent()) ?? "";
+        expect(text, "the advice carries no version number").not.toMatch(/[0-9]/);
+        // And it still says where to go, or it names a gap and no way out.
+        expect(text, "the advice still names a browser").toMatch(/Chrome|Safari/);
+      });
+    }
+  });
+}

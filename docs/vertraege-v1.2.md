@@ -16,7 +16,7 @@ Herkunft steht je Punkt dabei: Strang und Ledger-Zeile.
 
 - **Reihe A** – die Sammelliste ganz oben, Punkte **1-35** (plus **33b**), nach
   Vertragspaket geordnet.
-- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 83"** darunter,
+- **Reihe B** – die Abschnitte **„## Punkt 19"** bis **„## Punkt 102"** darunter,
   nach Datum geordnet.
 
 Jeder Verweis im Text ab „Punkt 19: Die Release-Signatur" meint **Reihe B**,
@@ -35,12 +35,12 @@ die Tabelle ist die Stelle, an der die nächste freie Nummer abgelesen wird.
 
 | Stand | Reihe A | Reihe B | zusammen |
 |---|---|---|---|
-| gilt | 35 | 49 | 84 |
+| gilt | 35 | 56 | 91 |
 | überholt / erledigt durch einen späteren Punkt | 0 | 7 | 7 |
 | offen, wartet auf Thomas | 1 | 11 | 12 |
-| **Einträge** | **36** | **67** | **103** |
+| **Einträge** | **36** | **74** | **110** |
 
-Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **105**.
+Dazu zwei Abschnitte ohne Nummer (U1, U2) – beide gelten. Zusammen **112**.
 
 Diese vier Zeilen sind am 24.10.2026 aus den Tabellen selbst **gezählt** und nicht
 weitergeschrieben. Wer anhängt, zählt hier mit — `tools/check-buch.sh` prüft die Nummern,
@@ -228,6 +228,12 @@ gibt, aber erst nach dem Schreiben.
 | 94 | Das Installationsskript schreibt die Datenbankschlüssel so, dass MariaDB sie nicht aufmachen kann | gilt – **im Quelltext von `ulh` nicht behoben**; an der Anlage von Hand umgangen | Sicherheit |
 | 95 | Drei offene Posten aus Punkt 72 sind gemessen — und `--read-only` lässt vier Ordner offen | gilt – `--cap-drop ALL` erstmals an einer laufenden App, Befund 1 auf beiden App-Knoten | Messung |
 | 96 | Eine App auf eine neue Fassung heben geht — aber nicht über den Weg, den die Oberfläche dafür hat | gilt – Hub 1.0.0 → 1.0.1 gemessen, **Daten und Benutzer bleiben**, App 262 ms weg; der stündliche Rundlauf kennt **keine Apps**, darum kommt der Knopf für eine App auf keinem Stand; enthält eine berichtigte Fehlmessung dieser Prüfrunde | Messung |
+| 97 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
+| 98 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; zwei Wände: gehärtete Vorlage lässt nur Port 22 durch, Wurzel-Dateisystem ohne `encrypt` — beide behoben, Station 2a neu; der offene Befund zu anna ist in **Punkt 99** berichtigt | Messung |
+| 99 | Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur | gilt – **berichtigt Punkt 98**; Meldung absichtlich erzeugt, Rechteänderung wirkt sofort; dazu: zweiter `install` mit anderem Namen sperrt alle aus, eine unlesbare Zeile verwirft das ganze Protokoll, Firewall-Regel überlebte kein Neuladen | Messung |
+| 100 | Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden eine offene Akte | gilt – **berichtigt eine eigene Abwägung dieser Prüfrunde**; Startseite byte-gleich (451), aber `/api/v1/setup` gepaart 404 / ungepaart 200 mit vollständiger Auskunft samt MAC, `config.json` ohne `anchor`; **Übernahme ausgeschlossen** (code-geschlüsselter MAC, sterbender Mutant einer Nachbarsitzung); 302 Klagen in sieben Tagen sind der dokumentierte Normalfall | Messung |
+| 101 | Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman | gilt – **auf `svc-1` und `svc-2` eingespielt und gemessen** (512/256 MiB im Kern, drei Apps, Fork-Bombe bei 508 gebremst, Knoten steht); `--cpus` auf beiden ehrlich nicht durchgesetzt; der erste Stand hatte einen Fehler, den der Riegel selbst zeigte; beantwortet die 477 Byte aus Punkt 78 | Sicherheit |
+| 102 | Stirbt der Controller-DIENST, verliert podman seinen Zustand — und bei jedem Start kommt ein Prozesssatz je App DAZU | gilt – **auf `svc-1` gemessen** (nach zwei Controller-Starts DREI Sätze je App, EIN Behälterdatensatz, mehrere Schreiber auf einem Datenordner; es läuft auf, es verdoppelt nicht); Ursache auf vier Zeilen Quelltext gemessen; **die erste Fassung dieses Punktes behauptete das Gegenteil und war ein Messfehler in WSL** — berichtigt samt einem zweiten Satz aus derselben Runde; Folge von Punkt 101, Behebung dort offen | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -7711,3 +7717,1342 @@ Getrennt gehalten, weil nichts davon an der Anlage belegt ist:
    bauen. Im Moment verspricht der Kommentar mehr, als die Anlage hält.
 5. **Das alte Abbild nach einem Hub entfernen.** Braucht ein Feld in `shared/dbapi` — eingefroren,
    also blockiert.
+## Punkt 97: Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht
+
+**Gemessen am 29.10.2026** auf einer **neu aus der Vorlage geklonten** Maschine: VMID **310**,
+`ngc-probe`, **10.2.3.219**, Debian 13 (trixie), Kern `6.12.113+deb13-cloud-amd64`, angelegt mit
+`tools/einzelmaschine.sh` aus der Vorlage 300. Nummer und Adresse sind **am Gast nachgesehen**
+(`qm status 310` → „Configuration file … does not exist"; Ping auf 10.2.3.219 ohne Antwort), nicht
+gerechnet. Seit den Behebungen zwischen dem 19. und 25.10.2026 hatte niemand mit den
+Installationsskripten eine Maschine von null aufgebaut.
+
+### Der Befund in einem Satz
+
+**Die `ulh`-Skripte liefen durch. Kein einziger Handgriff an `ngc-all.sh` oder `ngc-web.sh`.**
+Was nicht lief, war der Prüflauf dieses Hauses: `tools/erstlauf.sh` und
+`tools/erstlauf-maschine.sh` brachen an vier Stellen ab oder urteilten falsch, und zwar an
+Stellen, die eine frische Maschine zuverlässig trifft und eine von Hand gewachsene nie.
+
+### Was an `ulh` gemessen gehalten hat
+
+| | gemessen |
+|---|---|
+| `einzelmaschine.sh anlegen` | lief durch, ssh nach ~15 s, 2 Kerne, 3922 MiB |
+| `ngc-all.sh install` | Ausstiegscode **0**, Pakete selbst nachinstalliert (`ensure_packages`) |
+| **Wand 1 ist weg** | `ReadWritePaths=/var/lib/ngc /etc/ngc`, in der **echten** Sandbox belegt: `/etc/ngc/trust-anchor.json` ist schreibbar |
+| Dienst | `ngc-api` **active**, `NRestarts=0`, ein `MainPID` über 10 s gehalten |
+| Fassung | `ngc-api 0.2.2 (contract 1)` — **kein** `0.0.0-dev` |
+| `ngc-web.sh install` | lief durch; Apache **active**, `/` → `http=200` mit `<title>NGC</title>`, `/api/v1/setup` **durch Apache** → `200` |
+| Name | `CN=ngc.test`, `SAN: DNS:ngc.test`, `/config.json` nennt `rp.id` `ngc.test` |
+| Uhr-Paket | Abbild gebaut, beide Ströme getrennt: STDOUT **21** Byte Zeit, STDERR **33** Byte Meldung |
+| Prüfladen | `store ok`; über das Netz `catalog http=200 verify=0` (647 Byte), `paket http=200 verify=0` (85623296 Byte) |
+
+**Die Behebung von Wand 1 aus `ulh` hält also, und sie hält am laufenden Dienst, nicht nur im
+Text.** `docs/installation-kleines-system.md`, Schritt 3, sagt bis heute „das ist Wand 1 von
+sechs, und sie steht noch" und verlangt einen Drop-in. **Das ist überholt** — der Drop-in ist
+nicht mehr nötig, und wer ihn anlegt, legt eine Zeile an, die schon im Skript steht.
+
+### Die vier Befunde am Prüflauf
+
+1. **`erstlauf.sh` kannte `${NGC_ETC}` nicht.** Station 1 löst die Variablen von `ngc-api.sh`
+   selbst auf, aber nur `NGC_DATA`, `NGC_TLS`, `NGC_STATE_DIR`. Seit der Behebung lautet die Zeile
+   `ReadWritePaths=${NGC_DATA} ${NGC_ETC}` — und der Lauf brach ab mit „still holds an unresolved
+   variable". **Die Behebung selbst hat den Prüflauf blind gemacht.** Ein Wort in einer Liste.
+2. **`erstlauf-maschine.sh` verlangte vorab die Pakete, die `ngc-all.sh` selbst nachinstalliert.**
+   Die Vorsperre forderte `openssl jq curl`; die Vorlage trägt **kein `jq`**, und der Lauf
+   verweigerte damit genau die Maschine, um die es geht. `NGC_PACKAGES` von `ngc-all.sh` sind
+   `openssl jq curl ca-certificates podman`, und `ensure_packages` holt jedes fehlende. **Eine
+   Voraussetzung, die der Prüfling selbst erfüllt, ist keine Voraussetzung der Prüfung.**
+3. **Die fscrypt-Probe irrte, und zwar in die beruhigende Richtung.** Der Lauf meldete „this
+   kernel has no CONFIG_FS_ENCRYPTION … no app can be set up here, whatever else is right". Der
+   Kern **kann** es: `/boot/config-6.12.113+deb13-cloud-amd64` sagt `CONFIG_FS_ENCRYPTION=y`.
+   Zwei Gründe, beide klein: `/proc/config.gz` gibt es auf Debian **nicht** — die Konfiguration
+   liegt als `/boot/config-$(uname -r)` —, und `/sys/fs/ext4/features/encryption` ist eine
+   **Datei**, geprüft wurde mit `-d` auf ein Verzeichnis. **Ein rotes Urteil prüft niemand nach.**
+4. **Der Testschlüssel wurde nur in `ngc-all.sh` getauscht, nicht in `ngc-web.sh`.** Beide tragen
+   denselben Release-Schlüssel und prüfen dasselbe Release. `ngc-web.sh install` wies darum jedes
+   Release ab, das dieser Lauf bauen kann (`release wrong: signature does not verify`), die
+   Oberfläche wurde **nie** installiert — und Station 3 sagte auf **jedem** Lauf, den es je gab,
+   die Oberfläche müsse „erst installiert werden". **Sechs Stationen dahinter waren nicht
+   unerreichbar, weil sie schwer sind, sondern weil der Lauf an einem Riegel hing, den er selbst
+   schon zu ersetzen beschlossen hatte.**
+
+Dazu zwei kleinere:
+
+5. **`erstlauf.sh` konnte `--hostname` nicht durchreichen.** Phase B nimmt sonst die IPv4-Adresse
+   der Standardroute. Schritt 0 der Anleitung sagt, warum das nicht der kleine Fall ist: das
+   Zertifikat lautet auf den **Namen**, und ein Passschlüssel hängt an `rp.id`, die ein Name ist —
+   über eine Adresse ist keiner anzulegen und keiner zu benutzen. **Kein Lauf vor dem 29.10.2026
+   hat also die Einrichtung gemessen, zu der die Anleitung anleitet.**
+6. **`build-release.sh` nennt einen Weg, den es selbst versperrt.** Es druckt
+   „`tools/sign-release.sh <dir> <key.pem>`" und löscht in Zeile 344 die Datei
+   `release.payload.json`, die `sign-release.sh` zwingend braucht — der Aufruf endet mit
+   „release.payload.json is missing". Richtig ist die **letzte** Zeile derselben Ausgabe,
+   `ngc-store release`, und die nimmt eine **andere** Art Schlüsseldatei als `sign-release.sh`
+   (kein openssl-PEM; `ngc-store` legt sie selbst an).
+
+### Der Riegel, an dem der Weg aufhört — und er ist kein Fehler
+
+Alles ab Station 3 hängt an **einem Menschen im Browser**. Gemessen, nicht angenommen:
+
+```
+19:49:22  ngc-api gestartet
+19:50:22  WARN trust list could not be read   error="state: no trust list yet"
+19:50:22  WARN catalogs could not be fetched  error="state: no trust list yet"
+```
+
+**Vor der Vertrauensliste holt die API gar keinen Katalog** — Station 6 („Katalog da") ist also
+nicht eine Frage von Warten, sondern von Koppeln und Aufnehmen, und beides geschieht im Browser.
+Der Kopplungscode entsteht dort, die Aufnahme des Controllers wird dort unterschrieben, und ein
+neuer Benutzer ist eine neue Fassung der Vertrauensliste, unterschrieben mit dem Schlüssel jener
+Person. Nichts auf der Maschine hält diesen Schlüssel.
+
+**Und dabei steht eine Zahl, die der Anleitung widerspricht:** die erste Katalogrunde kam
+**genau eine Minute** nach dem Neustart, nicht nach einer Stunde (`FirstCatalog = time.Minute`).
+`docs/installation-kleines-system.md`, Schritt 11, sagt „es gibt keinen Abruf beim Start und keine
+Handauslösung … warten, bis zu 60 Minuten". Ein Neustart von `ngc-api` **ist** die Handauslösung.
+
+### Der Schlüssel, der mit seiner Maschine weg ist
+
+Der geheime Release-Schlüssel der laufenden Anlagen lag als `/root/ngc-keys/release.key` auf der
+Messmaschine 10.2.3.208. **Die Maschine ist weg (Punkt 95), und der Schlüssel ist auf keiner der
+erreichbaren Maschinen** (`/root/ngc-keys/` existiert auf 10.2.3.210, .216 und .219 nicht; die
+anderen antworten von hier aus nicht auf ssh). Dessen öffentlicher Teil steht in `ngc-all.sh`,
+`ngc-api.sh`, `ngc-controller.sh` und `ngc-web.sh`.
+
+**Damit ist heute kein Release herstellbar, das die ausgelieferten Skripte annehmen.** Dieser Lauf
+ist deshalb mit einem **Testschlüssel** gefahren, und jede Zeile, die daran hängt, sagt das: die
+Unterschriftsprüfung selbst läuft unverändert, dass **NGCs eigener** Schlüssel in den Skripten
+richtig ist, ist hier **nicht** gemessen.
+
+### Was gebaut wurde
+
+Alle sechs Befunde sind behoben, **alle in `nextgencloud`, keiner in `ulh`** — das ist der
+eigentliche Ertrag: an den Installationsskripten war nichts zu tun. Dazu eine neue Station:
+
+**Station 2w „Oberfläche installieren"**, zwischen 2 und 3, mit Buchstaben statt Nummer, weil
+`docs/erstlauf.md` die zehn Nummern zitiert. Sie installiert `ngc-web.sh` mit demselben
+getauschten Schlüssel, rechnet den Pin aus dem Zertifikat der API selbst aus (ein eingefügter Pin
+wäre eine Messung der Einfügung) und hält vier Dinge: Apache läuft, `/` gibt 200 mit NGCs eigener
+Seite, `/api/v1/setup` antwortet **durch Apache**, und `/config.json` nennt `rp.id` = der Name.
+Danach: **11 Stationen, 0 rot.**
+
+### Was daraus noch zu bauen wäre
+
+1. **Schritt 3 der Anleitung berichtigen.** Wand 1 ist in `ngc-kette` behoben; der Drop-in ist
+   überholt. Die Gegenprobe mit `systemd-run` bleibt richtig und nützlich.
+2. **Schritt 11 der Anleitung berichtigen.** Der Neustart von `ngc-api` ist die Handauslösung, und
+   vor der Vertrauensliste wird ohnehin nichts geholt — die Stunde ist nicht der erste Hinderer.
+3. **Die zwei Unterschriftswege von `build-release.sh` auf einen zusammenziehen**, oder die
+   überholte Zeile streichen. Zwei widersprüchliche Anweisungen in einer Ausgabe sind schlimmer
+   als eine fehlende.
+4. **Den Release-Schlüssel entscheiden.** Solange er nicht existiert, ist jede Messung am
+   Installationsweg mit Testwurzel gefahren, und das ist ein Loch, das kein Skript schließt.
+5. **Station 3 bis 10 brauchen einen Browser im Lauf.** Was ein Mensch klicken muss, ist in Punkt
+   71 und in der Anleitung aufgeschrieben; gemessen wird es nirgends. Erst ein Lauf, der sich
+   anmelden kann, macht aus „unmeasurable" eine Zahl.
+
+**Getrennt gehalten:** gemessen sind die Tabelle oben, die sechs Befunde samt ihrer Ursache im
+Quelltext, die drei Protokollzeilen zur Vertrauensliste, die Minute bis zur ersten Katalogrunde,
+die Abwesenheit des Schlüssels auf den erreichbaren Maschinen und die 11 Stationen nach der
+Behebung. Abgewogen ist, dass Station 2w einen Buchstaben bekommt statt acht Nummern zu
+verschieben, und jede Zeile der letzten Liste. **Nicht gemessen** ist alles ab Station 3 — kein
+Controller ist gekoppelt, keiner aufgenommen, keine App eingerichtet, kein Fenster geöffnet. Die
+Maschine 310 **ist am 30.10.2026 abgebaut** (VMID und Adresse 10.2.3.219 frei). Sie stand, bis der rote Befund in Punkt 99 geklärt war; was dort offenblieb, ist nicht an der Maschine, sondern an der fehlenden Aufschreibung nicht mehr zu holen.
+
+---
+
+## Punkt 98: Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein
+
+**Gemessen am 29.10.2026** auf derselben frischen Maschine wie Punkt 97 (VMID **310**,
+`ngc-probe`, **10.2.3.219**, aus der Vorlage geklont). Punkt 97 endete, wo der Prüflauf endet:
+bei Station 3, weil alles dahinter einen Menschen im Browser braucht. **Dieser Punkt geht den
+Rest** — Einrichtungsseite, Verwalter, Kopplungscode, Aufnehmen mit Systemrechten, Katalog,
+App einrichten, Recht „benutzen", Fenster öffnen.
+
+Der Browser ist ein echter Chromium, und der **Name wird vom Browser selbst aufgelöst**
+(`--host-resolver-rules`) statt aus einer `hosts`-Datei — das ist Schritt 0 der Anleitung,
+ohne dass jemand eine Systemdatei anfassen muss.
+
+### Der Weg, Station für Station
+
+| Station | Stand | Beleg |
+|---|---|---|
+| 5 Einrichtungsseite | **gemessen** | `GET / → 200`, „NGC einrichten … Einmal-Code … Weiter" |
+| 6 erster Verwalter | **gemessen** | Schritt 2 mit Kennung, `wss://ngc.test:7443/tunnel`, Fingerabdruck; danach der Schreibtisch und **ein** Keks `ngc_session`, `httpOnly`, `secure` |
+| 7 Kopplungscode | **gemessen** | 337 Zeichen, beginnt mit `ngc-pair:` |
+| 8 `ngc-all configure` | **gemessen** | „Die Kopplung hat geklappt", `trust-anchor.json` entsteht, `controller.json` da, `ngc-controller` **active**, Rollen `["web","api","db","services"]` |
+| 9 aufnehmen + Systemrechte | **gemessen** | Haken für die unterschreibende Person **vorgekreuzt**, Rolle `admin` **nicht**; danach „Mit Systemrechten: thomas" |
+| 10 Gegenprobe | **gemessen** | neuer Browser zeigt **„Bei NGC anmelden"**, `/api/v1/setup` → **404**, `/config.json` trägt den Anker |
+| 11 Katalog | **gemessen** | nach `systemctl restart ngc-api` in **einer Minute** geholt, ohne Fehlerzeile |
+| 12 App einrichten | **gemessen** | „Die App ist eingerichtet.", Rechnerauswahl bot `probe-2` |
+| 13 Oberfläche zieht nach | **gemessen** | „Uhr" stand **sofort** in der Leiste, ohne Neuladen |
+| 10 App ist bedienbar | **gemessen** | Fenster zeigt `2026-10-29T20:55:48Z`, „Noch einmal lesen" gibt `20:55:57Z` |
+
+**Der Beleg auf der Maschine, nicht im Bild:** Behälter `ngc-uhr-ad8c00e2` aus
+`localhost/ngc/uhr:1.0.0`, zwei `container exec` um **20:55:48** und **20:55:57** — dieselben
+zwei Zeiten, die im Fenster standen. Eigener Benutzer `ngc-uhr-ad8c00e2` (uid 999, Heimat
+`/var/lib/ngc/apps/org.sorglos.uhr`, Hülle `nologin`), dessen Ordner `0700` ihm gehört und im
+`0711`-Elternordner liegt — genau die Durchgangsrechte, die Station 7 fordert. Und
+`a service wrote to stderr app=org.sorglos.uhr service=uhr action=zeit`: der zweite Strom ging
+ins Protokoll, nicht ins Fenster.
+
+### Die erste Wand: die gehärtete Vorlage lässt nur Port 22 durch
+
+**Bevor irgendein Browser irgendetwas sah, kam ein Zeitablauf.** Die Vorlage 300 trägt seit dem
+24.10.2026 die Härtung, und die ist streng:
+
+```
+table inet haertung
+  chain eingang   policy drop
+    iif lo accept · ct state established,related accept
+    ip saddr 10.0.0.0/8 tcp dport 22 accept
+```
+
+**Genau ein Port.** Apache horcht auf 443 und 80, die API auf 7443 — und **kein Skript in
+beiden Verzeichnissen öffnet einen Port**. `ngc-all.sh` und `ngc-web.sh` sind Installierer,
+keine Firewall-Werkzeuge, und das ist richtig so; die Regeln der sechs Maschinen wurden je
+Rolle **von Hand** gesetzt und liegen **in keinem Repository** (`docs/messreste-je-maschine.md`
+führt „nftables" als Hinterlassenschaft auf jeder einzelnen).
+
+**Und das Tückische daran: von der Maschine aus ist es unsichtbar.** `curl` auf dem Rechner
+geht durch `iif lo accept`, also meldet jede Probe, die **dort** läuft, eine gesunde
+Installation — auch die neue Station 2w aus Punkt 97. Eine Maschine, die allein aus den
+Skripten entsteht, hat damit eine Oberfläche, die **niemand** erreicht, und einen Prüflauf,
+der grün ist.
+
+**Als Regel, über diesen Fall hinaus: eine Prüfung, die von innen misst, kann eine Mauer nach
+außen nicht sehen.** Jede Lebensprobe und jede Zustandsabfrage, die auf der Maschine selbst
+läuft, geht durch `iif lo accept` und beantwortet deshalb eine andere Frage als die, die der
+Betreiber stellt — „antwortet der Dienst sich selbst?" statt „antwortet er dem Netz?". Das gilt
+für jede künftige Probe, nicht nur für die gehärtete Vorlage: wer Erreichbarkeit messen will,
+muss **von außerhalb der Maschine** fragen.
+
+**Behoben, zweifach:**
+
+- `einzelmaschine.sh` öffnet 80, 443 und 7443 für `10.0.0.0/8` — denselben Bereich, den die
+  Vorlage schon für 22 erlaubt. Dabei zwei eigene Fehler, beide gemessen und beide im Skript
+  vermerkt: die Prüfung lief zuerst auf dem **Proxmox-Wirt** statt auf der VM, und `nft` liegt
+  nicht im PATH der `sh`-Hülle, durch die der Befehl geht — beide Male kam eine leere Antwort
+  zurück und das Skript sagte „nichts war im Weg" über eine Maschine, die es nicht angesehen
+  hatte. Dazu wartet es jetzt: **ssh antwortet nach ~15 s, nftables ist dann noch nicht
+  geladen**, und „noch nicht da" sieht für eine einzelne Probe aus wie „nicht da".
+- `erstlauf.sh` hat eine neue **Station 2a „Oberfläche antwortet von außen"**, die von dem
+  Rechner aus fragt, auf dem der Mensch mit dem Browser sitzt — unter dem **Namen**, mit
+  `--resolve`. Sie ist eine eigene Station und keine Zeile in 2w, weil sie etwas anderes misst:
+  nicht „ist es installiert", sondern „kommt jemand hin".
+
+### Die zweite Wand: das Dateisystem, nicht der Kern
+
+Die erste Aktivierung antwortete **„Das hat der Rechner nicht angenommen. Bitte es noch einmal
+versuchen."** — und **weder** das Protokoll des Controllers **noch** das der API schrieb ein
+Wort. Die Ursache lag zwei Schichten tiefer:
+
+```
+Kern      CONFIG_FS_ENCRYPTION=y                              kann
+/dev/sda1 has_journal ext_attr ... (kein "encrypt")           kann NICHT
+```
+
+`runtime.ErrNoFscrypt` sagt selbst „this **filesystem** cannot encrypt a directory". Das
+Debian-Cloud-Abbild legt seine Wurzel **ohne** das `encrypt`-Merkmal an, und ein bestehendes
+ext4 bekommt es nur mit `tune2fs -O encrypt` im **ausgehängten** Zustand — was die Wurzel nie
+ist. **Damit kann auf einer Maschine aus `einzelmaschine.sh` keine einzige App laufen.**
+
+Und die zweite Platte, die genau dafür da ist („what lets fscrypt be measured without touching
+the mounted root filesystem", `EXTRA` in `einzelmaschine.sh`), war **unformatiert und nicht
+eingehängt** — 16 GiB, die das Skript anhängt und dann nie anfasst.
+
+**Behoben:** `einzelmaschine.sh` legt die zweite Platte jetzt als `ext4 -O encrypt` an, hängt
+sie als `/var/lib/ngc/apps` ein und setzt `0711`; danach lief die Aktivierung sofort durch.
+Und `erstlauf-maschine.sh` fragt bei Station 7 jetzt **beides** — vorher fragte es nur den Kern
+und hätte diese Maschine grün genannt.
+
+### Der Befund, der offen bleibt: eine zweite Person kann die App nicht benutzen
+
+> **Berichtigung vom 30.10.2026, und sie gehört an den Anfang dieses Abschnitts:
+> anna bekommt die App.** Am nächsten Tag antwortet ihr Fenster mit
+> `2026-10-30T12:45:54Z`. Was unten steht, ist richtig gemessen und bleibt stehen — aber es
+> ist **kein Dauerzustand**, und die Ursache des einen Tages ist **nicht mehr klärbar**:
+> eine Ablehnung wegen fehlendem Recht schreibt nirgends eine Zeile, auch nicht ins
+> Prüfprotokoll der Anlage. Was dieselbe Meldung erzeugt, was sofort wirkt und was die Anlage
+> darüber aufschreibt — nämlich nichts —, steht gemessen in **Punkt 99**.
+
+Wand 6 selbst ist **behoben und gemessen**: bei der Rolle `admin` stehen „Uhr · benutzen" und
+„Uhr · zeit" ohne Kasten da — „Diese Rolle darf jede eingerichtete App benutzen" — **ohne eine
+einzige Zeile in der Datenbank** (`adminApps`, `c0f0022`). Die frisch eingerichtete App ist für
+den Verwalter sofort sichtbar und damit auch vergebbar.
+
+Und die Vergabe an einen zweiten Menschen geht auch, bis zu einem Punkt. Gemessen, mit einer
+Rolle `leser`, die ausdrücklich **nicht** `admin` ist (ein Admin sieht ohnehin jede App, an ihm
+wäre nichts zu messen):
+
+```
+anna, Rolle leser, ohne Recht   Startmenue: []
+Recht "Uhr · benutzen" vergeben
+anna, Rolle leser, mit Recht    Startmenue: ["Uhr"]
+```
+
+**Das ist Wand 6, sauber gezeigt.** Aber das Fenster, das sich dann öffnet, sagt:
+
+> Der Dienst dieser App hat nicht geantwortet.
+
+Und das bleibt so. Gegenprobe in **derselben Minute**, dasselbe System, dieselbe App:
+
+```
+thomas  2026-10-29T21:12:02Z | Die Zeit kommt vom Server.
+anna    — | Der Dienst dieser App hat nicht geantwortet.
+```
+
+Was anna zu diesem Zeitpunkt hält, nachgesehen und nicht angenommen:
+
+| | |
+|---|---|
+| `Uhr · benutzen` | **gesetzt** |
+| `Uhr · zeit` (die Aktion) | **gesetzt** |
+| Systemrechte auf `probe-2` | **gesetzt** („Mit Systemrechten: anna, thomas") |
+
+**Die naheliegende Ursache ist damit widerlegt, nicht bestätigt.** Es lag nicht am fehlenden
+Aktionsrecht und nicht an `trust.MayRoot` — beide wurden nacheinander gegeben, und beide Male
+blieb die Antwort dieselbe. Und auf **keiner** Seite steht eine Zeile: der Controller
+protokolliert nichts, die API protokolliert nichts. Der Aufruf erreicht den Controller gar
+nicht; bei thomas erreicht er ihn.
+
+**Was das heißt:** der Weg „App einrichten → Recht vergeben → ein anderer Mensch benutzt sie"
+ist **nicht** durchgängig. Er endet eine Station vor dem Ziel, und zwar still.
+
+### Drei Stellen, an denen die Oberfläche die Erscheinung statt der Ursache nennt
+
+Alle drei sind an diesem Tag aufgetreten und haben je einen Umweg gekostet:
+
+1. **„Das hat der Rechner nicht angenommen."** — Ursache war das Dateisystem ohne `encrypt`.
+   Kein Protokolleintrag auf beiden Seiten.
+2. **„Diese Quelle antwortet nicht. Bitte die Adresse prüfen."** — der Laden hatte mit
+   **`http=200`** geantwortet, im Zugriffsprotokoll steht der Abruf des `Go-http-client`.
+   Abgelehnt wurde der **Inhalt**: der Katalog war auf die Kennung `uhr-probe` unterschrieben,
+   die Vertrauensliste nennt fest `global` (`STORE_GLOBAL`, `contracts/trust.js`). Der echte
+   Grund liegt in `s.error` und wird nicht angezeigt (`store.js:298`).
+3. **„Der Dienst dieser App hat nicht geantwortet."** — siehe oben; die Rechte waren alle da.
+
+### Zwei Dinge, die die Anleitung nicht sagte und die jeden aufhalten
+
+1. **Nach „Server aufnehmen" kommt noch ein Fenster:** „Bitte bestätigen — Diese Dauerfreigabe
+   wird in die Vertrauensliste eingetragen. Bitte noch einmal das Passwort eingeben." Das ist
+   die Unterschrift. Wer dort abbricht, hat **nichts** aufgenommen, und der Schirm sieht
+   danach aus wie vorher. Dasselbe Fenster kommt bei Rolle anlegen, Benutzer anlegen, Rechte
+   vergeben und Systemrechte ändern.
+2. **Ein geschlossenes Fenster zwischen Schritt 6 und Schritt 8 macht die Anlage unbrauchbar,
+   und es gibt keinen Weg zurück.** Die Oberfläche zeigt wieder die Einrichtung (ohne Anker
+   hält `index.php` jede Anlage für neu, auch mit gültiger Sitzung), und der Einmal-Code ist
+   **verbraucht**: `/api/v1/setup` gibt `404`, `/var/lib/ngc/setup-code` ist gelöscht. Es gibt
+   eine Seite, die nach einem Code fragt, und keinen Code mehr, den sie annimmt. Das ist in
+   diesem Lauf **zweimal** passiert und hat zweimal eine Neuinstallation gekostet. Die
+   Anleitung warnte „nicht den Browser schließen" — ohne zu sagen, was sonst geschieht.
+
+### Was daraus noch zu bauen wäre
+
+1. **Dem Befund mit der zweiten Person nachgehen.** Er ist der einzige rote in diesem Lauf und
+   er trifft den Zweck der Anlage: mehrere Menschen, eine App. Der erste Schritt ist kein Code,
+   sondern ein **Protokolleintrag** — solange beide Seiten schweigen, rät jeder.
+2. **Die drei Sätze oben an ihre Ursache binden.** Wo ein Grund im Programm bekannt ist, gehört
+   er auf den Schirm oder wenigstens ins Protokoll. „Bitte die Adresse prüfen" bei `http=200`
+   ist eine Anweisung, die in die Irre führt.
+3. **Die Ladenkennung in `ngc-all.sh` fragen oder dokumentieren.** Wer sich einen Laden
+   ausdenken muss (Punkt 97), kann heute nicht wissen, dass die Kennung `global` sein muss.
+4. **Das `encrypt`-Merkmal zu einer Voraussetzung machen, die beim Installieren geprüft wird.**
+   `ngc-all.sh` prüft openssl 3.0 und podman und sagt bei beiden laut, was fehlt. Hier fehlt
+   etwas Gleichwertiges — und es fällt erst bei der ersten App auf, Stunden später.
+
+**Getrennt gehalten:** gemessen sind die Stationentabelle, die zwei Zeiten im Fenster und die
+zwei `exec` im Protokoll des Controllers, Benutzer und Rechte des App-Ordners, annas Startmenü
+vorher und nachher, die drei Rechte, die sie zuletzt hielt, die Gegenprobe thomas/anna in
+derselben Minute, das Fehlen jeder Protokollzeile auf beiden Seiten, die Merkmale von
+`/dev/sda1` und `/dev/sdb`, der `http=200` des Ladens im Zugriffsprotokoll und beide
+Sackgassen nach dem Schließen des Fensters. Abgewogen ist die Einordnung der drei Meldungen als
+„Erscheinung statt Ursache" und jede Zeile der letzten Liste. **Nicht gemessen** ist, woran der
+Aufruf der zweiten Person scheitert — nur, dass er scheitert und dass es an keinem der drei
+geprüften Rechte liegt. Die Maschine 310 **ist am 30.10.2026 abgebaut** (VMID und Adresse 10.2.3.219 frei). Sie stand, bis der rote Befund in Punkt 99 geklärt war; was dort offenblieb, ist nicht an der Maschine, sondern an der fehlenden Aufschreibung nicht mehr zu holen.
+
+---
+
+## Punkt 99: Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur
+
+**Gemessen am 30.10.2026** auf derselben Maschine wie Punkt 97 und 98 (VMID 310). Punkt 98
+endete mit einem roten Befund: anna hielt alle drei Rechte und bekam die App trotzdem nicht,
+und **auf keiner Seite stand eine Zeile**. Dieser Punkt geht dem nach. Er berichtigt Punkt 98
+in einem Teil und erklärt, warum dort nichts zu finden war.
+
+### Die Berichtigung zuerst
+
+**anna bekommt die App.** Am 30.10.2026 um 12:45 antwortet ihr Fenster mit
+`2026-10-30T12:45:54Z`. Der rote Befund aus Punkt 98 ist damit **kein Dauerzustand** — und
+seine Ursache ist **nicht** geklärt, sondern **nicht mehr klärbar**, und genau das ist der
+Inhalt dieses Punktes.
+
+### Der Versuch, der die Meldung erzeugt — absichtlich
+
+Die Meldung aus Punkt 98 lässt sich herstellen. Der Rolle `leser` wurde das Recht
+`Uhr · zeit` weggenommen und wiedergegeben, anna wurde nach jedem Schritt gefragt:
+
+| Schritt | annas Fenster |
+|---|---|
+| Ausgangslage | `2026-10-30T12:47:40Z` |
+| `Uhr · zeit` **weggenommen** | **„Der Dienst dieser App hat nicht geantwortet."** |
+| `Uhr · zeit` **zurückgegeben** | `2026-10-30T12:49:13Z` |
+| danach `ngc-controller` neu gestartet | `2026-10-30T12:49:43Z` |
+
+**Zwei Dinge sind damit gemessen.** Erstens: diese Meldung ist genau das, was ein fehlendes
+**Aktionsrecht** erzeugt — sie nennt den Dienst, und der Dienst ist nicht das Problem.
+Zweitens: eine Rechteänderung wirkt **sofort**. Es braucht keinen Neustart, und die Vermutung,
+der Controller trage eine veraltete Vertrauensliste, ist damit widerlegt und nicht bestätigt.
+
+### Und warum nichts zu finden war
+
+Das Prüfprotokoll der Anlage (Reiter **Protokoll**) ist die einzige Stelle, die einen Kanal mit
+App, Aktion, Server und Ergebnis festhält — `relay.Forward` schreibt sie über `Log.Channel`.
+Dieselben zwei Zustände, im Protokoll nachgelesen:
+
+```
+13:48  anna  Kanal  ngc.desktop        apps       ok
+13:48  anna  Kanal  ngc.desktop        ui         ok
+13:48  anna  Kanal  ngc.desktop        ui-proof   ok
+       (ohne das Recht: KEINE Zeile fuer org.sorglos.uhr)
+
+13:49  anna  Kanal  org.sorglos.uhr    zeit   probe-2   ok
+13:49  anna  Kanal  org.sorglos.uhr    zeit   probe-2   ok
+```
+
+**Eine Ablehnung wegen fehlendem Recht erzeugt keine Zeile.** Sie fällt, bevor der Kanal
+weitergeleitet wird, und `relay.Forward` ist die einzige Stelle, die schreibt. Dazu schweigt
+das `journal` des Controllers (er bekommt den Aufruf nie) und das der API (sie protokolliert
+Ablehnungen nicht ins `journal`).
+
+**Damit hat weder der Benutzer noch der Verwalter irgendetwas in der Hand:**
+
+| wer | was er sieht |
+|---|---|
+| der Benutzer | „Der Dienst dieser App hat nicht geantwortet." |
+| der Verwalter im Protokoll | nichts — die Zeile fehlt |
+| der Betreiber im `journal` | nichts, auf beiden Seiten |
+
+Das ist der eigentliche Befund dieses Punktes. Nicht, dass eine Ablehnung still ist — das ist
+bei einem Rechteprüfer vertretbar —, sondern dass sie **überall gleichzeitig** still ist und
+die einzige sichtbare Meldung auf die falsche Fährte führt. Ein Verwalter, der das liest,
+sieht nach dem Dienst, nach dem Container, nach dem Controller. Die Antwort steht zwei Meter
+daneben in einem Kasten, den er schon angehakt hat.
+
+### Drei weitere Befunde desselben Tages
+
+#### 1. `ngc-all install` ein zweites Mal mit anderem Namen sperrt alle aus
+
+Der Prüflauf `erstlauf.sh` ruft `ngc-all.sh install` mit seinem Vorgabenamen `erstlauf` auf.
+Auf einer **laufenden** Anlage, die als `probe` in der Vertrauensliste steht, schreibt das
+`api.json` neu:
+
+```
+api.json node: erstlauf          Vertrauensliste kennt: probe
+```
+
+Die Folge, gemessen: `ngc-api` und `ngc-controller` laufen weiter, `apache` läuft,
+`/api/v1/setup` antwortet weiter **404**, im `journal` steht **keine** Zeile — und **jede**
+Anmeldung scheitert mit „Anmeldung fehlgeschlagen." Für **jeden** Benutzer. Die Anlage sieht
+von außen gesund aus und ist für niemanden mehr erreichbar.
+
+**Gegenprobe, und sie ist der Beweis:** derselbe Aufruf mit `NGC_NAME=probe` schreibt den
+Namen zurück, und beide Anmeldungen gehen sofort wieder. Nichts anderes wurde angefasst.
+
+`ngc-all.sh` behält bei einem zweiten Lauf jeden Schlüssel (`kept_key`, `kept_db_key` —
+`noiseKey`, `signKey`, `secretKey`, `challengeKey`, der Datenbankschlüssel). **Den Namen
+behält es nicht**, und der Name ist das, was die Anlage wiedererkennt.
+
+#### 2. Eine unlesbare Zeile macht das ganze Protokoll unsichtbar
+
+Unmittelbar nach dem Zurückschreiben stand im Reiter Protokoll:
+
+> Die Antwort der Anlage war nicht in Ordnung. Es wird nichts angezeigt.
+
+Die Kopfzeile der Tabelle stand da, **keine einzige Zeile** darunter — obwohl Hunderte
+vorhanden waren. Nachdem neue Zeilen unter dem richtigen Namen dazukamen, zeigt derselbe
+Reiter alles. **Das ist die Form von Wand 2 an einer anderen Stelle:** ein Feld, das der
+Vertragsprüfung nicht genügt, verwirft die **ganze** Antwort. Und es trifft ausgerechnet das
+Werkzeug, mit dem ein Verwalter einem Befund nachgeht.
+
+#### 3. Die Rechteseite behält einen abgebrochenen Haken
+
+Haken weggenommen, **„Rechte speichern"**, dann die Bestätigung **abgebrochen**:
+
+```
+gleiche Sitzung danach   Uhr · benutzen=true   Uhr · zeit=false
+frische Anmeldung        Uhr · benutzen=true   Uhr · zeit=true     <- die Wahrheit
+```
+
+Die Seite zeigt nach einem Abbruch den **gewünschten**, nicht den **geltenden** Stand. Wer den
+Abbruch macht und hinsieht, liest ein Recht als weggenommen, das noch gilt. Erst ein neues
+Anmelden zeigt, was die Anlage hält.
+
+### Und eine Berichtigung an der eigenen Behebung aus Punkt 98
+
+Die Firewall-Öffnung aus Punkt 98 war mit `nft add rule` gesetzt — **zur Laufzeit**.
+`/etc/nftables.conf` beginnt mit `flush ruleset`, also ist die Regel beim nächsten Laden des
+Dienstes weg. Gemessen: am 30.10. um 12:40 antwortete die Oberfläche von außen wieder mit
+einem Zeitablauf, die Regel war fort, und die Maschine war seit 03:40 oben — **kein** Neustart
+dazwischen, der Dienst allein hat gereicht.
+
+**Behoben:** die Regel steht jetzt in `/etc/nftables.d/10-ngc-ports.nft` und `nftables.conf`
+bekommt eine `include`-Zeile. Sie öffnet Tabelle und Kette wieder, statt sie neu zu erklären —
+so behält die Härtung ihr `policy drop` und bekommt drei Ports dazu. Eine **eigene** Tabelle
+täte es nicht: bei zwei Basisketten am selben Haken entscheidet das `drop` der einen, und ein
+`accept` der anderen ändert daran nichts. Gegenprobe: `systemctl restart nftables`, danach
+steht die Regel und die Oberfläche antwortet von außen mit `200`.
+
+### Was daraus zu bauen wäre
+
+1. **Eine Ablehnung wegen fehlendem Recht gehört ins Protokoll.** Eine Zeile mit App, Aktion
+   und dem Grund, und der Benutzer bekommt einen Satz, der das Recht nennt statt den Dienst.
+   Das ist der Unterschied zwischen „ich suche eine Stunde" und „ich setze einen Haken".
+2. **`ngc-all install` soll einen abweichenden Namen abweisen**, solange `api.json` einen
+   trägt — oder ihn wenigstens laut nennen. Ein stiller Namenswechsel ist der Verlust der
+   Anlage, und er sieht aus wie ein vergessenes Passwort.
+3. **Das Protokoll darf nicht an einer Zeile scheitern.** Eine Zeile, die der Vertragsprüfung
+   nicht genügt, gehört ausgelassen und gezählt, nicht gegen die ganze Antwort gerechnet.
+4. **Die Rechteseite soll nach einem Abbruch zurückspringen.** Ein Haken, der etwas anderes
+   sagt als die Anlage, ist schlimmer als gar keiner.
+5. **`erstlauf.sh` soll `--machine-name` durchreichen**, wie es `--machine-hostname` seit
+   Punkt 97 tut. Sonst setzt jeder Prüflauf auf einer laufenden Anlage ihren Namen auf
+   `erstlauf` — was Befund 1 auslöst.
+
+**Getrennt gehalten:** gemessen sind die vier Zeilen der Versuchstabelle, die Protokollzeilen
+um 13:48 und 13:49 samt der fehlenden, das Verhalten beider Anmeldungen vor und nach dem
+Zurückschreiben des Namens, die beiden Hakenstände nach dem Abbruch, das Verschwinden der
+Firewall-Regel ohne Neustart und ihr Bestand nach `systemctl restart nftables`. Abgewogen ist
+die Einordnung der Meldung als „falsche Fährte" und jede Zeile der letzten Liste. **Nicht
+gemessen** ist, warum anna am 29.10.2026 ohne Wirkung blieb, obwohl die Seite ihre Rechte als
+gesetzt zeigte — und das ist kein Versäumnis dieses Punktes, sondern sein Gegenstand: die
+Anlage hat darüber nichts aufgeschrieben, und nachträglich ist nichts mehr zu holen. Die
+Maschine 310 ist am 30.10.2026 abgebaut, nachdem dieser Punkt geschrieben war; nachzuprüfen ist er an der Aufschreibung, nicht an ihr.
+
+## Punkt 100: Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden eine offene Akte
+
+**Gemessen am 3.11.2026** an zwei Anlagen gleichzeitig: `ngc-ein` (10.2.3.216, eingerichtet
+und nie gepaart) und der kleinen Anlage (Web-Knoten 10.2.3.210, gepaart, Anker bei `seq 8`).
+Der Punkt entstand aus einer Frage einer anderen Sitzung, die 302 Klagen „state: no trust
+list yet" in sieben Tagen gezählt und daraus geschlossen hatte, die Maschine sei tot.
+
+### Die Berichtigung zuerst, und sie trifft eine eigene Abwägung
+
+In dieser Prüfrunde habe ich gesagt, eine ungepaarte Maschine sehe von aussen **genau wie
+eine gesunde aus**. Gemessen ist das **falsch**, und zwar im entscheidenden Teil: zwei der
+drei öffentlichen Antworten unterscheiden sich deutlich. Richtig ist die schärfere Fassung:
+der Unterschied ist für den **Menschen vor der Seite** nicht zu sehen und für **jeden, der
+den richtigen Endpunkt fragt**, vollständig zu lesen.
+
+### Die Gegenprobe, drei Antworten, zwei Anlagen
+
+| Abfrage | gepaart (10.2.3.210) | ungepaart (`ngc-ein`) |
+|---|---|---|
+| `/` | 200, **451 Byte** | 200, **451 Byte** – `diff` leer, byte-gleich |
+| `/config.json` | enthält `anchor: {"seq": 8, "hash": …}` | **kein `anchor`-Schlüssel** |
+| `/api/v1/setup` | **404**, 66 Byte, `E_NOTFOUND` | **200**, 711 Byte, vollständige Auskunft |
+
+Die ausgelieferte Startseite ist dieselbe Datei. Wer die Maschine im Browser aufruft, sieht
+in beiden Fällen dasselbe Gerüst; was danach erscheint, entscheidet erst das Programm im
+Browser. Ein Betreiber, der nachsieht, ob „die Maschine läuft", bekommt in beiden Fällen 200.
+
+### Was die ungepaarte Maschine von sich erzählt
+
+Die 711 Byte sind keine Fehlermeldung, sondern die **Einrichtungsauskunft**: Kennung der
+Installation, der einzige Knoten (`id`/`kind`/`name`, dazu `noise`, `sign` und `tls`), die
+Adresse `wss://…:7443/tunnel`, der `releaseKey`, der Laden mit `id`, Name, Adresse und
+Schlüssel — und ein `mac`.
+
+Der `mac` ist der Beleg, der diesen Punkt vom Verdacht trennt: er ist mit dem
+Einrichtungscode geschlüsselt. Die Maschine **könnte ihn nicht rechnen**, wenn
+`/var/lib/ngc/setup-code` weg wäre. Das ist ein Beleg aus dem Mechanismus und nicht aus einer
+Abwesenheit — ein `200` allein hätte das nicht gesagt.
+
+### Warum das kein Fehler des Erstlaufs ist
+
+- `apps/server-api/classes/server/server.go` nennt den Zustand in eigenen Worten „the
+  expected state of an installation that is set up and not yet paired", mit einer Messung vom
+  18.10.2026 daneben (54 gleiche Zeilen in 54 Minuten). Die 302 Klagen sind damit der
+  **dokumentierte Normalfall**, kein Befund.
+- `apps/server-api/classes/login/finish.go`: ohne Liste schlägt `h.S.Trust(ctx)` fehl, die
+  Antwort ist `FailCoded(wire.CodeUnreachable)`. Vertragsgemäss — die Folge, nicht die Ursache.
+- Die Vertrauensliste kann **nur im Browser** entstehen: der eigene Schlüssel der Person
+  unterschreibt die erste Fassung. Kein Skriptweg schreibt sie. Das `pair` in
+  `apps/server-controller/classes/node/main.go` paart einen **Knoten** in eine bestehende
+  Installation, nicht die erste Person.
+
+Darum endet der Prüflauf bei Station 3 absichtlich, und dieser Riegel steht als Meldung in
+`tools/erstlauf-maschine.sh`. `ngc-ein` fehlt kein Schritt des Skripts, sondern der
+menschliche: Seite aufrufen, Paarungscode eingeben, Passkey anlegen, erste Fassung
+unterschreiben — **in einem Browserlauf**, denn dazwischen schliessen zerstört die
+Installation ohne Rückweg (Punkt 97, und `docs/installation-kleines-system.md`, Schritt 7).
+
+### Die zwei Seiten des Befundes
+
+**Für den Betreiber blind:** eine Maschine, auf der sich **niemand** anmelden kann, sagt das
+nur in einer Logzeile, die absichtlich nur bei Änderung erscheint. Sieben Tage unbemerkt sind
+damit nicht Nachlässigkeit, sondern Bauart.
+
+**Für den Fremden eine offene Akte, aber eine verschlossene Tür:** derselbe Zustand wird an
+einem unauthentifizierten Endpunkt vollständig ausgeplaudert — wer eine ungepaarte
+Installation findet, kennt Kennung, Knoten mit `noise`/`sign`/`tls`, Tunneladresse,
+`releaseKey` und den Laden samt Adresse und Schlüssel. **Übernehmen kann er sie damit
+nicht.** Die Abstufung ist der Kern dieses Punktes: es ist Aufklärung ohne Anmeldung, nicht
+ein Weg hinein.
+
+### Warum die Tür zu ist, am Quelltext nachgelesen
+
+- `shared/session/session.go`: `VerifySetup` prüft als **erstes**
+  `!ValidSetupCode(code) || !hmac.Equal(s.MAC, SetupMAC(code, s.Trust.Payload))`, bevor
+  irgendetwas entschlüsselt wird. Ohne den Code gibt es keinen gültigen MAC.
+- `apps/server-api/classes/setup/setup.go`: genau dieser Aufruf steht im `take`-Pfad, dem
+  POST, das die erste Fassung annimmt.
+- **Zwei MACs, nicht einer** — die Stelle, die den Riegel dichter macht als erwartet: die
+  GET-Auskunft trägt `OfferMAC` über `"ngc/setup-offer/v1"`, das POST verlangt `SetupMAC`
+  über `"ngc/setup/v1"`. Der Quelltext sagt dazu in eigenen Worten, die Label hielten die
+  beiden auseinander, „so a MAC made for one direction never passes for the other". Der MAC
+  aus der öffentlichen Auskunft ist also nicht einmal wiederverwendbar.
+- Der Code selbst: Alphabet A-H, J-N, P-Z, 2-9 — **32 Zeichen** ohne I, O, 0 und 1, 20
+  Stellen, also 32²⁰ = **2¹⁰⁰**. Erzeugt in `apps/server-api/classes/secrets/random.go` aus
+  `crypto/rand` über `Bytes(20)` und `int(c)%32`; weil 256 = 8·32 ist, verzerrt der Rest
+  nichts. Der MAC gibt den Code nicht her.
+
+**Woher diese Antwort kommt:** die Frage stand in der ersten Fassung dieses Punktes
+ausdrücklich als *nicht gemessen* offen. Beantwortet hat sie die Nachbarsitzung „Eine
+ungepaarte Anlage verrät sich jedem" am 3.11.2026 an einer **eigenen örtlichen**
+Installation, nicht an `ngc-ein`: fremder Admin-Schlüssel mit eigener erster Fassung ohne
+Code → 403, dann 429 (`E_LOCKED`), Vertrauensliste blieb leer; positive Kontrolle mit echtem
+Code → 204. Der tragende Beleg ist ein **sterbender Mutant**: wird die Code-Prüfung in
+`take()` per Überlagerung entfernt (`shared/` unberührt), antwortet der fremde Versuch 204
+und die negative Kontrolle wird rot. Der code-geschlüsselte MAC ist also wirklich der Riegel
+und nicht nur die erste Hürde davor.
+
+Die vier Quellstellen oben habe ich selbst gegengelesen; die lebende Gegenprobe und den
+Mutanten habe ich **nicht** selbst gefahren.
+
+### Was dieser Punkt offenlässt — und wer es führt
+
+Dieser Punkt hält die **Frage und ihre Abstufung** fest, nicht den Entwurf einer Behebung.
+Gebaut wird in der Nachbarsitzung „Eine ungepaarte Anlage verrät sich jedem", und deren Blatt
+ist die Stelle, an der der Stand steht; hier wird er nicht verdoppelt. Dort ist Teil A
+entschieden (die Auskunft bleibt offen, mit Begründung — sie ist der nötige Weg für die erste
+Person) und Teil B freigegeben: ein ehrlicher Satz auf der Seite, der weder den Code noch
+seinen Zustand noch den Weg dorthin nennt.
+
+Was aus **diesem** Punkt für jede Behebung bindend bleibt: eine Installation ohne
+Vertrauensliste ist kein laufender Betrieb und sollte in keiner Zustandsabfrage als gesund
+gelten. Heute gilt sie es — und genau das ist die blinde Hälfte des Befundes.
+
+**Getrennt gehalten:** gemessen sind die neun Zahlen der Gegenprobe-Tabelle, der byte-gleiche
+`diff` der beiden Startseiten, der Inhalt der 711 Byte samt `mac`, das Fehlen des
+`anchor`-Schlüssels in `config.json` der ungepaarten Maschine und die vier Quellstellen.
+Abgewogen ist die Einordnung als zwei Seiten eines Befundes und jede Zeile der letzten Liste.
+Von **mir selbst gelesen, nicht gemessen** im Sinne eines Laufs sind die vier Quellstellen
+zum Riegel: die Reihenfolge in `VerifySetup`, ihr Sitz im `take`-Pfad, die beiden
+auseinandergehaltenen MAC-Label und die Erzeugung des Codes aus `crypto/rand` über ein
+32-Zeichen-Alphabet. **Von einer anderen Sitzung gemessen** und hier übernommen sind die
+lebende Gegenprobe (403, 429, leere Liste; 204 mit echtem Code) und der sterbende Mutant.
+**Nicht mehr offen** ist damit die Frage der ersten Fassung dieses Punktes, ob ein Fremder
+übernehmen kann: er kann es nicht. `ngc-ein` ist unverändert; an ihr wurde nur gelesen (vier
+Abfragen), nichts eingerichtet und nicht gepaart.
+
+---
+
+---
+
+## Punkt 101: Die drei Mengen-Grenzen sind durchgesetzt — der Controller legt die cgroup an, nicht podman
+
+Punkt 72 (Befund 1) und Punkt 95 (Posten 7) haben zweimal gemessen, dass `--pids-limit 512`,
+`--memory 256m` und `--cpus 1.000` **angefragt und nicht durchgesetzt** werden: auf keinem der drei
+gemessenen Knoten hatte ein App-Container eine eigene cgroup. Punkt 95 hat es auch im Verhalten
+gezeigt — 600 Aufgaben über einer Decke von 512, alle 600 gestartet. Hier ist die Ursache benannt,
+die Grenze gebaut und am laufenden Container gemessen.
+
+**Welche Maschinen.** `svc-1` (10.2.3.213) und `svc-2` (10.2.3.214), gemessen am 30.10.2026,
+podman 5.4.2, Kern 6.12. Die Ursachenmessung auf beiden, die Wirkungsmessung auf `svc-2` — dem
+Knoten, auf dem seit dem Start um 03:37 UTC nichts gearbeitet wurde (Last 0,00) und auf dem nur die
+Terminal-App läuft. Die Einzel-VM 208 aus Punkt 72 gibt es nicht mehr (Punkt 95, Anmerkung).
+
+### Die Ursache, in drei Lagen — jede allein genügt
+
+Alle auf `svc-1` **und** `svc-2` gemessen, mit denselben Zahlen:
+
+| gemessen | `svc-1` | `svc-2` |
+|---|---|---|
+| `systemctl show ngc-controller.service -p Delegate` | `Delegate=no` | `Delegate=no` |
+| `cgroup.subtree_control` der Einheit | **leer** | **leer** |
+| `cgroup.type` der Einheit, Prozesse darin | `domain`, 7 | `domain`, 4 |
+| `cgroup.controllers` der Einheit | `memory pids` | `memory pids` |
+| `cpu.max` der Einheit | **Datei gibt es nicht** | **Datei gibt es nicht** |
+| `/sys/fs/cgroup/cgroup.subtree_control` (Wurzel) | `cpu memory pids` | `cpu memory pids` |
+| `/sys/fs/cgroup/system.slice/cgroup.subtree_control` | `memory pids` | `memory pids` |
+| `loginctl show-user` des App-Benutzers | nicht angemeldet, kein linger | dito |
+
+1. **`Delegate=no`.** systemd gibt der Einheit keinen eigenen Zweig; ihr Ordner ist
+   `drwxr-xr-x root root`, und der App-Benutzer darf dort nicht schreiben.
+2. **Die Einheit kann gar kein Elternteil werden.** Ihr `cgroup.subtree_control` ist leer, ihr
+   `cgroup.type` ist `domain`, und ihre eigenen Prozesse sitzen darin. cgroup v2 verweigert
+   Controller im Unterbaum einer cgroup, die selbst Prozesse hält — **auch root**. Das ist die
+   Lage, die Punkt 72 nicht getrennt hatte: nicht nur „der App-Benutzer darf nicht", sondern „hier
+   kann es niemand".
+3. **Keine systemd-Benutzersitzung, also cgroupfs.** podman sagt das bei **jedem** Aufruf, in vier
+   Zeilen, und die letzte heißt `Falling back to --cgroup-manager=cgroupfs`.
+
+**Und die Zeile, an der es hing:** `apps/server-controller/classes/runtime/podman.go` gab `p.run`
+für `create` und `start` **`nil` als `errOut`** mit. Die vier Warnzeilen sind **477 Byte** — auf
+`svc-1` am 30.10.2026 gezählt — und fielen damit wochenlang auf den Boden. Der Satz, der das ganze
+Loch benennt, stand bei jedem Aufruf da und wurde von nichts gelesen.
+
+**Das sind dieselben 477 Byte, die Punkt 78 nicht zuordnen konnte.** Dort steht „33 geschrieben,
+510 protokolliert: 477 Byte Fremdtext, der der App zugeschrieben wird" und „nicht gemessen: was die
+477 Byte sind". Sie sind podmans Warnung über die fehlende Benutzersitzung. Punkt 78 bleibt in
+seinem zweiten Teil gültig — dass ein Protokoll fremden Text der App zuschreibt, ist weiter ein
+Mangel —, aber die Frage „woher" ist beantwortet.
+
+### Warum nicht `Delegate=yes`
+
+Es ist eine Zeile, sie steht in **einem anderen Repo** (die Einheit schreibt das
+`ulh`-Installationsskript, nicht dieses Programm — `shared/ulh.md`), und sie bringt **weniger**:
+`system.slice` hat nur `memory pids` in seinem `subtree_control`, ein delegierter Unterbaum dieser
+Einheit bekommt also **keinen cpu-Controller** — `cpu.max` gäbe es dort weiter nicht. Die **Wurzel**
+des Baums reicht `cpu memory pids` nach unten. Eine cgroup, die der Controller **dort** anlegt, kann
+alle drei halten.
+
+### Warum der Controller und nicht podman
+
+Rootloses podman kann es nicht, und das ist keine Einstellung. Ein Prozess darf nur von jemandem in
+eine cgroup verschoben werden, der die `cgroup.procs` des **gemeinsamen Vorfahren** schreiben darf;
+der ist hier die Wurzel des Baums und gehört root. Gemessen auf `svc-1` am 30.10.2026: dem
+App-Benutzer wurde eine eigene cgroup samt gechownter `cgroup.procs` hingelegt, und er kam
+**trotzdem nicht hinein** — `I/O error`. Root hat diese Schranke nicht.
+
+Also: der Controller legt die cgroup an, **schreibt die drei Zahlen selbst** und startet podman
+**darin** (`CLONE_INTO_CGROUP`, ein Flag von `clone3`; in Go `SysProcAttr.UseCgroupFD`). Alles, was
+dieser Aufruf dann macht — conmon, der Haltevorgang, der Dienst jeder Aktion — ist ein Nachkomme
+und erbt die cgroup. Die Zahlen stehen in Dateien, die nur root schreiben darf; aus dem Container
+heraus ist keine davon zu heben.
+
+**Nicht verschieben, sondern hineingeboren.** Ein Prozess, der danach verschoben wird, ist schon
+gelaufen — und eine Fork-Bombe braucht nur den Moment davor.
+
+### Was gemessen ist — am echten Container, in dem Weg, den der Code geht
+
+Gefahren mit einem Prüfprogramm, das genau die Aufrufe des Codes macht: cgroup anlegen, drei Zahlen
+schreiben, jede zurücklesen, `CLONE_INTO_CGROUP`, podman darin starten. Ein **eigener**,
+zusätzlicher Container `ngc-haertung-probe` aus dem echten Terminal-Abbild
+(`localhost/ngc-terminal:1.0.0`), als der Terminal-App-Benutzer (999:989) — der laufende
+Terminal-Container wurde nicht angefasst. Vorher angekündigt, danach entfernt; `svc-1` und `svc-2`
+tragen nach der Messung nichts davon (nachgesehen).
+
+**1 — die Grenzen stehen im Kern, am laufenden Container:**
+
+```
+/proc/5769/cgroup   ->  0::/ngc.apps/ngc-haertung-probe   (vorher: /system.slice/ngc-controller.service)
+pids.max            ->  512                               (vorher: 3466)
+memory.max          ->  268435456                         (vorher: max)
+cpu.max             ->  100000 100000                     (vorher: Datei gibt es nicht)
+cgroup.procs        ->  5767 5769                          (conmon und der Container selbst)
+```
+
+**2 — die Fork-Bombe wird gebremst, und der Knoten bleibt stehen.** 600 Aufgaben im Container
+angefordert, erlaubt sind 512:
+
+```
+im Codeweg (exec in der cgroup)     ->  "Cannot fork", pids.current 504 von 512, pids.events max 9
+dieselben 600 OHNE die cgroup       ->  600 von 600 gestartet
+der Knoten dabei                    ->  Last 0,30 · controller active · Terminal-Container "Up 9 hours"
+                                        · 1224 Aufgaben auf dem Knoten
+pids.current der Controller-Einheit ->  17 von 3466 (unberührt)
+```
+
+**3 — der Speicher wird gebremst, und zwar auch über ein tmpfs.** 400 MiB nach `/tmp` geschrieben
+(`/tmp` ist eines der vier beschreibbaren tmpfs aus Punkt 95), erlaubt sind 256 MiB:
+
+```
+im Codeweg      ->  getoetet; memory.peak 268439552 = memory.max, oom_kill 38, max 238801
+                    (zweimal gefahren, beide Male dasselbe)
+OHNE die cgroup ->  400 MiB in 0,146 s geschrieben, /tmp traegt 400 MiB
+```
+
+Damit ist der Satz aus Punkt 95 — „die drei tmpfs sind ein Weg, den Speicher des Wirts zu füllen,
+ohne eine einzige Grenze zu verletzen" — **geschlossen und gemessen**, nicht nur abgewogen: die
+Seiten eines tmpfs zählen gegen den, der sie schreibt.
+
+Die rechte Spalte jeder dieser drei Messungen ist der Grund, warum man der linken glauben darf:
+derselbe Container, derselbe Aufruf, nur ohne die cgroup — und er gelingt jedes Mal.
+
+**4 — ein Befund über das Messen, der selbst eine Zusage bestätigt.** Der erste Versuch der
+Fork-Messung lief über ein gewöhnliches `podman exec` und meldete `gestartet=600, fork-fehler=0` bei
+`pids.current=2` — es sah aus wie „die Grenze trägt nicht". Sie trug; die Aufgaben lagen in der
+cgroup **der ssh-Sitzung des Messenden**. Das ist genau der Befund aus Punkt 95 („die Aufgaben eines
+`podman exec` landen in der cgroup des Aufrufers"), hier von der anderen Seite — und genau deshalb
+steckt das `CLONE_INTO_CGROUP` im Code auch in `Exec` und nicht nur in `Start`. Ohne diese Zeile
+wäre jede Aktion jeder App außerhalb ihrer Decke gelaufen, und die Fork-Bombe wäre einfach eine
+Aktion statt eines Dienstes.
+
+Dasselbe noch einmal, eine Lage tiefer: ein `podman restart` von Hand holte den Container **aus**
+seiner cgroup heraus und nach `/user.slice/user-0.slice/session-22.scope` — die cgroup dessen, der
+den Befehl gab. Darum sieht der Code nach dem Start nach, wo der Container wirklich sitzt.
+
+**5 — ein Nebenbefund am Prüfbehälter, nicht an NGC:** die 504 Aufgaben blieben als Zombies stehen,
+weil der Vordergrund des Prüf-Containers (`sleep 600`) keine Waisen erntet; der echte App-Container
+hat dafür `catatonit` (Punkt 72). Erwähnt, weil die Zombies gegen `pids.max` zählen und den nächsten
+Messschritt blockiert haben — ein Container am Anschlag lässt sich nicht mehr betreten
+(`Error: cannot run conmon`). Das ist die Kehrseite der Decke und steht so auch im Quelltext: **die
+512 gelten für die ganze App zusammen** — conmon, Haltevorgang und jeder Dienst jeder Aktion.
+
+### Was gebaut ist
+
+`apps/server-controller/classes/runtime/cgroup.go` (neu, mit `cgroup_linux.go` und
+`cgroup_other.go`), dazu `podman.go`, `runtime.go`, `user.go`, `install/activate.go`,
+`node/restore.go`, `serve/app.go`.
+
+1. **`ensureCgroup`** legt `/sys/fs/cgroup/ngc.apps/<container>` an, reicht nur die Controller
+   weiter, die die Wurzel wirklich hergibt, schreibt `pids.max`, `memory.max`, `memory.swap.max=0`
+   und `cpu.max` — und **liest jede Zahl zurück**. Das Zurücklesen ist der Kern: der Fehler, um den
+   es geht, ist eine angenommene und verworfene Angabe, und eine angenommene Schreibung beweist
+   darüber nichts.
+2. **Die Grenzen stehen am `Start`, nicht am `Create`**, und der Übersetzer hält das fest
+   (`Engine.Start(ctx, name, Limits)`): eine cgroup liegt in einem tmpfs und ist nach jedem Neustart
+   der Maschine weg, der Container nicht. Ein `Start`, dem niemand die Decke sagt, könnte sie nur
+   raten.
+3. **Nach dem Start wird nachgesehen**, ob der Container wirklich darin sitzt; sitzt er nicht, wird
+   er wieder angehalten. Das ist die Messung, die den Fehler vom 24.10.2026 im Augenblick seines
+   Entstehens gefangen hätte.
+4. **podmans stderr wird gelesen** und wandert in den Fehler, statt auf den Boden zu fallen.
+5. **`node.Restore` hebt den Altzustand auf:** ein Container, der **läuft** und in keiner cgroup
+   dieses Programms sitzt, wird einmal angehalten und wieder gestartet — in seine Decke hinein. Ohne
+   das wäre genau der heutige Zustand der Anlage dauerhaft: ein laufender Container wird von nichts
+   neu gestartet, und niemandem fällt es auf. Ein Container, der sich nicht anhalten lässt, läuft
+   weiter und wird **nicht** daneben ein zweites Mal gestartet.
+6. **Der Kommentar an `--read-only` ist berichtigt** (Punkt 95, Posten 2): „der einzige Ort, an den
+   die App schreiben darf" war falsch, richtig ist „der einzige, der einen Neustart übersteht".
+
+### Was die Grenze NICHT durchsetzt — ehrlich benannt statt stillschweigend angefragt
+
+- **Ohne `pids` oder `memory` im Kern startet die App nicht.** Das ist eine Entscheidung und die
+  einzige Stelle der Maschinerie, an der eine fehlende Grenze einen Start anhält. Begründung nach
+  der Rangfolge Sicherheit vor Stabilität: eine Schranke, die jemand für vorhanden hält, ist
+  schlimmer als eine, von der man weiß, dass sie fehlt.
+- **Ein fehlender `cpu`-Controller hält die App NICHT an.** Ein Anteil an einem Kern ist ein guter
+  Nachbar, keine Wand, und ein Knoten, der `cpu` niemandem nach unten reicht, würde sonst gar keine
+  App mehr fahren. Was dann nicht passiert: die Zusage. `Held` sagt, was wirklich trägt.
+- **Ein Kern älter als 5.7 hat kein `CLONE_INTO_CGROUP`.** Dann scheitert der Start sichtbar — kein
+  stiller Rückfall.
+- **Die Decke gilt für die ganze App zusammen**, nicht je Dienst (Befund 5 oben).
+- **Verwaltungsaufrufe laufen absichtlich außerhalb** (`create`, `stop`, `rm`, `ps`, `inspect`):
+  innerhalb wäre eine App am eigenen Anschlag nicht mehr anzuhalten, weil das Anhalten eine weitere
+  Aufgabe ihrer selbst bräuchte.
+- **Ein Container aus einem älteren Controller hat keine cgroup.** `Exec` läuft dann ohne, statt zu
+  verweigern — so ein Container ist sowieso von nichts gebremst, Verweigern nähme die App weg und
+  bremste nichts. `node.Restore` beendet diesen Zustand.
+- **`--pids-limit`, `--memory` und `--cpus` gehen weiter an podman.** Sie sind nicht mehr die
+  Zusage, sondern ihre Begleitung: `podman inspect` sagt damit dasselbe wie der Kern, statt ihm zu
+  widersprechen. Durchgesetzt werden sie von der cgroup.
+- **Nicht gebaut und gemeldet: `Delegate=yes`.** Wird nicht gebraucht (siehe oben) — und wäre hier
+  auch nicht zu bauen: die Einheit `ngc-controller.service` steht in `ulh`, nicht in diesem Repo.
+- **Nichts in eingefrorenem `shared/` angefasst.** Eine Decke je App wäre ein Feld des Manifests
+  (`shared/store/manifest.go`) und ist darum nicht gebaut.
+
+### Geprüft
+
+`tools/check.sh`-Satz grün. Dazu ein Mutantenlauf über jede Behauptung dieses Punktes, **unter
+Linux** gefahren — auf Windows überspringen sich vier der Fälle, und drei Mutanten lebten darum beim
+ersten Lauf; ein lebender Mutant war zuerst eine Frage an die Messung und nicht an den Fall:
+
+```
+Mutanten, die sterben mussten und starben : 16 von 16
+Kontrollen, die leben mussten und lebten  : 18 von 18
+ohne Bau / Selbstabbruch: 0   falsche Antworten: 0
+```
+
+Eine der 18 Kontrollen ist **absichtlich** eine Mutation des Codes und kein Umbenennen: „die Wurzel
+gefragt statt den Elternordner". Sie lebt, und das ist ein Befund über die Behebung, keine Lücke —
+sobald jeder Controller einzeln geschrieben wird, ändert die falsch gelesene Datei nur noch den
+Wortlaut eines mitgeführten Fehlers, nicht das Ergebnis. **Tragend ist die zweite Hälfte der
+Behebung**, nicht die erste; der Elternordner wird trotzdem gefragt, weil er die richtige Datei ist
+und den richtigen Grund in die Meldung schreibt. Ein lebender Mutant war zuerst eine Frage an die
+Messung, und das hier war die Antwort.
+
+### Was daraus zu bauen wäre
+
+1. **Posten 1 und 2 aus Punkt 72 können gestrichen werden** — Posten 1 ist gebaut (anders als dort
+   vermutet, ohne `Delegate=`), Posten 2 ist gebaut. Posten 4, 5 und 6 stehen unverändert. Aus
+   Punkt 95 sind Posten 2 (Kommentar) und Posten 3 (tmpfs) erledigt; Posten 4 steht, und Posten 5 —
+   „dieselbe Messung auf einem Knoten mit `Delegate=yes`" — **entfällt**: `PIDsLimit = 512` ist in
+   Betrieb gemessen, ohne Delegation.
+2. **Die 512 reißen bei rund 53 Terminal-Sitzungen** (Punkt 72). Jetzt, wo die Zahl wirklich greift,
+   ist das keine Rechnung mehr, sondern eine Grenze, die ein Benutzer erreichen kann. Ob 512 bleibt,
+   ist eine Entscheidung — eine Zahl je App bräuchte ein Feld im eingefrorenen `shared/`.
+3. **Den Rest von Punkt 78 beheben**: woher die 477 Byte kommen, ist jetzt bekannt; dass sie der App
+   zugeschrieben werden, ist weiter falsch.
+4. **Der neue Controller ist auf keinem Knoten der Anlage eingespielt.** Gemessen ist der
+   Mechanismus, im Codeweg, mit einem eigenen Container — **nicht** der laufende Dienst. Solange das
+   nicht eingespielt ist, laufen Terminal und Uhr weiter ungebremst in der cgroup des Controllers.
+
+**Getrennt gehalten:** gemessen sind die Ursachentabelle auf beiden Knoten, die 477 Byte, die
+verweigerte Selbst-Eintragung des App-Benutzers, die vier cgroup-Zahlen am laufenden Container, die
+Fork- und die Speichermessung samt ihren Gegenkontrollen, der Zustand des Knotens dabei, der
+Aufrufer-Befund bei `exec` und `restart` und der Mutantenlauf. Abgewogen sind die Entscheidung
+„pids und memory sind eine Wand, cpu ist keine", die Entscheidung, `Exec` ohne cgroup laufen zu
+lassen, und jede Zeile der letzten Liste.
+
+### Nachtrag vom Einspielen auf `svc-2` — der erste Stand hatte einen Fehler, und der Riegel hat ihn gezeigt
+
+Am 30.10.2026 wurde dieser Stand auf `svc-2` eingespielt (Fassung 0.3.0, die 0.2.1 blieb als
+`/usr/lib/ngc/ngc-controller.vor-haertung` liegen) und die Maschine neu gestartet — nicht nur der
+Dienst, aus dem Grund, der in Punkt 102 steht. **Die Terminal-App ist nicht gestartet**, und das
+Protokoll sagte genau, was fehlte:
+
+```
+WARN the container of an app did not start app=org.sorglos.terminal
+     err="runtime: the kernel does not hold a limit of this app
+          /sys/fs/cgroup/ngc.apps/ngc-terminal-439982dd holds pids=false memory=false cpu=false"
+```
+
+**Das ist der Riegel, der tut, was er soll:** keine der drei Grenzen stand im Kern, also lief die
+App **nicht** — nicht ungebremst, nicht stillschweigend. Die Meldung nannte das Verzeichnis und
+alle drei Zahlen. Ohne das Zurücklesen wäre dieser Fehler genau so unsichtbar geblieben wie der,
+gegen den dieser Punkt gebaut ist.
+
+**Der Fehler, zweiteilig, im Quelltext dieses Punktes:**
+
+1. **Die falsche Datei gefragt.** `ensureCgroup` las, was die **Wurzel des Baums HAT**
+   (`cgroup.controllers`, auf `svc-2` acht Einträge), statt was sie **nach unten GIBT**
+   (`cgroup.subtree_control`, drei). Das sind zwei verschiedene Dateien, und der Unterschied ist
+   nicht akademisch: systemd schaltet einen Controller erst frei, wenn eine Einheit ihn braucht —
+   beim Start lag `cpu` noch nicht unter der Wurzel, als der Controller eine Zehntelsekunde später
+   hochkam.
+2. **Alle drei in EINEM Schreibvorgang.** Ein Schreibvorgang, der einen Controller nennt, den der
+   Elternordner nicht anbietet, wird **ganz** abgewiesen. Gemessen auf `svc-2`:
+
+   ```
+   Elternordner hat: cpu memory pids
+   "+pids +io"  in einem Zug  ->  ENOENT, subtree_control bleibt LEER   (pids mit abgewiesen)
+   "+pids", dann "+io"        ->  pids steht, io fehlt
+   ```
+
+Zusammen taten die zwei genau das, wovor der Kommentar an derselben Stelle gewarnt hatte: ein
+Controller, der noch nicht da war, kostete die anderen zwei.
+
+**Behoben:** den Elternordner fragen, nachdem er angelegt ist, und **jeden Controller einzeln**
+schreiben. Dazu ein Fall, der die Lage nachstellt
+(`TestEnsureCgroupAsksTheParentAndNotTheRoot`: die Wurzel hat `cpu` und gibt ihn nicht nach unten —
+`pids` und `memory` müssen trotzdem tragen), und zwei Mutanten, je einer für eine Hälfte des
+Fehlers.
+
+**Und der Befund über das Messen, der schwerer wiegt als der Fehler selbst.** Alle Fälle dieses
+Punktes waren grün, während der echte Kern verweigerte — weil die Attrappe **großzügiger war als
+der Vertrag**: ihr `cgroup.subtree_control` nahm still an, was sie nicht konnte, statt den ganzen
+Schreibvorgang abzuweisen. Eine Attrappe, die einen abgewiesenen Schreibvorgang verschluckt, misst
+ihre eigene Nachsicht. Die Attrappe weist jetzt ab wie der Kern, und sie kennt den Unterschied
+zwischen „hat" und „gibt nach unten". Aufgeschrieben in
+`Z:\GitHub\claude-md\messen.md`.
+
+**Dazu ein kleiner Messwert am Rand:** ein cgroup-Kind, das vor der Freigabe der Controller angelegt
+wurde, **bekommt sie nachträglich**, sobald der Elternordner sie in `subtree_control` aufnimmt
+(gemessen auf `svc-2`: `Kind controllers` ging von `[]` auf `cpu memory pids`). Der Kern reicht
+also nach, und ein halb angelegter Baum ist darum reparierbar statt verloren.
+
+
+### Nachweis am laufenden Dienst — `svc-2`, 30.10.2026, 13:58 UTC
+
+Nach der Behebung oben noch einmal eingespielt (Fassung 0.3.0, Prüfsumme `87a0f341…` lokal gebaut
+und oben gleich) und die Maschine neu gestartet. **Diesmal startet die App, und sie startet
+gebremst.** Das Journal dieses Starts hat drei Zeilen und keine Warnung:
+
+```
+Started ngc-controller.service
+podman: system refresh
+INFO tunnel up api=wss://api-1.ngc.mein.lan:7443/tunnel
+```
+
+**Die Zahlen am echten Terminal-Container**, aus dem Kern gelesen, nicht aus `podman inspect`:
+
+| | vorher (0.2.1) | jetzt (0.3.0) |
+|---|---|---|
+| `/proc/<pid>/cgroup` | `/system.slice/ngc-controller.service` | **`/ngc.apps/ngc-terminal-439982dd`** |
+| `pids.max` | 3466 (`TasksMax` der Einheit) | **512** |
+| `memory.max` | `max` | **268435456** |
+| `memory.swap.max` | — | **0** |
+| `cpu.max` | Datei gibt es nicht | Datei gibt es nicht *(siehe unten)* |
+| `cgroup.procs` der App | — | `759 761` (conmon und der Container) |
+| `pids.current` der Controller-Einheit | 25 (mit den Apps darin) | **9** (ohne sie) |
+
+**Die Fork-Bombe an der echten App**, gedeckelt, im Codeweg, vorher angekündigt:
+
+```
+600 Aufgaben im laufenden Terminal-Container, erlaubt 512
+  ->  "Cannot fork", pids.current 508 von 512, pids.events max 3
+dieselben 600 OHNE die cgroup
+  ->  600 von 600 gestartet
+der Knoten dabei
+  ->  Last 0,00 · controller active · 630 Aufgaben auf dem Knoten
+      · pids.current der Controller-Einheit 9 von 3466 (unberührt)
+      · Tunnel oben, 0 Fehlerzeilen im Journal
+```
+
+Damit ist der Fall, um den es ging, am **laufenden Dienst** gemessen: eine App, die mehr Aufgaben
+nimmt als erlaubt, wird gebremst, und der Knoten bleibt stehen.
+
+**`cpu.max` fehlt, und der Grund ist gemessen.** `ngc.apps` hat `cpu memory pids` zur Verfügung,
+gibt aber nur `memory pids` nach unten: als `ensureCgroup` beim Start lief, hatte die **Wurzel**
+`cpu` noch nicht freigegeben, und der Elternordner konnte nicht weitergeben, was er nicht hatte.
+Genau die Lage aus dem Nachtrag — und genau darum liegt die Behebung richtig: `pids` und `memory`
+sind **nicht** mit `cpu` untergegangen, die App läuft, und `Held` sagt `cpu=false` statt eine Zusage
+zu machen. Da `ensureCgroup` nur beim `Start` läuft und der erste Start beim Boot liegt, heißt das
+praktisch: **auf dieser Anlage wird `--cpus` nicht durchgesetzt.** Ehrlich gemeldet, nicht
+stillschweigend angefragt — und ein Posten zum Bauen (unten).
+
+**Und ein Fehler des Messenden, der dieselbe Zusage zum dritten Mal bestätigt.** Nach der
+Fork-Probe wurde der Container von Hand neu gestartet (`podman restart` als App-Benutzer, aus einer
+ssh-Sitzung), um die Zombies loszuwerden — der echte App-Container hat als Prozess 1 `ngc-hold`,
+und das erntet keine Waisen. Danach saß er in `/user.slice/user-0.slice/session-8.scope`, der cgroup
+**des Aufrufers**: die App lief ungebremst, weil ein Neustart von Hand sie aus ihrer Decke holt.
+Repariert als root, ohne Neustart der Maschine:
+
+```
+echo <conmon-pid> > /sys/fs/cgroup/ngc.apps/ngc-terminal-439982dd/cgroup.procs
+echo <container-pid> > ...
+  ->  /proc/2203/cgroup = /ngc.apps/ngc-terminal-439982dd, pids.max 512, memory.max 268435456
+```
+
+Daraus zwei Dinge: **root darf einen laufenden Prozess nachträglich eintragen** (der App-Benutzer
+darf es nicht, Punkt 101 oben) — ein halb verlorener Container ist also reparierbar. Und: **jeder
+Griff an einen Container, der nicht durch den Controller geht, hebt seine Decke auf.** Das gehört in
+die Betriebsanleitung, nicht in den Quelltext.
+
+Zum dritten Mal in derselben Messreihe hat außerdem ein gewöhnliches `podman exec` seine Aufgaben
+in die cgroup des Aufrufers gelegt und dabei ausgesehen wie „die Grenze trägt nicht" (600 gestartet,
+`pids.current` 7). Es ist jedes Mal das Messwerkzeug gewesen, nie der Riegel — und es ist der Grund,
+warum `CLONE_INTO_CGROUP` im Code auch in `Exec` steht.
+
+### Und auf `svc-1`, mit zwei Apps nebeneinander — 30.10.2026, 14:08 UTC
+
+Dasselbe eingespielt (0.3.0, `87a0f341…`, die laufende **0.2.2** liegt als
+`ngc-controller.vor-haertung` daneben) und die Maschine neu gestartet. `svc-1` trägt zwei Apps, und
+das ist der Grund, es dort zu wiederholen: die zweite ist die App **ohne** `needs:["root"]`.
+
+| | Terminal (uid 999) | Uhr (uid 995) |
+|---|---|---|
+| cgroup | `/ngc.apps/ngc-terminal-439982dd` | `/ngc.apps/ngc-uhr-ad8c00e2` |
+| `pids.max` | **512** | **512** |
+| `memory.max` | **268435456** | **268435456** |
+| `memory.swap.max` | **0** | **0** |
+| `cpu.max` | Datei gibt es nicht | Datei gibt es nicht |
+| `cgroup.procs` | `745 747` | `787 789` |
+| `EffectiveCaps` | 11 | **0** |
+| `podman inspect` sagt | 512 / 268435456 | 512 / 268435456 |
+
+Drei Dinge daran sind neu:
+
+1. **Zwei Apps, zwei Decken.** Jede sitzt in ihrem eigenen Zweig; keine zählt gegen die andere.
+2. **Der Posten aus Punkt 95 ist zusammengeführt:** `--cap-drop ALL` (Uhr: **null** Fähigkeiten)
+   und die Mengen-Grenzen liegen **gleichzeitig** an derselben Maschine an. Punkt 95 konnte das
+   eine zeigen, Punkt 101 auf `svc-2` das andere.
+3. **`podman inspect` und der Kern sagen jetzt dasselbe.** Vorher war das der Kern des Befundes:
+   `inspect` meldete 512 und 268435456, während der Kern 3466 und `max` hielt. Die Angabe ist von
+   einer Zusage zu einer Begleitung geworden — und sie stimmt.
+
+Die Controller-Einheit hält danach `pids.current` **10 von 3466**, und darin sitzen nur noch der
+Controller selbst und die zwei Pausenprozesse von rootlosem podman. Die Apps sind aus dem geteilten
+Fach heraus.
+
+**Diese Bremse trägt nur, solange die Apps rootlos laufen** — gemessen am 30.10.2026 in WSL
+(podman 5.4.2, cgroup v2): läuft podman als **root**, legt es für den Behälter seine **eigene**
+cgroup an, und der Behälter verlässt `/ngc.apps/<app>` sofort wieder; in der cgroup der App bleibt
+nur, wer sie angelegt hat. Rootloses podman kann das nicht, weil es keine cgroup anlegen darf —
+dieselbe fehlende Delegation, die Punkt 78 als Mangel beschreibt, ist hier die Ursache dafür, dass
+der Riegel hält. Wer die Apps je mit Wurzelrechten starten lässt, nimmt ihnen damit auch die Decke,
+und `podman inspect` sagt es nicht.
+
+**`cpu.max` fehlt auf beiden Knoten, aus derselben gemessenen Ursache** (die Wurzel gibt `cpu` beim
+Boot noch nicht nach unten). Zwei Knoten, dieselbe Zahl: das ist damit keine Eigenheit einer
+Maschine, sondern die Lage dieser Anlage.
+
+**Was diese Messung NICHT zeigt:** beide Apps tragen dieselben zwei Zahlen, und das sind die
+Vorgaben des Vertrags (`store.DefaultCPU`, `store.DefaultMemory`). Am laufenden Dienst ist damit
+**nicht** zu unterscheiden, ob die Decke aus dem jeweiligen Manifest kommt oder aus einer geteilten
+Zahl — dafür bräuchte es eine App mit eigenen Werten im Manifest. Diese Hälfte halten die Fälle
+(`TestTheActivationStartsTheContainerWithTheCeilingOfItsManifest`,
+`TestRestoreStartsAgainWhatRunsOutsideItsOwnLimits`) und die Mutanten 13 und 15.
+
+Auf `svc-1` wurde **keine** Fork- oder Speicherprobe gefahren: um 13:20 UTC hat dort eine andere
+Sitzung eine App-Aktion ausgeführt, der Knoten ist in Benutzung, und die Bremse ist am echten
+Terminal-Container auf `svc-2` schon gemessen. Gemessen ist hier, dass die Grenzen im Kern stehen.
+
+### Was daraus zu bauen wäre (Ergänzung)
+
+5. **`--cpus` wird auf dieser Anlage nicht durchgesetzt**, weil die Wurzel beim Boot `cpu` noch
+   nicht nach unten gibt und `ensureCgroup` nur beim Start danach fragt. Zu entscheiden: ob der
+   Controller es später noch einmal versuchen soll, ob die Einheit `CPUWeight=` tragen soll (das
+   bringt systemd dazu, `cpu` früher freizugeben — **eine Zeile in `ulh`**), oder ob die Zusage
+   `--cpus` fallen soll. Heute ist sie ehrlich gemeldet und nicht durchgesetzt.
+6. **Eine Zeile in der Betriebsanleitung:** ein Container, der nicht durch den Controller gestartet
+   wird, läuft ohne seine Decke. Für den Betrieb heißt das: kein `podman start`/`restart` von Hand.
+7. **Die Entkopplung hat eine Kehrseite, und sie steht in Punkt 102.** Weil die Apps nicht mehr in
+   der cgroup der Einheit sitzen, überleben sie den Tod des Dienstes — und der zurückkommende
+   Controller legt einen zweiten Prozesssatz daneben, weil er sie nicht wiedererkennt. Auf `svc-1`
+   gemessen. Die Zahlen und die Behebung stehen dort, nicht hier.
+
+## Punkt 102: Stirbt der Controller-DIENST, verliert podman seinen Zustand — und bei jedem Start kommt ein Prozesssatz je App DAZU
+
+Gemessen am 30.10.2026 auf `svc-1` und `svc-2`. **Dieser Punkt stand zuerst falsch hier**, und die
+Berichtigung ist ein Teil des Punktes, nicht eine Fußnote darunter: die Behauptung war, eine App
+komme nach einem Dienst-Neustart **nicht** zurück. Sie kommt zurück. Sie kommt zweimal zurück, und
+das ist schlimmer. Was damals falsch gelaufen ist, steht unter „Der Messfehler" — es ist der
+lehrreichste Teil.
+
+**Die Kette, Glied für Glied, so wie sie wirklich läuft:**
+
+1. `ngc-controller.service` trägt `RuntimeDirectory=ngc` und **kein** `RuntimeDirectoryPreserve`.
+   Gemessen an der Anlage: `systemctl show -p RuntimeDirectoryPreserve --value ngc-controller` →
+   `no`. systemd löscht `/run/ngc` beim Stoppen des Dienstes — auch nach einem `kill -9`, ehe es
+   die Einheit wieder hochfährt.
+2. `/run/ngc/<app>` ist das `XDG_RUNTIME_DIR` von rootlosem podman. Darin liegt je Container ein
+   Unterordner `overlay-containers/<id>/userdata`, den podman **beim `create`** anlegt.
+3. Ein `podman start` auf einen leeren Laufordner scheitert an conmon, das dort seine pid-Datei
+   nicht schreiben kann:
+
+   ```
+   conmon: Failed to create ".../userdata/conmon.pid.XXXXXX": No such file or directory
+   Error: unable to start container "<id>": conmon failed: exit status 1
+   ```
+
+4. **Aber dazu kommt es nicht**, denn podman merkt am fehlenden Laufordner, dass es einen neuen
+   Start vor sich hat, und frischt seinen Zustand von selbst auf. Im Journal von `svc-1` steht
+   zweimal `podman … system refresh`, und beide App-Unterordner unter `/run/ngc` tragen danach den
+   Zeitstempel des Dienst-Starts. Der Laufordner ist also wieder da, und die Apps kommen hoch.
+5. Diese Auffrischung setzt jeden Behälter auf **„läuft nicht"** — und das ist der Fehler. Die
+   Prozesse laufen nämlich weiter (siehe unten, sie hängen seit Punkt 101 nicht mehr an der
+   Einheit). Der zurückkommende Controller fragt `podman ps --filter status=running`, bekommt
+   „nichts", und startet. **Daneben.**
+
+**Gemessen auf `svc-1`**, `kill -9` auf den Controller (pid 655) um 17:00:42 UTC, zurück 17:00:47
+als pid 4267 (`RestartSec=5`). Danach, aus `/proc` gelesen und nicht mit `pgrep`, weil die Namen
+doppelt sind:
+
+```
+pid=745  ppid=1  seit 14:08:24  cgroup /ngc.apps/ngc-terminal-439982dd
+pid=787  ppid=1  seit 14:08:24  cgroup /ngc.apps/ngc-uhr-ad8c00e2
+pid=4308 ppid=1  seit 17:00:47  cgroup /ngc.apps/ngc-terminal-439982dd
+pid=4350 ppid=1  seit 17:00:47  cgroup /ngc.apps/ngc-uhr-ad8c00e2
+
+/sys/fs/cgroup/ngc.apps/ngc-uhr-ad8c00e2/cgroup.procs = 787 789 4350 4352
+pids.current = 14
+```
+
+14:08:24 ist die Uhrzeit, zu der Punkt 101 auf `svc-1` eingespielt wurde: **das sind die Container
+von damals, und sie haben den Schlag überlebt.**
+
+**Und es sind nicht zwei Behälter.** Beide Wächter tragen dieselbe Behälter-Kennung
+(`f42bcd313a5e…08a6b410`), `containers.json` kennt genau **einen** Behälter dazu, und das Abbild
+ist in beiden dasselbe (1.0.1, Schicht `overlay/4500702b93a7`). Es ist **ein Behälterdatensatz mit
+zwei laufenden Prozesssätzen** — zwei Wächter, zwei `ngc-hold`, dazu ein `catatonit -P`. Daraus
+folgen drei Dinge, und jedes einzelne ist wichtiger als der Zählfehler:
+
+- **Wer nach doppelten Behältern sucht, findet nichts.** `podman ps` und `containers.json` zeigen
+  einen Behälter, und das ist richtig. Nur die cgroup `/ngc.apps/<app>` zeigt die zwei Sätze. Ein
+  Abgleich muss die **Prozesse** zählen, nicht die Behälter.
+- **`Stop` erreicht den Alten nicht.** podman kennt nur den Satz, auf den sein Datensatz zeigt; der
+  andere hängt an `ppid=1` und an keiner Verwaltung. Damit greift auch die Wand, die Punkt 101 in
+  `Start` gebaut hat, hier nicht: sie ruft `Stop`, und das ist podman.
+- **Zwei `ngc-hold` schreiben auf denselben Datenordner.** Bei der Uhr ist das harmlos (ein
+  Zähler). Bei einer App mit einer Datenbank darin ist es ein Weg zu beschädigten Daten. Der
+  gemeinsame Ordner ist **gemessen**; der Schaden daran ist **abgewogen**.
+
+**Und es bleibt nicht bei zwei Sätzen: es läuft auf.** Um 17:11:59 UTC, nach einem zweiten Start
+des Controllers um 17:05:58 (`ActiveEnterTimestamp`, MainPID 5552, Fassung 0.3.0), liefen je App
+**drei** `ngc-hold`:
+
+```
+ 747  ngc-terminal  14:08:24      789  ngc-uhr  14:08:24
+4310  ngc-terminal  17:00:46     4352  ngc-uhr  17:00:46
+5595  ngc-terminal  17:05:57     5637  ngc-uhr  17:05:58
+```
+
+`containers.json` kennt weiterhin genau einen Behälter je App. **Jeder Start des Controllers legt
+einen Satz je App dazu; nach n Starts laufen n Sätze.** Drei Folgen:
+
+- Es ist kein einmaliger Schönheitsfehler, sondern ein **Auflaufen ohne Obergrenze**. Eine Maschine,
+  die über Wochen ein paar Mal neu startet, sammelt Prozesssätze, bis der Speicher greift.
+- Und er greift an der falschen Stelle: die überzähligen Sätze teilen die cgroup der App, also
+  trifft ihr Speicher zuerst **die Decke der App** und, wenn `cpu` wie heute nicht nach unten
+  gegeben wird, die Rechenzeit der **ganzen Maschine**. Wer Neustarts erzwingen kann, kann damit
+  Last auflegen: der Punkt ist deshalb nicht nur Stabilität, sondern Sicherheit.
+- Eine Behebung, die „den einen Waisen" behandelt, **übersieht den dritten**. `cgroup.kill` auf
+  `/ngc.apps/<app>` räumt dagegen jeden überzähligen Satz ab, wie viele es auch sind — und das ist
+  der Grund für diese Wahl, nicht die Bequemlichkeit.
+
+**Und nach einer Aktualisierung sind die Waisen über podman nicht mehr erreichbar.** Gemessen auf
+`svc-1` um 18:19 UTC, nachdem die Uhr um 18:18:05 auf 1.0.2 gehoben wurde. Die Ereignisse des
+Tauschs:
+
+```
+18:18:05.432  container died     f42bcd313a5e  (uhr:1.0.1)
+18:18:05.565  container remove   f42bcd313a5e
+18:18:05.622  container create   5ec5da237f4b  (uhr:1.0.2)
+18:18:05.682  container start    5ec5da237f4b
+```
+
+`containers.json` kennt danach **nur** `5ec5da237f4b`. Der Datensatz der 1.0.1 ist **gelöscht** —
+und ihre Prozesse 789 und 4352 laufen weiter. Damit findet sie **kein** `podman ps`, **kein**
+`podman stop`, **kein** `podman rm`: es gibt keinen Behälter mehr, auf den sich ein solcher Befehl
+beziehen könnte. Nur ein `kill` auf die Prozessnummer oder ein Neustart der Maschine räumt sie.
+
+**Das entscheidet die Wahl des Werkzeugs**, und nicht die Bequemlichkeit: eine Behebung, die über
+podman aufräumt — die naheliegende — würde die heute bestehenden Waisen auf **jeder** Maschine
+stehen lassen und auf einer frischen Maschine grün aussehen. `cgroup.kill` auf
+`/ngc.apps/<app>` setzt an den **Prozessen** an und trifft sie darum.
+
+**Und seit diesem Tausch laufen zwei verschiedene FASSUNGEN auf einem Datenordner.** Die Prozesse
+789 und 4352 fahren 1.0.1 (Schicht `4500702b93a7`, Programm-Prüfsumme `1846f6d3a4cf`), Prozess 7321
+fährt 1.0.2 (`24dc2ae6a07f`, `74792027b62f`) — alle drei in `/ngc.apps/ngc-uhr-ad8c00e2`,
+`pids.current = 21`, alle auf `/var/lib/ngc/apps/org.sorglos.uhr`. Aus „zwei Schreiber auf
+denselben Dateien" ist damit **zwei verschiedene Programmfassungen auf einem Datenbestand**
+geworden, und das ist das stärkste Argument, das dieser Befund hat: ein Datenbestand, den eine
+ältere Fassung weiterschreibt, während die neue ihn umbaut, ist nicht reparierbar, sondern nur noch
+wiederherstellbar.
+
+**Ein Nebenbefund, der sich am ersten festhält:** Schicht `4500702b93a7` ist von zwei laufenden
+Prozessen gemountet, also lässt sich das Abbild der 1.0.1 **nicht löschen** — der Abbild-Haufen (3
+Abbilder, 97 MB) ist nicht einmal von Hand aufzuräumen, solange Waisen laufen. Zwei Fehler, die
+sich gegenseitig halten.
+
+**Die Ursache im Quelltext, mit Zeilen.** Der Entschluss hängt an einer einzigen Zahl, und die
+kommt aus podmans eigener Datenbank:
+
+```
+runtime/podman.go:461   ps --quiet --no-trunc --filter name=^<app>$ --filter status=running
+node/restore.go:208     up, err := c.Engine.Running(ctx, name)
+node/restore.go:222     if up && !c.hasCgroup(name) { ... up = false }
+node/restore.go:232     if !up { Start(ctx, name, limitsOf(a)) }
+```
+
+Zeile 222 ist der Zweig aus Punkt 101, und er ist der falsche Weg herum: er fängt „läuft, aber ohne
+Decke" und setzt `up == true` voraus. Hier ist `up` falsch, obwohl der Container läuft, also greift
+er nie. Der Widerspruch ist aber schon heute **messbar**, mit einer Funktion aus Punkt 101:
+`runtime.HasCgroup(name)` ist wahr, sobald `cgroup.procs` eine Aufgabe hält — beim Waisen also
+wahr, während `Running` falsch sagt. Diese zwei Zahlen gegeneinander sind der Melder, der fehlt.
+
+**Dass die Auffrischung podmans eigene ist und nicht die des Controllers**, ist belegt und nicht
+gemessen: über alle `.go`-Dateien gesucht, kein Treffer auf `system refresh`. Die Prüfung, die es
+härter machen würde, wäre `podman ps -a` auf den Waisen (`Exited` oder `Created`); sie ist nicht
+gefahren, weil sie an der Behebung nichts entscheidet.
+
+**Ein Nebenbefund über `/run/ngc`, der beim Suchen nach dem richtigen ulh-Zweig anfiel.** Die
+Einheit sagt `RuntimeDirectoryMode=0700`, die Anlage zeigt `stat -c %a /run/ngc` → `711`. Beide
+sagen die Wahrheit: systemd legt das Verzeichnis mit 0700 an, und der Controller zieht es beim
+ersten `EnsureRun` unbedingt auf 0711 (`runtime/run.go:76`, mit Begründung im Kommentar — was dort
+steht, wird nicht geglaubt, es wird gesetzt). Die Einheit sagt also, was systemd tut, und `stat`,
+was danach gilt. **Wer aus einem Dateimodus auf eine Herkunft schließt, liest das Ergebnis eines
+Dritten** — als Kennzeichen dafür, welche Fassung aufgespielt ist, taugt er nicht.
+
+### Der Messfehler — warum dieser Punkt zuerst das Gegenteil behauptete
+
+Die erste Fassung hat die Kette in **WSL** nachgestellt (Debian, podman 5.4.2 wie auf den Knoten,
+eigener `--root`/`--runroot`, Abbild aus `FROM scratch`) und dort gemessen: Container anhalten,
+Laufordner löschen, `podman start` → scheitert an conmon, die App bleibt unten. Das war richtig
+gemessen und falsch verallgemeinert: **das Nachstellen hat Glied 4 ausgelassen**, podmans eigene
+Auffrischung, also genau das Glied, das die Kette heilt. Eine Kette ohne das Glied, das sie heilen
+könnte, ist keine Messung der Kette.
+
+Dazu wird ein **zweiter** Satz aus derselben Runde berichtigt, auf den niemand gestoßen war: „eine
+pid, ein conmon, **kein zweiter Container**". Er galt nur **ohne** Auffrischung — dort behielt
+podman seinen Zustand und gab beim `start` dieselbe pid. Mit Auffrischung ist der Zustand weg, und
+genau dann entsteht der zweite Prozesssatz. Der Satz war nicht falsch gemessen, aber zu weit
+aufgeschrieben.
+
+Die Lehre gilt über diesen Punkt hinaus und steht in `claude-md/messen.md`: wer einen Messfehler
+findet, prüft **alles**, was aus derselben Runde stammt, nicht nur den Satz, auf den er gestoßen
+wurde. Und: ein Nachbau in einer anderen Umgebung darf nur über die Umgebung sprechen, in der er
+lief — hier hätte „in WSL bleibt sie unten" dagestanden, nicht „sie bleibt unten".
+
+### Was Punkt 101 daran geändert hat, und warum das gut und schlecht ist
+
+`KillMode` der Einheit ist `control-group` mit `SendSIGKILL=yes`, und **vor** Punkt 101 saßen die
+App-Container in der cgroup der Einheit (Punkt 72, Befund 1). Gemessen auf `svc-2`: `cgroup.procs`
+der Einheit hielt `658 724 746 748` — Controller, catatonit, conmon und den Haltevorgang. Ein
+Dienst-Tod nahm die Apps also mit, und beim Hochkommen war nichts da, das doppelt werden konnte.
+
+Seit Punkt 101 sitzen sie in `/ngc.apps/<app>` und überleben den Dienst-Tod — an `svc-1` jetzt
+gemessen, vorher nur abgewogen. **Das ist die gute Seite und die Ursache der Verdoppelung
+zugleich:** die Entkopplung ist richtig, aber Punkt 101 hat keinen Abgleich beim Hochkommen
+mitgebracht. Die Verdoppelung ist damit eine Folge von Punkt 101 und wird von demselben Strang
+behoben, der sie gebaut hat.
+
+### Was daraus zu bauen wäre
+
+1. **`RuntimeDirectoryPreserve=yes` an `ngc-controller.service`** — die Ursache. Dann stirbt der
+   Laufordner nicht, podman frischt nicht auf, der Zustand bleibt, und es gibt nichts zu
+   verdoppeln. Eine Zeile, und sie steht in **`ulh`**, nicht in diesem Repo (`shared/ulh.md`: die
+   Einheit schreibt `ngc-controller.sh`, und die Datei sagt selbst „Never edit by hand").
+   **BLOCKIERT**, wie `Delegate=` in Punkt 101. Thomas' Entscheidung. Welcher ulh-Zweig auf der
+   Anlage liegt, ist dabei zuerst zu klären: die aufgespielte Einheit sagt
+   `RuntimeDirectoryMode=0700` und entspricht damit dem Text von `origin/ngc-all`, nicht dem von
+   `origin/ngc-skripte` (0711 samt Kommentarblock). Ein Dateimodus taugt dafür **nicht** als
+   Kennzeichen: `/run/ngc` steht auf 711, weil der Controller es selbst dorthin zieht
+   (`runtime/run.go:76`, unbedingt und mit Begründung). Es gibt außerdem einen unfertigen Zweig
+   `haertung-delegate`, Stand `e10f141`, der `Delegate=yes` und `DelegateSubgroup=supervisor` in
+   dieselbe Datei schreibt; an ihm arbeitet niemand, er ist keine Ankündigung.
+2. **Der Abgleich beim Hochkommen, und zwar auch dann, wenn Posten 1 kommt.** Widerspruch erkannt
+   (`cgroup.procs` hält Aufgaben, `Running` sagt „läuft nicht") → `cgroup.kill` schreiben, warten
+   bis `cgroup.procs` leer ist, dann **ein** `Start` mit Decke. An den Prozessen angesetzt, weil
+   die Behälterliste den Fehler nicht zeigt (oben). Vor dem Start, nicht danach — dann gibt es nie
+   zwei Sätze und also keine Wahl zwischen ihnen.
+   Abgewogen gegen den milderen Weg, den Waisen zu **übernehmen**: der lässt eine App als gesund
+   gelten, über die der Controller nichts mehr weiß und die er nicht anhalten kann — genau der halb
+   funktionierende Zustand, den die Rangfolge über einen abreißenden Anschluss stellt. Der Abriss
+   trifft nur den Fall, in dem der Controller ohnehin gerade hart gestorben ist.
+   **Abnahme, zwei Zahlen und nicht eine:** `pgrep -c -u <app-benutzer> ngc-hold` muss über
+   **mindestens drei** Neustarts des Controllers hinweg `1` bleiben **und mit der Zahl der
+   Einträge in `containers.json` übereinstimmen**. Heute stehen dort 3 gegen 1, und die
+   **Abweichung** ist der Fehler, nicht die 3 für sich: eine Maschine mit drei Behältern und drei
+   Prozesssätzen ist gesund. Ein Fehler, der linear wächst, wird mit einem einzigen Neustart
+   ohnehin nicht widerlegt.
+   **Die Vorbedingung dafür ist gemessen, und sie ist NICHT erfüllt.** Am 30.10.2026 in WSL
+   (podman 5.4.2 wie auf den Knoten, eigener Speicher, eigener Benutzer): „die cgroup hält
+   Aufgaben" und „podman sagt: läuft nicht" stehen im **gewöhnlichen Betrieb** zusammen — bei
+   jedem Stopp (`podman stop` setzt den Zustand sofort, die Aufgaben leben weiter, bis der
+   Behälter aus ist), bei jedem Start (die erste Aufgabe ist in der cgroup, ehe podman „läuft"
+   sagt, ~56 ms und damit an der Auflösung der Messung), und in der Aktualisierung, die den Stopp
+   enthält. Gemessen ist die **Existenz** des Fensters, nicht seine Länge: das Prüfabbild hatte
+   als Prozess 1 ein `sleep` ohne SIGTERM-Behandler und starb erst am SIGKILL nach der Frist,
+   `ngc-hold` stirbt sofort. Die Obergrenze ist die Stopp-Frist von 10 s.
+   **Ein Melder aus einem einzigen Hinsehen würde also bei jedem Stopp zuschlagen und ist damit
+   schlimmer als der Fehler.** Vorgeschlagen und noch nicht entschieden: **zweimal hinsehen mit
+   Abstand** — ein Stopp ist nach seiner Frist vorbei und die cgroup leer, ein Waise bleibt (auf
+   `svc-1` über Stunden). Der Widerspruch, der nach einer Wartezeit länger als die Stopp-Frist noch
+   steht, ist kein Betriebszustand. Beim Hochkommen kostet das Warten niemanden etwas.
+3. **Reparatur eines schon verdoppelten Knotens** ist Betrieb, nicht Quelltext, und die Regel
+   dafür ist bestimmbar: **behalte den Satz, auf den podmans Datensatz zeigt, beende jede andere
+   Aufgabe in der cgroup.** Nicht „den gesunden" — welcher gesund ist, kann niemand messen; welcher
+   steuerbar ist, steht fest.
+4. **Der Updater geht genau diesen Weg.** Ein Update, das das Programm tauscht und den Dienst neu
+   startet, ohne die Maschine neu zu starten, verdoppelt jede App dieses Knotens. Punkt 1 des
+   Buches („Der Updater ist nicht angeschlossen") bekommt damit eine Bedingung, die vorher niemand
+   aufgeschrieben hatte — und sie ist nach der Berichtigung schärfer, nicht milder: vorher hätte er
+   Apps heruntergenommen, jetzt lässt er zwei Schreiber auf einem Datenordner zurück.
+5. **Eine Zeile in der Betriebsanleitung:** wer den Controller eines Knotens neu starten will,
+   startet die Maschine neu. `systemctl restart ngc-controller` ist auf dieser Anlage kein
+   harmloser Griff — aus einem anderen Grund als zuerst hier stand, aber er ist es.
+
+### Zwei Fallen beim Messen an diesem Punkt
+
+- **Der App-Ordner heißt nach der APP, nicht nach dem Benutzer:**
+  `/var/lib/ngc/apps/org.sorglos.uhr/`, Eigentümer `ngc-uhr-ad8c00e2`. Wer auf den Benutzernamen
+  geht, bekommt keinen Fehler, sondern „nichts da" — ein falscher Freispruch.
+- **`podman` als root an den App-Speicher zu lassen, verändert den Messgegenstand:** es legt
+  Sperrdateien an und fasst die sqlite-Datenbank im Speicher an. Solange Waisen als Beweis stehen:
+  nur lesen, über `/proc/<pid>/mountinfo`, `/proc/<pid>/root/...` und die drei JSON-Dateien.
+
+**Getrennt gehalten.** Gemessen sind: `RuntimeDirectoryPreserve=no`, `KillMode=control-group`, die
+`cgroup.procs` der Einheit vor Punkt 101, die conmon-Meldung samt Pfad, das Scheitern von
+`podman system migrate`, die vier Prozesse samt Zeitstempeln und cgroups auf `svc-1`, die drei Sätze je App nach dem zweiten Start, die
+gemeinsame Behälter-Kennung, das gemeinsame Abbild, die zwei `system refresh` im Journal, der neue
+Zeitstempel von `/run/ngc`, und die vier Zeilen Quelltext. Abgewogen sind: dass zwei Schreiber die
+Daten beschädigen, dass die Auffrischung podmans eigene ist, die Folge für den Updater und jede
+Zeile der Bauliste. Gemessen, aber in WSL und nicht an der Anlage: dass der Melder im Normalbetrieb
+NICHT ruhig bleibt, und dass die Bremse aus Punkt 101 nur rootlos trägt. Nicht gemessen ist die
+LÄNGE des Fensters mit einem Prozess 1, der SIGTERM behandelt.

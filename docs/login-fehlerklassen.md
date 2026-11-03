@@ -359,3 +359,54 @@ ist es **nicht**: derselbe Lauf mit eigenem `TEMP` gibt dieselben Zahlen
 **Fallnamen** übernehmen, nie die Zeilennummern. Eine Zeilennummer aus Playwright
 in diesem Prüfsatz zeigt auf nichts. Die Ursache ist nicht gemessen und bleibt
 offen.
+
+## Was auf welcher Engine gemessen ist – und was nur so aussieht
+
+Gemessen am 03.11.2026, `shell/login.spec.js` und `shell/testdoor.spec.js`,
+Port 8261/8262 (vorher beide `listen=0`, 0 Sockets), Bereitschaft vorher mit
+`--list`: 44 Fälle in zwei Dateien, also 22 je Engine.
+
+| Engine | bestanden | rot | übersprungen |
+|---|---|---|---|
+| chromium | 22 | 0 | 0 |
+| firefox | 6 | 0 | 16 |
+| webkit | 1 | 0 | 21 |
+
+Ausstiegscode 0 in beiden Läufen.
+
+**Die Null in der roten Spalte heißt hier nicht grün, sie heißt unbeobachtet.**
+Nichts ist gefallen, weil fast nichts gelaufen ist. Zwei Sätze, die man aus der
+Tabelle allein nicht liest:
+
+- Auf **webkit läuft einer von 22**, und das ist der Gegenfall aus
+  `shell/testdoor.spec.js`, der die Dateien liest und keinen Browser startet.
+  Die Anmeldemaske ist auf webkit **vollständig** unbeobachtet.
+- **Die drei `break=`-Fälle und ihre Kontrolle sind auf beiden Engines
+  übersprungen.** Die Abdeckung, die dieses Blatt beschreibt, ist
+  chromium-only. Wer das später als „auf drei Engines geprüft" liest, liest
+  etwas, das nicht gemessen wurde.
+
+### Woran die Überspringungen hängen, abgefragt statt erraten
+
+Nicht aus den Überspringungen geschlossen, sondern mit dem dokumentierten
+Einzeiler aus `apps/web/tests/fixtures/page.js:332` abgefragt (eigene Sonde,
+nach dem Lauf gelöscht). Reihenfolge wie in `playwright.config.js:114–116`:
+
+| Engine | Lücke |
+|---|---|
+| chromium | alle sechs leer |
+| firefox | `ed25519FromSeed`: Ed25519 public half out of a PKCS#8 seed: `OperationError`<br>`x25519FromDocument`: X25519 public half out of a PKCS#8 document: `OperationError` |
+| webkit | `curves`, `ed25519`, `ed25519FromSeed`, `x25519`: Ed25519 `generateKey`: `NotSupportedError` |
+
+Das sind **zwei verschiedene Ursachen hinter derselben Überspringung**: firefox
+*kann* Ed25519 und scheitert am öffentlichen Halbteil aus einem
+PKCS#8-Saatgut; webkit kann `generateKey` überhaupt nicht. Wer nur
+„übersprungen" liest, hält es für eine Ursache.
+
+**Benennung, und das ist keine Pedanterie:** gemessen sind die Browser, die
+Playwright mitbringt. Playwrights WebKit ist nicht Safari, und Playwrights
+Firefox ist nicht der Firefox auf dem Schreibtisch – dort funktioniert eine
+Anmeldung per Passkey, die hier übersprungen wird. Beide Sätze sind wahr und
+meinen verschiedene Programme. Ein Satz über „WebKit" oder „Firefox" ohne
+diesen Zusatz ist eine Fehlzuschreibung, und sie ist in diesem Projekt schon
+zweimal vorgekommen.
