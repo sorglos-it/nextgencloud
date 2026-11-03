@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 )
@@ -14,14 +15,62 @@ import (
 const (
 	onceInsert = "INSERT INTO ngc_once (kind, token, data, expires, used) VALUES (?, ?, ?, ?, ?)"
 	onceUse    = "UPDATE ngc_once SET used = ? WHERE kind = ? AND token = ? AND used = ? AND expires > ?"
-	onceRead   = "SELECT data FROM ngc_once WHERE kind = ? AND token = ?"
-	onceState  = "SELECT expires FROM ngc_once WHERE kind = ? AND token = ?"
-	oncePurge  = "DELETE FROM ngc_once WHERE expires <= ?"
+	// onceRead reads the data AND the time it was good until, in one
+	// statement, because OnceUse checks that time a second time in Go after
+	// the UPDATE has decided. See the bolt there for why.
+	onceRead  = "SELECT data, expires FROM ngc_once WHERE kind = ? AND token = ?"
+	onceState = "SELECT expires FROM ngc_once WHERE kind = ? AND token = ?"
+	oncePurge = "DELETE FROM ngc_once WHERE expires <= ?"
 
-	lockTake   = "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ? AND (owner = ? OR until <= ?)"
-	lockInsert = "INSERT INTO ngc_lock (name, owner, until) VALUES (?, ?, ?)"
-	lockFree   = "DELETE FROM ngc_lock WHERE name = ? AND owner = ?"
+	lockTake = "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ? AND (owner = ? OR until <= ?)"
+	lockRow  = "SELECT owner, until FROM ngc_lock WHERE name = ?"
+	// The same read for a database that wants the row held for the write
+	// behind it, see Dialect.RowLock. Two constants and not one put
+	// together: a statement in this package is always readable off the file.
+	lockRowLocked = "SELECT owner, until FROM ngc_lock WHERE name = ? FOR UPDATE"
+	lockInsert    = "INSERT INTO ngc_lock (name, owner, until) VALUES (?, ?, ?)"
+	lockFree      = "DELETE FROM ngc_lock WHERE name = ? AND owner = ?"
 )
+
+// The two answers of the second bolt of LockTake. errLockHeld is no mistake:
+// it means "somebody else holds it", which the method reports as false, and
+// it is an error only so that the transaction rolls the UPDATE back. Without
+// that the row would carry this owner and a deadline nobody is using, and on
+// a column whose comparison refuses everything it would carry them for good.
+// errLockBent is a mistake and is reported: a deadline that is no number
+// means row or column are not what the migrations write, and a lock nobody
+// can judge is worse than a lock nobody gets.
+var (
+	errLockHeld = errors.New("sqlstore: the lock is held by another owner")
+	errLockBent = errors.New("sqlstore: the deadline of the lock is not a number")
+)
+
+// freeForTake judges in Go what lockTake judges in SQL: whether the row that
+// is there lets owner take the lock at now - its own row always, a foreign
+// one only once its deadline has passed.
+//
+// prevOwner and prevUntil are the row as the database handed it over, bytes
+// and not a number, because what the column really holds is what has to be
+// judged: a text where a number belongs is the very case this bolt exists
+// for, and a Scan into an int64 would hand that case to the driver instead of
+// to this function.
+//
+// It knows the same difference lockTake knows, and that is not a nicety.
+// dbapi.Store promises the same owner may take the lock again and move the
+// deadline, rollout.renewLease rests on that, and shared/dbapi/dbtest
+// measures it. A bolt that read "the deadline has passed, so the lock is
+// lost" would break the renewal of exactly the round that took longer than
+// its lease.
+func freeForTake(prevOwner, prevUntil []byte, owner string, now int64) (bool, error) {
+	if string(prevOwner) == owner {
+		return true, nil
+	}
+	until, err := strconv.ParseInt(string(prevUntil), 10, 64)
+	if err != nil {
+		return false, errLockBent
+	}
+	return until <= now, nil
+}
 
 // OnceCreate is one INSERT, and that is what makes it atomic: the primary key
 // decides. Of concurrent calls for the same kind and value exactly one gets
@@ -78,7 +127,47 @@ func (s *store) OnceUse(ctx context.Context, kind string, value []byte, now int6
 			return err
 		}
 		if n > 0 {
-			return tx.QueryRowContext(ctx, onceRead, []byte(kind), blob(value)).Scan(&data)
+			// The second bolt, and the reason it exists is measured, not
+			// feared (30.10.2026, on the encrypted file this part really
+			// opens): the UPDATE above decides with "expires > ?", and that
+			// comparison runs IN SQL. On a database whose expires column
+			// carries another type than the migration gave it, SQLite does
+			// not fail that comparison - it INVERTS it. Measured at the same
+			// row: typeof(expires) reads "text" instead of "integer", and
+			// "expires > 5000" answers 1 where the value is 1000. SQLite
+			// orders every text after every number, so an expired one-time
+			// value matched the UPDATE, and this method handed its data out
+			// with no error anywhere. MariaDB 11.8.6 converts for the
+			// comparison and answered correctly, so this is one database's
+			// behaviour and not a rule of SQL.
+			//
+			// So the time is asked a second time HERE, in Go, where a wrong
+			// column type cannot turn a comparison around: Scan reads the
+			// text back into an int64 losslessly, and the three other places
+			// that compare a time in Go (ngc_user.locked, ngc_session.expires
+			// and the branch below) all held in the same measurement. A bolt
+			// in SQL can be inverted by the schema; a bolt in Go cannot.
+			//
+			// It is a SECOND bolt and not a replacement: the UPDATE keeps the
+			// deciding, so OnceUse is still spent by the write that hands it
+			// out and nothing was moved in front of it. There is deliberately
+			// no check BEFORE the UPDATE -
+			// TestOnceUseDecidesWithItsWrite reads this source and refuses
+			// one, and TestOnlyOneUseGetsTheValue measures with 32 racers why.
+			//
+			// Returning the error rolls the mark back (see write), so the
+			// value stays unused. That is sound rather than generous: this
+			// bolt rejects the same row on every later call too, so a value
+			// it caught can never be handed out, marked or not.
+			var expires int64
+			if err := tx.QueryRowContext(ctx, onceRead, []byte(kind), blob(value)).Scan(&data, &expires); err != nil {
+				return err
+			}
+			if expires <= now {
+				data = ""
+				return dbapi.ErrNotFound
+			}
+			return nil
 		}
 		// Why it matched nothing. The used column is not read: the UPDATE
 		// above asked for a row that is unused and in time, so a row it did
@@ -120,6 +209,19 @@ func (s *store) OncePurge(ctx context.Context, now int64) error {
 // the two apart, and a broken key means the row is there after all and
 // somebody else holds it.
 //
+// The deadline is judged a SECOND time, in Go, over the row the UPDATE
+// overwrote (freeForTake). The UPDATE is untouched by that: it still decides
+// alone who writes, and the bolt only decides whether that write is kept.
+// Why it is there although the SQL already says it: every database compares
+// differently, and a comparison that is not numeric does not fail, it says
+// the opposite. Measured on 03.11.2026 against SQLite and MariaDB 11.8.6
+// (docs/schloss-ablauf-riegel.md): with the "until <= ?" of today a bent
+// column always refuses too MUCH, so this bolt cannot fire on it - it is
+// aimed at the line that reads more naturally and would be written some day,
+// "until > ?" for "held". With that line and without this bolt a second
+// owner gets the lock on both databases, at a perfectly correct column; with
+// it, he does not.
+//
 // That the same owner may take it again with the very same time rests on the
 // driver counting matched rows and not changed ones, the same as put. On
 // MariaDB that is the ClientFoundRows flag of the DSN; no MariaDB connection
@@ -134,6 +236,35 @@ func (s *store) LockTake(ctx context.Context, name, owner string, now, until int
 	took := false
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		took = false
+		// The row the UPDATE is about to overwrite, read in the same
+		// transaction, so that what Go judges is what the UPDATE acted on.
+		// It is read BEFORE the UPDATE because afterwards it is gone, and
+		// judged AFTER it, because only a hit has to be justified.
+		//
+		// That a neighbour may write between the two cannot turn a refusal
+		// into a take, and that rests on one property of the deadlines: no
+		// writer of ours ever lowers one. LockTake refuses an until at or
+		// below now and the migration runner writes now+lockFor, so while
+		// now stands still a row of ours cannot go from "held" to "expired".
+		// A neighbour can therefore only make the UPDATE match LESS, and a
+		// row it changed under us ends in n == 0, where this bolt is not
+		// asked at all. A deadline lowered from outside - a row changed by
+		// hand - can make this bolt refuse a take the UPDATE allowed, which
+		// is one lock not taken and the safe of the two mistakes.
+		var prevOwner, prevUntil []byte
+		var err error
+		hadRow := true
+		if s.d.RowLock() {
+			err = tx.QueryRowContext(ctx, lockRowLocked, []byte(name)).Scan(&prevOwner, &prevUntil)
+		} else {
+			err = tx.QueryRowContext(ctx, lockRow, []byte(name)).Scan(&prevOwner, &prevUntil)
+		}
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			hadRow = false
+		case err != nil:
+			return err
+		}
 		res, err := tx.ExecContext(ctx, lockTake, []byte(owner), until, []byte(name), []byte(owner), now)
 		if err != nil {
 			return err
@@ -143,6 +274,18 @@ func (s *store) LockTake(ctx context.Context, name, owner string, now, until int
 			return err
 		}
 		if n > 0 {
+			// The second bolt. The UPDATE has already written, so a refusal
+			// here has to take the write with it: the error rolls the
+			// transaction back, and the row stands as it stood.
+			if hadRow {
+				free, err := freeForTake(prevOwner, prevUntil, owner, now)
+				if err != nil {
+					return err
+				}
+				if !free {
+					return errLockHeld
+				}
+			}
 			took = true
 			return nil
 		}
@@ -155,6 +298,12 @@ func (s *store) LockTake(ctx context.Context, name, owner string, now, until int
 		took = true
 		return nil
 	})
+	if errors.Is(err, errLockHeld) {
+		// The one error that is an answer: the bolt refused, the UPDATE is
+		// rolled back, and the caller hears what he would have heard from a
+		// database whose comparison had held.
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}

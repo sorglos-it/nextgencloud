@@ -163,20 +163,32 @@ const (
 	// the program.
 	holdLock    = "SELECT until FROM ngc_lock WHERE name = ? AND owner = ?"
 	selectUntil = "SELECT until FROM ngc_lock WHERE name = ?"
-	selectState = "SELECT step, done FROM ngc_schema WHERE version = ?"
-	selectLevel = "SELECT version FROM ngc_schema WHERE done = ? ORDER BY version DESC"
-	insertState = "INSERT INTO ngc_schema (version, step, done, applied) VALUES (?, ?, ?, ?)"
-	updateStep  = "UPDATE ngc_schema SET step = ? WHERE version = ?"
-	updateDone  = "UPDATE ngc_schema SET step = ?, done = ?, applied = ? WHERE version = ?"
-	takeLock    = "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ? AND until <= ?"
-	insertLock  = "INSERT INTO ngc_lock (name, owner, until) VALUES (?, ?, ?)"
-	freeLock    = "DELETE FROM ngc_lock WHERE name = ? AND owner = ?"
+	// The same read for a database that wants the row held for the write
+	// behind it, see sqlstore.Dialect.RowLock. Two constants and not one put
+	// together, so that every statement stays readable off this file.
+	selectUntilLocked = "SELECT until FROM ngc_lock WHERE name = ? FOR UPDATE"
+	selectState       = "SELECT step, done FROM ngc_schema WHERE version = ?"
+	selectLevel       = "SELECT version FROM ngc_schema WHERE done = ? ORDER BY version DESC"
+	insertState       = "INSERT INTO ngc_schema (version, step, done, applied) VALUES (?, ?, ?, ?)"
+	updateStep        = "UPDATE ngc_schema SET step = ? WHERE version = ?"
+	updateDone        = "UPDATE ngc_schema SET step = ?, done = ?, applied = ? WHERE version = ?"
+	takeLock          = "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ? AND until <= ?"
+	insertLock        = "INSERT INTO ngc_lock (name, owner, until) VALUES (?, ?, ?)"
+	freeLock          = "DELETE FROM ngc_lock WHERE name = ? AND owner = ?"
 )
 
 // errLockLost says that the run no longer holds the migration lock. It is the
 // one answer to every way that can happen: the time ran out and another
 // server took over, or somebody deleted the row.
 var errLockLost = errors.New("the lock of the migrations is no longer ours: another server has taken it over")
+
+// errLockBent says the deadline in ngc_lock cannot be read as a number, so
+// the second bolt of take cannot judge it. It is its own sentence because it
+// says something else than every other answer here: not "somebody else is
+// migrating" and not "the connection broke", but "this row or this column is
+// not what the migrations write". Whoever reads it in a journal should look
+// at the table, not for a second server.
+var errLockBent = errors.New("the lock of the migrations carries a deadline that is no number")
 
 // querier is what hold needs of a database or of a transaction. Inside a
 // transaction it asks through the transaction, so the answer comes from the
@@ -386,8 +398,55 @@ func busyOr(d sqlstore.Dialect, err error, step string) error {
 // costs is a node that restarts inside the 900 seconds and has to wait them
 // out, with a message that says so; the runner cannot tell that restart from
 // a second process, and waiting is the safe reading of the two.
+//
+// The deadline is judged a SECOND time, in Go, over the row the UPDATE
+// overwrote. The UPDATE is untouched by that and still decides alone who
+// writes; the bolt only decides whether that write is kept. Why it is there
+// although the SQL already says it: every database compares differently, and
+// a comparison that is not numeric does not fail, it says the opposite. The
+// measurement is in docs/schloss-ablauf-riegel.md - with the "until <= ?" of
+// today a bent column always refuses too MUCH, so this bolt cannot fire on
+// it; it is aimed at the line that reads more naturally and would be written
+// some day, "until > ?" for "held". With that line and without this bolt two
+// servers write DDL into one schema at the same time.
+//
+// That is also why the three statements now live in one transaction, which
+// they did not before: a refusal has to take the UPDATE back with it. Without
+// that the row would carry this run's name and a deadline nobody is using,
+// and on a column whose comparison refuses everything it would carry them for
+// good - the lock would be lost to every later run instead of for 900
+// seconds. The transaction is the rollback, nothing more: the UPDATE still
+// decides, as before.
 func take(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, now int64) (bool, error) {
-	res, err := db.ExecContext(ctx, takeLock, []byte(owner), now+lockFor, []byte(lockName), now)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	// Every way out of this function but a Commit gives the lock back
+	// untouched. After a Commit this is a no-op.
+	defer tx.Rollback()
+
+	// The row the UPDATE is about to overwrite, read in the same transaction,
+	// and held where the database wants it held (sqlstore.Dialect.RowLock,
+	// measured against MariaDB 11.8.6: without FOR UPDATE a read in front of
+	// the write answers "Error 1020: Record has changed since last read").
+	// It is read BEFORE the UPDATE because afterwards it is gone, and judged
+	// AFTER it, because only a hit has to be justified.
+	var prevUntil []byte
+	hadRow := true
+	if d.RowLock() {
+		err = tx.QueryRowContext(ctx, selectUntilLocked, []byte(lockName)).Scan(&prevUntil)
+	} else {
+		err = tx.QueryRowContext(ctx, selectUntil, []byte(lockName)).Scan(&prevUntil)
+	}
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		hadRow = false
+	case err != nil:
+		return false, err
+	}
+
+	res, err := tx.ExecContext(ctx, takeLock, []byte(owner), now+lockFor, []byte(lockName), now)
 	if err != nil {
 		return false, err
 	}
@@ -396,20 +455,58 @@ func take(ctx context.Context, db *sql.DB, d sqlstore.Dialect, owner string, now
 		return false, err
 	}
 	if n > 0 {
-		return true, nil
+		// The second bolt. Held means held, whoever holds it: the name in the
+		// row is not even looked at, unlike in dbapi.LockTake, and that
+		// difference is deliberate - do not align the two. LockTake lets the
+		// same owner take its lock again because rollout.renewLease needs
+		// exactly that, and the contract says so. This lock is the one that
+		// keeps two servers from writing DDL side by side, and the runner
+		// hands every run a part of its own in the name (runOwner), so a
+		// second run can never present the first one's. Here taking it twice
+		// is worse than waiting, and that is the whole reason the owner is
+		// left out of the question.
+		if hadRow {
+			free, err := passed(prevUntil, now)
+			if err != nil {
+				return false, err
+			}
+			if !free {
+				return false, nil // the deferred Rollback takes the UPDATE back
+			}
+		}
+		return true, tx.Commit()
 	}
 	// Nothing changed: either the lock is held and the time has not passed,
 	// or there is no row yet. The INSERT tells the two apart - a duplicate
 	// means the row is there. Every other error is the runner's own and is
 	// reported, because a connection that broke must not read as "somebody
 	// else is migrating".
-	if _, err := db.ExecContext(ctx, insertLock, []byte(lockName), []byte(owner), now+lockFor); err != nil {
+	if _, err := tx.ExecContext(ctx, insertLock, []byte(lockName), []byte(owner), now+lockFor); err != nil {
 		if !d.Duplicate(err) {
 			return false, err
 		}
 		return false, nil
 	}
-	return true, nil
+	return true, tx.Commit()
+}
+
+// passed reports whether the deadline in the row has gone by at now. It takes
+// the column as bytes and not as a number on purpose: what the column really
+// holds is what has to be judged here, a text where a number belongs is the
+// case this bolt exists for, and a Scan into an int64 would hand that case to
+// the driver - a different error on every database - instead of to this one
+// sentence.
+//
+// A deadline that is no number is not "expired" and not "running": it is a
+// row or a column that is not what the migrations write, and a lock nobody
+// can judge is worse than a lock nobody gets. So it is an error, and Apply
+// reports it instead of writing DDL next to whoever may be holding it.
+func passed(until []byte, now int64) (bool, error) {
+	n, err := strconv.ParseInt(string(until), 10, 64)
+	if err != nil {
+		return false, fmt.Errorf("the deadline of the lock is not a number: %w", errLockBent)
+	}
+	return n <= now, nil
 }
 
 // applyOne runs one migration. SQLite keeps its DDL inside a transaction, so
