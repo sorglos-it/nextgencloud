@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sorglos-it/nextgencloud/apps/server-db/classes/migrate"
@@ -170,5 +171,84 @@ func TestLockTakeOnATextColumnOrdersByDigits(t *testing.T) {
 	hold(t, db, "api-1", "999999999")
 	if ok, err := s.LockTake(lockCtx, dbapi.LockUpdate, "api-2", lockNow, lockUntil); err != nil || ok {
 		t.Errorf("nine digits, deadline long passed: %v, %v, want false - text orders by digits", ok, err)
+	}
+}
+
+// holdMigrate puts a foreign run's row into the migration lock, under the
+// name the runner uses. The deadline goes in as given: a number for the
+// ordinary case, a string for the case a bent column allows.
+func holdMigrate(t *testing.T, db *sql.DB, until any) {
+	t.Helper()
+	if _, err := db.ExecContext(lockCtx, "DELETE FROM ngc_lock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(lockCtx,
+		"INSERT INTO ngc_lock (name, owner, until) VALUES (?, ?, ?)",
+		[]byte("migrate"), []byte("ein-fremder-lauf"), until); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// askMigrate asks the migration runner the one question that matters: does it
+// write DDL next to a run that holds the lock? And the control right after
+// it, because a runner that refuses everything would pass the first half on
+// its own: once the deadline has passed it HAS to take over.
+func askMigrate(t *testing.T, db *sql.DB, running, passed any) {
+	t.Helper()
+	holdMigrate(t, db, running)
+	_, err := migrate.Apply(lockCtx, db, sqlstore.SQLite, "zweiter-server", lockNow)
+	if err == nil || !strings.Contains(err.Error(), "the lock is held") {
+		t.Errorf("while a foreign run holds it: %v, want \"the lock is held\"", err)
+	}
+	holdMigrate(t, db, passed)
+	if _, err := migrate.Apply(lockCtx, db, sqlstore.SQLite, "zweiter-server", lockNow); err != nil {
+		t.Errorf("after the deadline: %v, want <nil>", err)
+	}
+}
+
+// TestMigrateTakeOnAWholeColumn is the control for the runner's own lock: on
+// the column the migrations write, a held lock stops the second server and a
+// deadline that has passed lets it through.
+func TestMigrateTakeOnAWholeColumn(t *testing.T) {
+	_, db := bentStore(t, "INTEGER")
+	askMigrate(t, db, lockNow+900, lockNow-1)
+}
+
+// TestMigrateTakeOnABentColumnStillRefuses: the same on a BLOB column that
+// carries text, which is the lage in which SQLite compares nothing. The
+// second server is still stopped - and the lock still jams, so the deadline
+// that passed is not taken over either. Both halves are what the measurement
+// found (docs/schloss-ablauf-riegel.md), and they are here so that a change
+// which "fixes" the jamming has to walk past them.
+func TestMigrateTakeOnABentColumnStillRefuses(t *testing.T) {
+	_, db := bentStore(t, "BLOB")
+	holdMigrate(t, db, "1790000900")
+	if _, err := migrate.Apply(lockCtx, db, sqlstore.SQLite, "zweiter-server", lockNow); err == nil ||
+		!strings.Contains(err.Error(), "the lock is held") {
+		t.Errorf("while a foreign run holds it: %v, want \"the lock is held\"", err)
+	}
+	holdMigrate(t, db, "1789999999")
+	if _, err := migrate.Apply(lockCtx, db, sqlstore.SQLite, "zweiter-server", lockNow); err == nil ||
+		!strings.Contains(err.Error(), "the lock is held") {
+		t.Errorf("after the deadline: %v, want \"the lock is held\" - the bent column jams the lock", err)
+	}
+}
+
+// TestMigrateTakeOnADeadlineThatIsNoNumber: a deadline nobody can read is
+// the case the second bolt exists for - and on SQLite it never gets that far.
+// A BLOB column orders every text behind every number, so "irgendwann" makes
+// "until <= ?" false and the runner answers "the lock is held" without ever
+// asking Go. Measured, and written down here because the MariaDB half of this
+// file answers the SAME question differently: there the text is converted to
+// 0, reads as long expired, and only the bolt stops the takeover.
+//
+// So this is the file where the bolt cannot fire and the other one is where
+// it can. Whoever changes one of the two should read both.
+func TestMigrateTakeOnADeadlineThatIsNoNumber(t *testing.T) {
+	_, db := bentStore(t, "BLOB")
+	holdMigrate(t, db, "irgendwann")
+	_, err := migrate.Apply(lockCtx, db, sqlstore.SQLite, "zweiter-server", lockNow)
+	if err == nil || !strings.Contains(err.Error(), "the lock is held") {
+		t.Errorf("deadline \"irgendwann\": %v, want \"the lock is held\" - SQLite refuses it in the SQL", err)
 	}
 }
