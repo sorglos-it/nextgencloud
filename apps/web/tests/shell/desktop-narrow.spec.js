@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The desktop on a narrow screen. The stylesheet has one rule at 640 px -
 // the desktop icons step aside and the taskbar entries drop their words -
@@ -10,7 +10,7 @@ test.use({ viewport: { width: 375, height: 700 } });
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 // inside reports whether the box of sel sits inside the box of outer, which

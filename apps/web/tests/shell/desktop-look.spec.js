@@ -1,11 +1,11 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The look in the start menu - accent colour and background - and the search
 // above it. Task 21 left all three measured by hand only.
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 // The six the shell offers, written here once so a case can say "one of the
@@ -30,7 +30,7 @@ test("one of the six accent colours is taken and kept over a reload", async ({ s
   await expect(shell.locator('#smlook .swatches button[data-accent="#e14f8a"]')).toHaveClass(/on/);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await accent(shell)).toBe("#e14f8a");
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.locator('#smlook .swatches button[data-accent="#e14f8a"]')).toHaveClass(/on/);
@@ -60,7 +60,7 @@ test("one of the five backgrounds is taken and kept over a reload", async ({ she
   await expect(shell.locator('#smlook .wpgrid button[data-wallpaper="sunset"]')).toHaveClass(/on/);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await wallpaper(shell)).toBe(after);
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.locator('#smlook .wpgrid button[data-wallpaper="sunset"]')).toHaveClass(/on/);
@@ -405,7 +405,7 @@ test("the apps do not all wear the same colour", async ({ shell }) => {
   expect(menu).toBe(dock);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g')).toBe(dock);
 });
 

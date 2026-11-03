@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // "Benutzer und Rechte": the surface where an admin hands out rights and lets
 // a new server into the installation. It is the most dangerous window NGC
@@ -1335,7 +1335,7 @@ test("an answer the contract refuses leaves the surface standing and says so", a
 test("the app opens from the start menu", async ({ page }) => {
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   await page.getByRole("button", { name: "Start" }).click();
   await page.getByRole("menuitem", { name: "Benutzer und Rechte", exact: true }).click();
   const win = page.locator(".win", { hasText: "Benutzer und Rechte" });
@@ -1346,7 +1346,7 @@ test("the app opens from the start menu", async ({ page }) => {
 test("a question belongs to its window and goes with it", async ({ page }) => {
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   await page.getByRole("button", { name: "Start" }).click();
   await page.getByRole("menuitem", { name: "Benutzer und Rechte", exact: true }).click();
   const win = page.locator(".win", { hasText: "Benutzer und Rechte" });

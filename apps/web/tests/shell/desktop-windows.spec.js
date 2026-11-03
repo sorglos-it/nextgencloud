@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // What a window does under the hand: dock it to an edge, pull it bigger,
 // lay the windows out, close them all, and make the desktop smaller under
@@ -13,7 +13,7 @@ test.beforeEach(async ({ shell }) => {
   // nothing here to look at. Measured, never assumed from the engine's name.
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 // The desktop, in the coordinates the window's style uses: the taskbar sits

@@ -14,7 +14,8 @@ export const test = base.extend({
   },
 });
 
-export { expect } from "@playwright/test";
+import { expect } from "@playwright/test";
+export { expect };
 
 // signIn puts anna in. Since task 18 the shell shows the login mask before
 // anything else, so every case that wants a desktop starts here - the four
@@ -579,6 +580,43 @@ export async function hasSessionKeys(shell) {
 // It never throws: it runs inside a message that is being built for a case
 // that is already failing, and a helper that fell over there would hide the
 // failure it was called to explain.
+// expectDesktop is whyLoginFailed where it is actually needed: at the 27 places
+// that press Anmelden and then wait for the desktop.
+//
+// WHY IT IS A FUNCTION AND NOT THE MESSAGE ARGUMENT. The shape the comment
+// above suggests,
+//
+//   await expect(page.locator("#taskbar"), await whyLoginFailed(page)).toBe...
+//
+// asks the mock BEFORE the expectation has waited, on every login, green ones
+// included - and a slow but perfectly good login would be asked at a moment
+// when no /login/finish has arrived yet. The message would then say "the
+// attempt died in the BROWSER" about a login that went through, and be printed
+// if the case later failed for something else entirely. Here the question is
+// asked only in the catch, which is the only moment it has an answer worth
+// printing.
+//
+// IT KEEPS PLAYWRIGHT'S OWN ERROR. The original message, the matcher and the
+// stack stay; the explanation is appended to it. Rethrowing a new Error would
+// cost the report its snippet.
+//
+// WHY NOT ONE HOOK IN THE FIXTURE, measured rather than weighed up: three of
+// the files that call signIn - shell/desktop-hostile.spec.js,
+// shell/store.spec.js and shell/users.spec.js - take `test` from
+// @playwright/test and only signIn from here. A test.afterEach registered on
+// the test object of this file would have covered 26 of the 31 logins and
+// looked like it covered all 31.
+export async function expectDesktop(page) {
+  try {
+    await expect(page.locator("#taskbar")).toBeVisible();
+  } catch (e) {
+    e.message = `${e.message}
+
+${await whyLoginFailed(page)}`;
+    throw e;
+  }
+}
+
 export async function whyLoginFailed(page) {
   try {
     const seen = await page.evaluate(async () => {
