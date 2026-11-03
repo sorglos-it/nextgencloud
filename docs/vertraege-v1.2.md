@@ -7919,6 +7919,13 @@ Installation — auch die neue Station 2w aus Punkt 97. Eine Maschine, die allei
 Skripten entsteht, hat damit eine Oberfläche, die **niemand** erreicht, und einen Prüflauf,
 der grün ist.
 
+**Als Regel, über diesen Fall hinaus: eine Prüfung, die von innen misst, kann eine Mauer nach
+außen nicht sehen.** Jede Lebensprobe und jede Zustandsabfrage, die auf der Maschine selbst
+läuft, geht durch `iif lo accept` und beantwortet deshalb eine andere Frage als die, die der
+Betreiber stellt — „antwortet der Dienst sich selbst?" statt „antwortet er dem Netz?". Das gilt
+für jede künftige Probe, nicht nur für die gehärtete Vorlage: wer Erreichbarkeit messen will,
+muss **von außerhalb der Maschine** fragen.
+
 **Behoben, zweifach:**
 
 - `einzelmaschine.sh` öffnet 80, 443 und 7443 für `10.0.0.0/8` — denselben Bereich, den die
