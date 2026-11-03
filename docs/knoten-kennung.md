@@ -36,16 +36,23 @@ der Leitsitzung war vollständig; die Datei an der Anlage ist älter als die Vor
 
 Und sie passt zu **keiner** der vier Stellen von heute:
 
-| | `connectiontimeout=2` | `upgrade=websocket` steht am |
-|---|---|---|
-| Vorlage des Controllers (heute) | ja | `BalancerMember` |
-| `.example` und ulh `render_balancer()` | nein | `ProxyPass` |
-| **Anlage (03.11.2026)** | **nein** | **`BalancerMember`** |
+| | `connectiontimeout=2` | `upgrade=websocket` am | `Retry-After` / `LogLevel` |
+|---|---|---|---|
+| Vorlage des Controllers (heute) | ja | `BalancerMember` | ja |
+| `.example` und ulh `render_balancer()` | nein | `ProxyPass` | nein |
+| **Anlage (03.11.2026, 21 Zeilen)** | **nein** | **`BalancerMember`** | **nein** |
 
-Die Datei stammt also vom **Controller** (Rolle `web`, siehe 7b), aus einer Fassung **zwischen**
-den beiden — nicht von `ngc-web.sh`. Eigener kleiner Befund: die Anlage fährt eine Vorlage, die den
-Verbindungs-Zeitablauf nicht hat. Offen ist, ob sie die Zeilen `Header always set Retry-After` und
-`LogLevel proxy:info` schon trägt; das würde die Fassung genau festnageln (Abschnitt 7, Lesung e).
+Die fünfte Lesung (Abschnitt 7) hat das festgenagelt: an der Anlage fehlen **beide** Zeilen
+`Header always set Retry-After "5" …` und `LogLevel proxy:info proxy_balancer:info`. Die Fassung
+liegt damit **vor beiden** heutigen Vorlagen — nicht zwischen ihnen, wie hier zuerst stand. Die
+Kopfzeile der Datei nennt ihre Herkunft selbst: geschrieben von `ngc-web` beim Aufsetzen, danach
+vom Controller mit Rolle `web`.
+
+Eigener kleiner Befund: die Anlage fährt eine Vorlage, die den Verbindungs-Zeitablauf, die
+`Retry-After`-Kopfzeile und die Protokollstufe für den Lastverteiler nicht hat. **Folge für den
+Entwurf in Abschnitt 9:** die dort genannte Einfügestelle „nach `LogLevel`" gibt es an der Anlage
+heute gar nicht. Sie entsteht erst, wenn der Controller die neue Vorlage schreibt. Die Zeilennummern
+in Abschnitt 9 sind Zeilennummern **der Vorlagen im Repo**, nicht der Datei an der Anlage.
 
 **Eigener Fund, unabhängig von dieser Aufgabe:** `apache-apis.conf.example` behauptet im Kopf, die
 Bezugsfassung zu sein, weicht aber von der Vorlage des Controllers ab — `upgrade=websocket` steht
@@ -250,6 +257,10 @@ API ohne Anfrage von draußen tut.
 Gefahren von der Leitsitzung am 03.11.2026; diese Sitzung hat keinen eigenen Zugang und nimmt
 keinen. Erwartung und Ergebnis je Lesung:
 
+Was hier **nicht** steht, ist genauso wichtig wie was dasteht: je Lesung der durchsuchte Raum. Eine
+Aussage ohne ihren Suchraum kann von einer zweiten bestätigt werden, die dieselbe Lücke hat — genau
+das ist bei 2b passiert.
+
 | | Erwartung | Gemessen |
 |---|---|---|
 | a) `connectiontimeout=2` in den `BalancerMember`-Zeilen? | unklar | **nein** — Datei älter als die Vorlage (2a) |
@@ -264,10 +275,14 @@ Rolle `web`.
 Drei von vier bestätigen. Die dritte hat einen Fund dieses Blatts umgedreht, und das ist der
 Grund, warum Lesungen an der Anlage nicht durch Lesungen im Repo ersetzbar sind.
 
-**Noch offen, eine Lesung (e):** stehen in `/etc/ngc/apache-apis.conf` auf api-1 die Zeilen
-`Header always set Retry-After "5" …` und `LogLevel proxy:info proxy_balancer:info`? Damit wäre die
-Fassung, aus der die Datei stammt, genau festgenagelt — und damit, wie weit der Controller an der
-Anlage hinter der Vorlage her ist. Es hält Weg A nicht auf.
+**Lesung e), nachgetragen:** `/etc/ngc/apache-apis.conf` auf api-1 hat **21 Zeilen** und trägt
+weder `Header always set Retry-After` noch `LogLevel proxy:info proxy_balancer:info` noch
+`connectiontimeout`. Erwartung war „eine der beiden Fassungen"; gemessen ist eine **dritte**, die
+vor beiden liegt. Siehe 2a.
+
+**Lesung f), die Drehung des Protokolls:** `/etc/logrotate.d/apache2` dreht
+`/var/log/apache2/*.log`, und das Neuladen danach ist schon eingetragen. Die Datei aus Weg A wird
+also mitgedreht. Geprüft, nicht geglaubt.
 
 ## 8. ulh — eigener Punkt
 
@@ -318,7 +333,15 @@ CustomLog ${APACHE_LOG_DIR}/ngc-api-access.log "%h %l %u %t \"%m %U %H\" %>s %O 
 ```
 
 `${APACHE_LOG_DIR}` ist auf Debian und Ubuntu `/var/log/apache2`; `envvars` setzt es, und die
-Vorlage benutzt es in `apache-vhost.conf` schon so.
+Vorlage benutzt es in `apache-vhost.conf` schon so. Die Drehung des Protokolls ist geprüft
+(Abschnitt 7, Lesung f): `/etc/logrotate.d/apache2` fasst `/var/log/apache2/*.log` und damit diese
+Datei mit.
+
+Die beiden Auflagen der Leitsitzung stehen im Kommentar, und sie stehen dort als **Begründung**,
+nicht als Hinweis: warum `env=` bleiben muss (sonst eine zweite Zeile für **jede** Anfrage des
+ganzen virtuellen Rechners, nicht nur für die weitergegebenen), und warum `%U` und nicht `%r`
+(`%U` ist der Pfad **ohne** Abfragezeichenkette, und diese Datei wird bei jedem fehlgeschlagenen
+Anmeldeversuch geschrieben). Wer die Zeile später kürzt, soll beides lesen können, bevor er es tut.
 
 ### Wohin, je Stelle
 
@@ -379,6 +402,32 @@ API string `json:"api,omitempty"`
 - **Nichts Geheimes:** ein Knotenname ist ein Rechnername des inneren Netzes, und die Ansicht sehen
   nur Administratoren. Kein Nutzer-Browser bekommt ihn.
 
+### Der Zeilenvorschlag für `shared/core/results.go`
+
+`LogEntry` hat kein `Validate` und kein `Verify` — die Prüfung der Felder liegt in `audit.keep(…)`.
+Das Feld kommt darum **hinter** `Node` (Zeile 158) und **vor** `Result`, damit die beiden
+Knotenfelder in der Reihe beieinanderstehen und ein Leser den Unterschied an der Stelle sieht:
+
+```go
+	Node   string `json:"node,omitempty"`
+	// API is the API node that answered - the node of its api.json
+	// (config.API.Node). Node above is a different machine: the controller a
+	// task or a channel went to. Two fields and not one, because the same
+	// column with two meanings makes every row written before unreadable.
+	// Empty is a legitimate value: every entry written before this field
+	// existed has it empty, and no entry is ever refused because of it.
+	API    string `json:"api,omitempty"`
+	Result string `json:"result"` // "ok" or a wire.Code
+```
+
+Dazu, in derselben Änderung, die Prüfung in `audit.go` neben die vorhandene (Zeile 179):
+
+```go
+	keep(&e.API, e.API == "" || wire.ValidName(e.API), Dropped)
+```
+
+Mehr ist es in `shared/` nicht. Die acht bzw. neun Stellen darunter folgen daraus.
+
 Die Stellen, die mitziehen müssen — damit niemand die Hälfte baut:
 
 | Stelle | Datei |
@@ -391,6 +440,15 @@ Die Stellen, die mitziehen müssen — damit niemand die Hälfte baut:
 | Gedächtnisspeicher | `shared/dbapi/memstore/memstore.go:344` |
 | Prüfsatz der Speicher | `shared/dbapi/dbtest/dbtest.go` (ab Zeile 277) |
 | Ansicht | „Benutzer & Rechte" in `apps/web/` — eine Spalte mehr |
+| Zuordnung Spalte→Platzhalter | `sqlstore.ColumnType` — **kommt erst mit PR 159** |
+
+**Zur neunten Stelle, und sie ist nachgetragen, nicht selbst gemessen:** die Leitsitzung nennt
+`sqlstore.ColumnType`, eine Zuordnung Spalte→Platzhalter samt zwei Prüfungen, die sie gegen die
+Wanderungen hält. **Auf `origin/main` (0471b02d, am 03.11.2026 nachgefetcht) gibt es sie nicht** —
+`git grep ColumnType origin/main -- apps/server-db/classes/sqlstore` findet nichts, nur
+`migrate/lint_test.go` trägt den Wortteil in zwei Testnamen. Sie kommt also mit PR 159. Darum steht
+hier keine Zeilennummer: wer Weg D baut, baut auf einem Stand, der PR 159 schon hat, und sucht die
+Stelle dort. **Ohne Eintrag wird die neue Spalte rot oder, schlimmer, ungeprüft eingebaut.**
 
 **Eine Frage, die der Koordinator mitentscheiden muss:** soll das Feld auch in `core.LogQuery`
 filterbar werden („zeig mir alles, was api-2 geantwortet hat")? Das ist der eigentliche Nutzen bei
