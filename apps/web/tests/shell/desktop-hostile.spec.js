@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 import { app, CALC, serveApps } from "../fixtures/apps.js";
 
 // What the desktop does with an app list that is out to break it.
@@ -23,7 +23,7 @@ async function desktop(page, apps) {
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
 }
 
 // stillADesktop is the second half of every case: a refusal that leaves the
