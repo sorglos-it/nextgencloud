@@ -95,9 +95,9 @@ func (e *orderEngine) Running(ctx context.Context, name string) (bool, error) {
 	return e.appEngine.Running(ctx, name)
 }
 
-func (e *orderEngine) Start(ctx context.Context, name string) error {
+func (e *orderEngine) Start(ctx context.Context, name string, l runtime.Limits) error {
 	e.note("start")
-	return e.appEngine.Start(ctx, name)
+	return e.appEngine.Start(ctx, name, l)
 }
 
 // A runtime directory that cannot be prepared ends the channel unreachable AND

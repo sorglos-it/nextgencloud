@@ -42,8 +42,17 @@ type Engine interface {
 	RemoveImage(ctx context.Context, name, ref string) error
 	// Create makes the container c without starting it.
 	Create(ctx context.Context, c Container) error
-	// Start starts a container that was created.
-	Start(ctx context.Context, name string) error
+	// Start starts a container that was created, inside a cgroup that holds
+	// the three quantity limits of its app.
+	//
+	// The limits stand here, at every start, and not once at Create, and the
+	// compiler is what makes that so: a cgroup lives in a tmpfs and is gone
+	// after every restart of the machine, while the container is not. Whoever
+	// starts a container has to say the ceiling it runs under, every time -
+	// which is why this argument exists and why it cannot be left out. What
+	// happens when the kernel does not hold a limit is at the head of
+	// cgroup.go: the app does not start.
+	Start(ctx context.Context, name string, l Limits) error
 	// Stop ends the container, giving the service ten seconds first.
 	Stop(ctx context.Context, name string) error
 	// Remove takes a container that is not running away.
