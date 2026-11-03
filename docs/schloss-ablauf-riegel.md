@@ -358,13 +358,108 @@ Dazu drei Dinge, die in den Baum gekommen sind statt in ein Messprogramm:
   indem er grün ist, und sagt im Kopf, warum er trotzdem da ist. Ohne ihn bliebe von „auf
   MariaDB nicht herstellbar" nichts übrig, was jemand lesen kann.
 
+## Der zweite Riegel, in `migrate.take`
+
+Gebaut nach demselben Muster, mit einem Unterschied, der bleiben muss: **gehalten heißt gehalten,
+auch für den eigenen Namen.** `migrate.take` sieht den Halter in der Zeile gar nicht an, während
+`LockTake` demselben Halter sein Schloss erneut gibt — weil `rollout.renewLease` genau das
+braucht. Bei der Migration ist zweimal nehmen schlimmer als warten. Der Grund steht an der
+Stelle, mit dem ausdrücklichen Satz, die zwei nicht anzugleichen.
+
+Dazu kam die Transaktion, die dort vorher fehlte: `UPDATE` und `INSERT` liegen jetzt in einer,
+und ein `defer tx.Rollback()` nimmt das `UPDATE` bei jeder Abweisung mit. Ohne das trüge die
+Zeile den Namen dieses Laufs und einen Ablauf, den niemand benutzt — auf einer Spalte, deren
+Vergleich alles abweist, für immer.
+
+### Acht Zeilen: feuert der Riegel heute?
+
+Verbogene Spalte, fremder Halter mit Ablauf in der Zukunft, je mit und ohne Riegel (ausgeschaltet
+per `-overlay`, nur die Abweisung). Gemessen wurde nicht die Meldung, sondern **wer die Zeile
+danach hält**.
+
+| Weg | Spalte | Wert | Riegel | zweiter nimmt es | Antwort |
+|---|---|---|---|---|---|
+| SQLite | BLOB | `1790000900` (Zahl als Text) | mit | nein | „the lock is held" |
+| SQLite | BLOB | `1790000900` | ohne | nein | „the lock is held" |
+| SQLite | BLOB | `irgendwann` | mit | nein | „the lock is held" |
+| SQLite | BLOB | `irgendwann` | ohne | nein | „the lock is held" |
+| MariaDB | VARCHAR(64) | `1790000900` | mit | nein | „the lock is held" |
+| MariaDB | VARCHAR(64) | `1790000900` | ohne | nein | „the lock is held" |
+| MariaDB | VARCHAR(64) | `irgendwann` | mit | nein | `Error 1292: Truncated incorrect DECIMAL value` |
+| MariaDB | VARCHAR(64) | `irgendwann` | ohne | nein | `Error 1292: …` |
+
+**Der Riegel feuert heute auf keinem der beiden Wege**, und das ist die ehrliche Lesart: mit dem
+`until <= ?` von heute kommt keine Zeile am SQL vorbei, über die er urteilen könnte. Mit und ohne
+ihn stehen dieselben acht Antworten da.
+
+**Berichtigung einer Annahme von mir, am selben Tag gemessen und widerlegt:** ich hatte gemeldet,
+MariaDB rechne einen Text wie `irgendwann` für den Vergleich zu 0 um, womit das Schloss als
+abgelaufen gelesen würde und ein zweiter Server es nähme. Das war **gefolgert, nicht gemessen** —
+aus der gemessenen Eigenschaft „MariaDB rechnet um" (mit Zahlen als Text) auf „also wird jeder
+Text zu einer Zahl". Gemessen weist MariaDB die Zeile mit `Error 1292` ab, das `UPDATE` scheitert,
+und niemand nimmt das Schloss. Gefangen hat es der Fall, den ich für die Annahme geschrieben hatte
+— er fiel. Daraus die Regel für Berichte dieser Art: **ob eine neue Eigenschaft gemessen oder
+gefolgert ist, gehört in denselben Satz, nicht in den nächsten Absatz.**
+
+Zwei Datenbanken, dieselbe Zeile, entgegengesetzte Antwort — aber nicht „einer nimmt es, der
+andere nicht", sondern **„gehalten" gegen „Fehler 1292"**.
+
+### Der sterbende Mutant: bei ganz richtiger Spalte
+
+`until <= ?` → `until > ?` in `migrate.go`, Spalte **INTEGER bzw. BIGINT**, Ablauf als Zahl:
+
+| Weg | Riegel | zweiter nimmt es | danach hält |
+|---|---|---|---|
+| SQLite | mit | **nein** | der fremde Lauf |
+| SQLite | **ohne** | **ja** | niemand — der zweite Lauf hat migriert und das Schloss freigegeben |
+| MariaDB | mit | **nein** | der fremde Lauf |
+| MariaDB | **ohne** | **ja** | niemand |
+
+Das ist der Beleg: **ohne den Riegel schreiben zwei Server DDL in dasselbe Schema, mit ihm
+nicht** — auf beiden Wegen, an einer Spalte, an der nichts verbogen ist. Der Befund hängt an
+einem Ding.
+
+Nebenbefund aus demselben Lauf: eine **INTEGER**-Spalte in SQLite nimmt den Text `irgendwann`
+an (Affinität ist keine Bedingung), und dann greift der Go-Riegel wirklich und meldet „the
+deadline of the lock is not a number". MariaDB weist denselben `INSERT` in eine `BIGINT`-Spalte
+mit `Error 1366: Incorrect integer value` ab — der Wert kommt dort gar nicht in die Zeile.
+
+### Ein Test, der eine Spalte verbiegt, muss sie zurückbauen — und die Zeilen zuerst
+
+Teuer bezahlt, dreimal denselben Satz lang. Der MariaDB-Fall für den Wert, der keine Zahl ist,
+baute die Spalte am Ende zurück (`ALTER TABLE ngc_lock MODIFY until BIGINT NOT NULL`) — und der
+Rückbau **scheiterte**, weil die Zeile mit `irgendwann` noch darin stand:
+
+```
+Error 1292 (22007): Truncated incorrect INTEGER value: 'irgendwann'
+```
+
+Damit blieb die Spalte `varchar(64)` und die Zeile liegen. Die Folge im nächsten Lauf: **19 rote
+Fälle**, alle mit `migrate: the lock of the migrations: Error 1292 …` aus `fresh()` — denn der
+Prüfstand leert die Tabellen, baut aber **keinen Spaltentyp zurück**, und `migrate.Apply` fällt
+dann über die Zeile, die niemand mehr sehen will. Dreimal hintereinander dieselben 19, also kein
+Flattern, sondern ein Zustand.
+
+Zwei Sätze daraus:
+
+- **Die Zeilen gehen zuerst, dann der Typ.** Ein Rückbau, der an seinen eigenen Daten scheitert,
+  ist kein Rückbau — und er scheitert leise, weil er im Aufräumen steht.
+- **Eine geteilte Datenbank ist eine geteilte Vorrichtung.** Was ein Fall dort hinterlässt, messen
+  alle nach ihm. Das Zurücksetzen ist darum nicht Höflichkeit, sondern Teil der Messung; hier
+  musste das Schema einmal von Hand neu angelegt werden, bevor wieder Zahlen entstanden.
+
+### Wie ein Nicht-Zahlenwert überhaupt in die Spalte kommt: nicht gemessen
+
+Offen, und als Frage hingeschrieben statt als Gefahr. Gemessen ist nur, wie er **nicht**
+hineinkommt: über NGC nicht — der Code schreibt `int64` durch einen Platzhalter, und auf MariaDB
+scheitert ein solcher `INSERT` in eine `BIGINT`-Spalte an `Error 1366`. Bleiben eine Migration,
+die die Spalte mit `CAST` auf Text umbaut, ein Fremdwerkzeug und ein Mensch mit `mariadb`.
+Welcher davon wirklich offen ist, ist **nicht gemessen**.
+
 ## Was noch offen ist
 
-- **Der zweite Riegel, in `migrate.take`.** Dort gibt es heute keine Transaktion um das `UPDATE`
-  und den `INSERT`, und eine Abweisung muss zurückrollen können — die Transaktion muss also
-  hinein. Das ist der eigene Pull Request, der auf diesen folgt. `migrate.take` bleibt dabei
-  absichtlich strenger als `LockTake`: gehalten heißt gehalten, auch für den eigenen Namen
-  (`migrate.go:380`).
+- **Erledigt:** der zweite Riegel in `migrate.take` ist gebaut, mit der Transaktion, die dort
+  fehlte. Siehe den Abschnitt „Der zweite Riegel" weiter oben.
 - **Nicht in diesem Auftrag und nicht angefasst:** `onceUse` (`once.go`) steht weiter als
   `… AND expires > ?`, also in der gefährlichen Richtung. Der Riegel dagegen ist gebaut und
   geprüft und liegt als PR 181; er hängt nur noch am Zusammenführen. Hier steht es, damit
