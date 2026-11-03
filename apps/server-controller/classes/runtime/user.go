@@ -145,7 +145,6 @@ var paths = struct {
 
 	cgroupRoot:  cgroupRootDefault,
 	procRoot:    procRootDefault,
-	killTask:    killTask,
 	cgroupWrite: cgroupWrite,
 	cgroupJoin:  inCgroup,
 	cgroupDrop:  os.Remove,
@@ -178,6 +177,15 @@ func cgroupWrite(path, value string) error {
 	}
 	return err
 }
+
+// killTask is set HERE and not in the literal above, and that is not a matter
+// of taste: on Linux killTask calls readTask, readTask reads paths.procRoot,
+// and so the literal would refer to itself - "initialization cycle for paths".
+// The compiler refuses that, and it refuses it only for LINUX: the stand-in in
+// surplus_other.go calls nothing, so a build on Windows or macOS is green while
+// the only target that matters does not build at all. An init body is outside
+// the cycle check, and the value is in place before any case or any call runs.
+func init() { paths.killTask = killTask }
 
 // The sub id ranges of the apps: 65536 ids each, which is what a user namespace
 // of a rootless container needs, and the first range begins at 524288.
