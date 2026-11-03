@@ -231,3 +231,55 @@ jobs:
           FUZZTIME: ${{ github.event.inputs.fuzztime || '5' }}
           SHARD: ${{ matrix.shard }}
         run: bash tools/ci-fuzz.sh
+
+  # ---------------------------------------------------------------- web
+  # The Playwright suite ran in NO step of this file until 3.11.2026, and that
+  # was measured, not assumed: neither "playwright" nor "web/tests" appeared
+  # anywhere here, and tools/check.sh runs only the two node/php one-liners.
+  # So every green number for the web shell came from a run somebody started by
+  # hand on the Windows machine. This job is the other half for the browser.
+  #
+  # All three engines run, and the numbers are reported PER ENGINE, because a
+  # single total hides what the strand measured on 3.11.2026: on webkit 1 of 22
+  # cases of the login suite actually runs and 21 switch themselves off, so a
+  # total of "22 passed, 0 failed" would read as three engines when it is one.
+  # The skips are legitimate (Playwright's firefox cannot build an Ed25519
+  # public half out of a PKCS#8 seed, its webkit cannot generateKey at all) -
+  # but they are skips, and a skipped case is not a case that ran.
+  #
+  # The floor is what keeps a silently empty run from passing: playwright, like
+  # go test, exits 0 for a run in which everything switched itself off.
+  web:
+    name: web shell in three browsers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: php und node-pakete
+        run: |
+          php -v
+          npm ci
+        working-directory: apps/web/tests
+      - name: browser holen
+        run: npx playwright install --with-deps chromium firefox webkit
+        working-directory: apps/web/tests
+      - name: laufen
+        env:
+          # A port of its own, as the config asks for: a run that finds a
+          # server already answering measures another working tree.
+          NGC_WEB_TEST_PORT: "8161"
+        run: npx playwright test --reporter=json > "${{ runner.temp }}/web.json" || true
+        working-directory: apps/web/tests
+      - name: zaehlen
+        # No number yet ON PURPOSE. A floor is a measured value, and the real
+        # per-engine counts of this suite on Linux have never been read - the
+        # suite has only ever run on the Windows machine. Until the first run
+        # here prints them, the only bar is "not a single case ran", which
+        # needs no number to be wrong. The number goes in afterwards, with the
+        # run it came from named beside it.
+        run: node tools/ci-count-web.mjs "${{ runner.temp }}/web.json"
