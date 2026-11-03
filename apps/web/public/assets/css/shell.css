@@ -7,7 +7,33 @@
    this step does not carry is written there too - the shadow, the window frame
    and the font follow in their own steps. */
 :root{
-  --bar-h: 44px;
+  /* The height of the menu band at the top. 28 is LordOS MENU_H; NGC stood at
+     44. The entries inside it are 22 high (LordOS), which is why that number
+     and this one travel together: an entry of 34 does not fit in a band of 28,
+     and lowering only the band would have cut the entries off. */
+  --bar-h: 28px;
+  /* The blur behind the band and behind a menu, LordOS --blur. One number, so
+     the two surfaces that float cannot drift apart - they were 18 and 22. */
+  --blur: 24px;
+  /* THE DOCK. 40 is Thomas' decision of 2026-10-30, and it is computed, not
+     chosen: with the 8 px grid a dock is 16 + n*S + 8*(n-1) wide, so at 360 px
+     - a phone held upright - 54 (LordOS) fits five icons, 48 fits six and 40
+     fits seven. 40 is the largest that puts seven on a phone, and at the same
+     time the floor, because 40 is the same finger size decided that day for
+     the window buttons. The sum is written out in docs/gestaltung-lordos.md
+     section 8.
+     Under the pointer the icon grows by 1.6, which keeps LordOS's own ratio
+     (86/54 = 1.59) instead of inventing a second number: 40 x 1.6 = 64, the
+     same magnified icon the dock has shown since 2026-10-30. It is written as
+     a RATIO and no longer as a second length, because it is now a transform
+     and not a width - see the magnifier below for why. */
+  --dock-size: 40px;
+  --dock-grow: 1.6;
+  /* ONE duration and ONE curve for every movement in the shell, so that
+     "reduce motion" bites in one place. 180 ms is LordOS SLIDE_MS; the curve
+     is chosen - LordOS draws its movements in C and names none. */
+  --motion: 180ms;
+  --ease: cubic-bezier(.25,.1,.25,1);
   /* THE ACCENT STAYS AS IT IS IN THIS STEP, and that is a finding, not an
      oversight: it is not one number in one place. The accent the shell shows
      is picked by the user out of six, and those six live in shell/theme.js
@@ -32,7 +58,14 @@
   --bar-bg: rgba(24,24,30,.42);
   --bar-fg: #f5f5f7;
   --menu-bg: rgba(36,36,42,.72);
-  --shadow: 0 18px 50px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+  /* TWO shadows, not one, because the shadow is what says which window you
+     are talking to. Lord Flow lifts the window in front far off the page and
+     lets the ones behind lie almost flat; NGC had one shadow for both and had
+     to tint the title bar instead. --shadow is the window in front,
+     --shadow-back every other one. Both stand here once, and every rule that
+     needs a shadow reads one of the two. */
+  --shadow: 0 24px 56px rgba(0,0,0,.55);
+  --shadow-back: 0 10px 28px rgba(0,0,0,.32);
   --radius: 12px;
   --field-bg: #2a2a2f;
   --muted: rgba(235,235,245,.55);
@@ -65,7 +98,8 @@ html[data-theme="light"]{
   --title-bg:#ececef; --title-bg-active:#e1e1e6;
   --bar-bg: rgba(250,250,252,.55); --bar-fg:#1d1d1f;
   --menu-bg: rgba(246,246,248,.78);
-  --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
+  --shadow: 0 24px 56px rgba(30,45,70,.22);
+  --shadow-back: 0 10px 28px rgba(30,45,70,.13);
   --field-bg:#ffffff; --muted:rgba(60,60,67,.6);
   --page-bg:#e7ecf4;
   --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
@@ -80,7 +114,8 @@ html[data-theme="light"]{
     --title-bg:#ececef; --title-bg-active:#e1e1e6;
     --bar-bg: rgba(250,250,252,.55); --bar-fg:#1d1d1f;
     --menu-bg: rgba(246,246,248,.78);
-    --shadow: 0 18px 50px rgba(30,45,70,.25), 0 2px 6px rgba(30,45,70,.15);
+    --shadow: 0 24px 56px rgba(30,45,70,.22);
+    --shadow-back: 0 10px 28px rgba(30,45,70,.13);
     --field-bg:#ffffff; --muted:rgba(60,60,67,.6);
     --page-bg:#e7ecf4;
     --alarm:#b3261e; --alarm-veil: rgba(22,32,46,.62);
@@ -96,7 +131,16 @@ html[data-density="luftig"]{--fs:15.5px;--pad:13px}
 
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden;
+/* The font stack holds no Apple name. -apple-system stood here and is gone:
+   Thomas' brief for this rebuild takes form from LordOS and NOT Apple's fonts
+   or marks, and -apple-system is a keyword that asks for exactly those (San
+   Francisco). MEASURED on this machine before taking it out: the browser
+   resolved the stack to Segoe UI, which stands first, so -apple-system was
+   never reached here - which is why the pictures before and after are the
+   same file, and that is the finding, not a failed measurement. On a Mac it
+   WAS reached, and there the look now follows system-ui instead of being
+   named Apple's font outright. */
+body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
      color:var(--bar-fg);background:var(--page-bg);-webkit-user-select:none;user-select:none;
      touch-action:manipulation}
 #root{position:fixed;inset:0}
@@ -112,17 +156,12 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 #desktop{position:fixed;inset:var(--bar-h) 0 0 0;overflow:hidden}
 #wallpaper{position:absolute;inset:0;background-size:cover;background-position:center;
            transition:background .3s}
-#icons{position:absolute;inset:12px auto 12px 12px;display:flex;flex-direction:column;
-       flex-wrap:wrap;align-content:flex-start;gap:4px;max-height:calc(100% - 24px)}
-.dicon{width:92px;padding:var(--pad) 4px calc(var(--pad) * .8);border:1px solid transparent;border-radius:8px;
-       text-align:center;cursor:pointer;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);
-       background:none;font:inherit;display:flex;flex-direction:column;align-items:center;gap:4px}
-.dicon:hover{background:rgba(255,255,255,.12)}
-.dicon.off{opacity:.55}
-.dicon .g{display:flex;align-items:center;justify-content:center;width:38px;height:38px;
-          font-size:20px;font-weight:600;border-radius:10px;color:#fff;
-          background:linear-gradient(135deg,var(--accent),var(--accent-2));text-shadow:none}
-.dicon .n{font-size:12px;word-break:break-word;overflow:hidden;max-height:2.9em}
+/* THE COLUMN OF APP ICONS IS GONE (2026-11-01). The dock holds the same apps,
+   so every one of them stood twice on one screen - and on a phone the column
+   was hidden anyway, which means the dock is the way that always worked. A
+   macOS desktop carries files, not a copy of the launcher. What stays is the
+   EMPTY desktop below, which is a different thing: a sentence and a button
+   for the case where there are no apps at all (docs/gestaltung.md point 3). */
 
 /* ---------- Der leere Schreibtisch ----------
    Ein Satz und ein Knopf (docs/gestaltung.md Punkt 3). Es ist der Ausnahme-
@@ -157,18 +196,44 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 
 /* ---------- Taskleiste (oben) ---------- */
 #taskbar{position:fixed;top:0;left:0;right:0;height:var(--bar-h);display:flex;align-items:center;
-         gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(18px) saturate(150%);
-         border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000}
-#startbtn{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;
-          border-radius:8px;cursor:pointer;font:inherit;font-weight:600;color:#fff;
-          background:linear-gradient(135deg,var(--accent),var(--accent-2));
-          box-shadow:0 2px 8px rgba(0,0,0,.3)}
-#startbtn:hover{filter:brightness(1.12)}
-#startbtn.open{filter:brightness(.9)}
+         gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(var(--blur)) saturate(150%);
+         border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000;
+         font-size:13px;font-weight:500}
+/* THE MARK AT THE LEFT IS A MARK, not a coloured pill. It wore the accent as
+   a gradient with a drop shadow - a lit button sitting in a band that is
+   translucent and quiet, the loudest thing on a screen that has nothing to
+   shout about yet. In macOS and in Lord Flow the far left of the band is a
+   glyph in the band's own colour, and it lights up only while it is pressed
+   or pointed at, exactly as the entries beside it do. */
+#startbtn{display:flex;align-items:center;height:22px;padding:0 9px;border:0;
+          border-radius:5px;cursor:pointer;font:inherit;color:inherit;background:none}
+#startbtn:hover{background:rgba(127,127,127,.26)}
+#startbtn.open{background:rgba(127,127,127,.32)}
 #startbtn .logo{font-size:16px}
+
+/* The name of the app in front, and its menu. 700 is the sheet's weight for
+   it (LordOS): in a menu band the app's own name is the one entry that is not
+   a command, so weight is what tells it from the rest. It is HIDDEN while no
+   window is in front - NGC has no Finder that is always running, and a menu
+   named after nothing is a menu that opens onto nothing. */
+#appbtn{display:none;align-items:center;height:22px;padding:0 9px;border:0;border-radius:5px;
+        background:none;color:inherit;font:inherit;font-weight:700;cursor:pointer;
+        max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 0 auto}
+#appbtn.there{display:flex}
+#appbtn:hover,#appbtn.open{background:rgba(127,127,127,.26)}
+#appdrop{position:fixed;top:calc(var(--bar-h) + 2px);width:260px;background:var(--menu-bg);
+         backdrop-filter:blur(var(--blur)) saturate(150%);border:1px solid var(--win-border);
+         border-radius:8px;box-shadow:var(--shadow);z-index:100001;display:none;padding:4px;
+         color:var(--win-fg)}
+#appdrop.open{display:block}
+#appdrop button{display:flex;width:100%;align-items:center;height:26px;padding:0 9px;border:0;
+                border-radius:5px;background:none;color:inherit;font:inherit;font-size:13px;
+                text-align:left;cursor:pointer}
+#appdrop button:hover{background:rgba(127,160,220,.20)}
+#appdrop button:disabled{opacity:.45;cursor:default;background:none}
 #tasks{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden}
-.task{display:flex;align-items:center;gap:7px;height:34px;max-width:190px;padding:0 12px;
-      border-radius:8px;cursor:pointer;flex:0 1 auto;min-width:0;font:inherit;
+.task{display:flex;align-items:center;gap:7px;height:22px;max-width:190px;padding:0 9px;
+      border-radius:5px;cursor:pointer;flex:0 1 auto;min-width:0;font:inherit;
       background:rgba(127,127,127,.14);border:1px solid transparent;color:var(--bar-fg)}
 .task:hover{background:rgba(127,127,127,.26)}
 .task.active{background:rgba(127,127,127,.32);border-color:rgba(127,127,127,.45)}
@@ -178,13 +243,74 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 #tray button{background:none;border:0;color:inherit;font:inherit;cursor:pointer;opacity:.85;
              font-size:16px}
 #tray button:hover{opacity:1}
-#clock{text-align:right;line-height:1.15;font-variant-numeric:tabular-nums;font-size:12.5px}
-#clock b{display:block;font-size:13.5px;font-weight:600}
+/* ONE line, because two cannot stand in a band of 28. The time keeps its own
+   weight so it is still the part the eye finds first. */
+#clock{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:13px}
+#clock b{font-weight:600}
+
+/* ---------- Dock ----------
+   It lies BELOW the band, the start menu and every window (sheet section 8:
+   menu, control centre and launcher are always above the dock), and windows
+   may pass under it - which is what macOS does and what Lord Flow does. The
+   desktop's own area is therefore unchanged: the dock floats, it does not
+   take room away. */
+#dock{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:99998;
+      display:flex;align-items:flex-end;gap:8px;padding:8px;max-width:calc(100vw - 16px);
+      background:var(--menu-bg);border:1px solid var(--win-border);border-radius:var(--radius);
+      backdrop-filter:blur(var(--blur)) saturate(150%);box-shadow:var(--shadow)}
+#dock:empty{display:none}
+.dapp{position:relative;display:flex;align-items:center;justify-content:center;
+      width:var(--dock-size);height:var(--dock-size);flex:0 0 auto;padding:0;border:0;
+      border-radius:9px;cursor:pointer;background:none;color:inherit}
+/* THE MAGNIFIER GROWS UPWARD, out of the dock, and takes no room in the row.
+   It used to grow the BUTTON from 40 to 64, and that is a layout change: the
+   row got 24 px longer and pushed its neighbours along. MEASURED at 360x700,
+   a phone held upright, with seven apps in the dock:
+
+     at rest      the row needs 342 px of the 342 it has, last icon ends at 345
+     magnified    the row needs 360 px of the 342 it has, last icon ends at 369
+
+   The screen is 360 wide. Pointing at the FIRST icon pushed the LAST one off
+   the screen - an icon nobody could press any more, and the arithmetic of
+   section 8 of the sheet says why there is no room: 16 + 7*40 + 8*6 = 344 is
+   the whole dock, so the row is full by construction and has nothing to give.
+
+   A transform takes no part in layout, so the icon can be 64 across while its
+   button stays 40: nothing moves sideways, nothing is pushed anywhere. The
+   origin is the BOTTOM edge, so the growth goes up and out of the dock's
+   surface - which is what macOS and Lord Flow do, and the one direction where
+   a full dock still has room.
+
+   The NEIGHBOURS still do not grow, and that is now a measured no rather than
+   a "not this step": a neighbour at the halfway 1.3 would eat 6 px into a gap
+   of 8 while the magnified icon eats 12 from the other side, so the two would
+   overlap by 10 px. macOS makes that room by sliding the row apart, and at
+   360 px this row has no room to slide into. */
+.dapp .g{display:flex;align-items:center;justify-content:center;width:100%;height:100%;
+         border-radius:9px;color:#fff;
+         transform-origin:bottom center;
+         transition:transform var(--motion) var(--ease);
+         background:var(--tint,var(--accent));
+         background:linear-gradient(135deg,var(--tint,var(--accent)),
+                     color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
+/* The magnified icon is 4 px wider on each side than the gap it has (12 into
+   a gap of 8), so it reaches over its neighbour - and a later sibling paints
+   over an earlier one, which would have the NEIGHBOUR drawn on top of the
+   icon the pointer is on. One step up the stack puts the icon in front of the
+   row it stands in. */
+.dapp:hover,.dapp:focus-visible{z-index:1}
+.dapp:hover .g,.dapp:focus-visible .g{transform:scale(var(--dock-grow))}
+.dapp .g .ico{width:74%;height:74%}
+.dapp.off{opacity:.55}
+/* The dot that says the app is open. It sits UNDER the icon, outside it, so a
+   magnified icon does not cover it. */
+.dapp.on::after{content:"";position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);
+                width:4px;height:4px;border-radius:50%;background:var(--bar-fg);opacity:.75}
 
 /* ---------- Startmenü ---------- */
 #startmenu{position:fixed;top:calc(var(--bar-h) + 6px);left:8px;width:min(420px,calc(100vw - 16px));
            max-height:min(620px,calc(100vh - var(--bar-h) - 20px));background:var(--menu-bg);
-           backdrop-filter:blur(22px) saturate(150%);border:1px solid rgba(127,127,127,.30);
+           backdrop-filter:blur(var(--blur)) saturate(150%);border:1px solid rgba(127,127,127,.30);
            border-radius:14px;box-shadow:var(--shadow);z-index:100001;display:none;
            flex-direction:column;overflow:hidden;color:var(--win-fg)}
 #startmenu.open{display:flex;animation:pop .13s ease-out}
@@ -202,7 +328,9 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 .smitem.off{opacity:.55}
 .smitem .g{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
            font-size:18px;font-weight:600;border-radius:9px;color:#fff;
-           background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+           background:var(--tint,var(--accent));
+           background:linear-gradient(135deg,var(--tint,var(--accent)),
+                       color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
 .smitem .n{overflow:hidden;word-break:break-word;max-height:2.9em}
 .smempty{padding:14px;color:var(--muted)}
 #smlook{padding:4px 12px 10px;border-top:1px solid rgba(127,127,127,.25)}
@@ -224,23 +352,32 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;ov
 .win{position:absolute;display:flex;flex-direction:column;
      min-width:var(--win-min-w);min-height:var(--win-min-h);
      background:var(--win-bg);color:var(--win-fg);border:1px solid var(--win-border);
-     border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+     border-radius:var(--radius);box-shadow:var(--shadow-back);overflow:hidden}
+/* The window you are talking to stands off the page; the rest lie flat. */
+.win.focus{box-shadow:var(--shadow)}
 .win:focus{outline:none}
 .win.min{display:none}
 .win.max{border-radius:0}
 .win.anim{transition:left .16s,top .16s,width .16s,height .16s}
-.titlebar{display:flex;align-items:center;height:36px;padding-left:12px;gap:8px;
+.titlebar{display:flex;align-items:center;height:40px;padding-left:12px;gap:8px;
           background:var(--title-bg);border-bottom:1px solid var(--win-border);cursor:default;
           flex:0 0 auto;touch-action:none}
 .win.focus .titlebar{background:var(--title-bg-active)}
 .titlebar .g{display:flex;align-items:center;justify-content:center;width:20px;height:20px;
              font-size:12px;font-weight:600;border-radius:6px;color:#fff;
-             background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+             background:var(--tint,var(--accent));
+             background:linear-gradient(135deg,var(--tint,var(--accent)),
+                         color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
 .titlebar .t{flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
              white-space:nowrap;opacity:.9}
 .win.focus .titlebar .t{opacity:1}
+/* The three window buttons. Forty by forty pixels, by Thomas' decision of
+   2026-10-30 - a deliberate step away from the LordOS template, whose round
+   lights measure 13 x 13: NGC is touched with a finger, and a finger needs
+   about 40. The height comes from the title bar, which is why that bar is
+   exactly 40 high: 40 across x 40 down, with no number chosen twice. */
 .wbtns{display:flex;height:100%}
-.wbtn{width:44px;height:100%;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;
+.wbtn{width:40px;height:100%;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;
       line-height:1;opacity:.8}
 .wbtn:hover{background:rgba(127,127,127,.25);opacity:1}
 .wbtn.close:hover{background:#e13e3e;color:#fff}
@@ -364,8 +501,13 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    appears only when there is news is announced by nobody. */
 /* pointer-events:none on the strip itself: while it is empty it is a box of
    no size, and a box of no size must not be able to swallow a click either. */
-.noticebar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;
-           align-items:center;gap:6px;max-width:min(560px,calc(100vw - 32px));z-index:100002;
+/* TOP RIGHT, under the band, which is where macOS and Lord Flow put what the
+   system has to say. It stood centred at the bottom of the screen - the spot
+   the dock took on 2026-11-01, so the news and the apps were stacked on the
+   same corner of the screen. Nothing about WHEN it speaks changes here; only
+   where it stands. */
+.noticebar{position:fixed;top:calc(var(--bar-h) + 8px);right:8px;display:flex;
+           align-items:center;gap:6px;max-width:min(380px,calc(100vw - 16px));z-index:100002;
            pointer-events:none}
 .status,.alert,.noticeclose{pointer-events:auto}
 .status,.alert{margin:0;padding:var(--pad) 14px;border-radius:10px;border:1px solid var(--win-border);
@@ -388,7 +530,6 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .noticeclose:hover{border-color:var(--accent)}
 
 @media (max-width:640px){
-  #icons{display:none}
   .task .lbl{display:none}
 }
 
@@ -507,10 +648,45 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .poweredby{margin:0 auto;padding:0 16px;max-width:min(360px,calc(100vw - 32px));
            text-align:center;color:var(--muted);font-size:12px}
 
-/* The standing advice to move to passkeys. Bottom LEFT, because the notice
-   bar of the desktop sits in the middle and this one never goes away: two
-   strips over each other is one strip nobody can read. */
-.passkeyhint{position:fixed;left:16px;bottom:18px;z-index:100001;margin:0;padding:8px 12px;
+/* The standing advice to move to passkeys. Bottom left.
+   THE REASON WRITTEN HERE WAS NO LONGER TRUE: it said "because the notice bar
+   of the desktop sits in the middle", and that bar moved to the top right on
+   2026-11-01. Left as a false reason it would be read as one, and the next
+   person would keep this corner for a collision that cannot happen any more.
+   The reason it stays out of the top right is about the message itself: this
+   one NEVER goes away, and the top right is where the shell says what it has
+   to say right now. A standing piece of advice parked in the stack of passing
+   ones either hides the next notice or looks like one that will not go.
+
+   SO IT GOES TOP LEFT, and the bottom left it had is now a measured defect
+   rather than a quiet corner. MEASURED at 360x700: the dock is 344 px wide
+   and the room is 344 px, so it is centred across almost the whole width,
+   and document.elementFromPoint at the centre of a dock icon returned this
+   paragraph - z-index 100001 over the dock's 99998. On a phone the dock could
+   not be pressed in the middle, and the comment that stood here claimed the
+   corner was "out of the dock's way" without ever having measured it.
+
+   Top left cannot meet the dock at any width, because the dock is at the
+   bottom. It also reads as a system with the strip opposite it: standing
+   advice on the left, passing notices on the right, both under the band at
+   the same offsets.
+
+   AND IT TAKES NO CLICKS, which is the half of this that matters more than
+   the corner. This paragraph is text and nothing else - no link, no button -
+   so there was never anything in it to press, and a box that lies over the
+   shell at z-index 100001 and swallows the pointer is a trap wherever it is
+   parked. The strip opposite it has worked this way all along: none on the
+   box, auto on the things that can be pressed.
+
+   MEASURED, and it is why this line exists rather than a smaller move: with
+   the corner changed but the clicks still taken, desktop-windows "a double
+   click on the title bar maximizes and restores" timed out thirty seconds on
+   "<p class=passkeyhint> intercepts pointer events". I had measured the
+   overlap in ONE viewport, called the three pixels it cost harmless, and
+   missed that another spec's window sits somewhere else. One measurement is
+   not a rule. */
+.passkeyhint{position:fixed;left:8px;top:calc(var(--bar-h) + 8px);z-index:100001;margin:0;padding:8px 12px;
+             pointer-events:none;
              border-radius:10px;border:1px solid #d2932a;background:var(--win-bg);
              color:var(--win-fg);box-shadow:var(--shadow);font-size:12.5px;
              max-width:min(280px,calc(100vw - 32px))}
@@ -548,3 +724,12 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .stand .standgo{padding:3px 9px;font-size:.85rem;border-radius:7px;
   border:1px solid var(--win-border);background:none;color:inherit;cursor:pointer}
 .stand .standgo:hover{color:var(--fg)}
+
+/* "Reduce motion" bites in ONE place: the duration goes to zero, and with it
+   every transition that reads --motion. The magnifier in the dock is switched
+   off as well and not merely made instant - sheet section 11 says so, and a
+   jump from 40 to 64 with no duration is a flicker, not a calmer screen. */
+@media (prefers-reduced-motion: reduce){
+  :root{ --motion: 0ms; }
+  .dapp:hover .g,.dapp:focus-visible .g{transform:none}
+}

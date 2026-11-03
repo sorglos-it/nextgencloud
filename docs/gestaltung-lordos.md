@@ -380,11 +380,27 @@ Dock-Schritt, nicht hierher. Heute hat NGC zwei Apps.
 | Lage | unten | unten, links, rechts | LordOS |
 | Größe je Zeichen | ~~54 px~~ **40 px** (`--dock-size`) | 36–80 | Thomas, 30.10.2026 (gerechnet, s. o.) |
 | Lupe | ein | ein / aus | LordOS |
-| Größtes Zeichen unter dem Zeiger | ~~86 px~~ **64 px** (`--dock-magnify`) | bis 128 | 40 × 1,6, Verhältnis aus LordOS |
+| Größtes Zeichen unter dem Zeiger | ~~86 px~~ **64 px** = 40 × **1,6** (`--dock-grow`) | bis 128 | 40 × 1,6, Verhältnis aus LordOS |
+| Richtung, in die die Lupe wächst | **nach oben** | oben / zur Seite | gemessen, 02.11.2026 (s. u.) |
 | Von selbst verstecken | aus | ein / aus | LordOS |
 | Die letzten benutzten Apps | aus (dann 3, nach einer Trennlinie) | | LordOS |
 | Fläche, Rand | `--dock-bg`, 1 px `--dock-border` | | LordOS |
 | Punkt unter einer offenen App | ja | | LordOS |
+
+**Die Lupe wächst nach oben, nicht zur Seite** (gemessen am 02.11.2026 bei
+360 × 700, sieben Apps im Dock). Die Zeile ist durch die Rechnung in Abschnitt 8
+randvoll: 16 + 7·40 + 8·6 = 344. Vergrößerte die Lupe den Knopf von 40 auf 64,
+wurde die Zeile 24 px länger — sie verlangte 360 px von den 342, die sie hat,
+und das letzte Symbol endete bei 369 auf einem 360 px breiten Bildschirm, also
+außerhalb. Darum ist die Lupe eine Vergrößerung (`transform`) mit dem unteren
+Rand als Ursprung: sie nimmt in der Zeile keinen Platz und wächst aus der
+Dock-Fläche heraus nach oben — so machen es macOS und Lord Flow auch.
+
+**Die Nachbarn wachsen nicht mit**, und das ist ein gemessenes Nein: ein
+Nachbar auf dem Mittelwert 1,3 frisst 6 px in eine Lücke von 8, während das
+vergrößerte Symbol von der anderen Seite 12 px hineinreicht — 10 px Überlappung.
+macOS schafft diesen Platz, indem es die Zeile auseinanderschiebt; bei 360 px
+ist dafür kein Platz da.
 
 So arbeitet es, aus LordOS abgelesen:
 
