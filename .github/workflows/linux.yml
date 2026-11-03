@@ -288,7 +288,15 @@ jobs:
           # exactly the trap the config was written against. 8161/8171/8181
           # keep them apart whatever the runner does.
           NGC_WEB_TEST_PORT: ${{ matrix.engine == 'chromium' && '8161' || matrix.engine == 'firefox' && '8171' || '8181' }}
-        run: npx playwright test --project=${{ matrix.engine }} --reporter=json > "${{ runner.temp }}/web.json" || true
+          # The reporter writes to a FILE, not to stdout. Measured in run
+          # 41716631146: all three shards died at the counter with
+          # "Unexpected token 'G', \"GitCommitI\"..." - playwright prints its
+          # own git-commit-info line to stdout before the JSON, so a plain
+          # redirect produces a file that is not JSON. The counter caught it
+          # because an unreadable report is red there; a counter that only
+          # looked for failures would have found none and said nothing.
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/web.json
+        run: npx playwright test --project=${{ matrix.engine }} --reporter=json || true
         working-directory: apps/web/tests
       - name: zaehlen
         # No number yet ON PURPOSE. A floor is a measured value, and the real
