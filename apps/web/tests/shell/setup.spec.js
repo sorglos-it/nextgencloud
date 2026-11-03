@@ -318,3 +318,48 @@ test("the code is kept nowhere once it has been used", async ({ shell }) => {
   expect(kept.all).not.toContain(CODE);
   for (const group of CODE.split("-")) expect(kept.all, group).not.toContain(group);
 });
+
+// The open page of an unpaired installation states the FACT and nothing else.
+// docs/setup-auskunft-und-meldung.md, part B: the one sentence names the state,
+// not the code, not where it is, not the way to the setup -- GET /api/v1/setup
+// already answers the whole offer to anyone who knows the endpoint, so the
+// page must not read that file out again to somebody who does not. The old
+// first screen did exactly that ("Auf dem Bildschirm des Servers steht ein
+// Einmal-Code"); that lead is gone and the state sentence stands where it did.
+//
+// Two mutants a person could write are held off, and both were seen red before
+// this case was trusted: one that names the code or its state (the old lead
+// brought back), one that tells a visitor the way in. Read in the BROWSER, in
+// two languages, and the sentence is searched for a DIGIT rather than its
+// wording -- a version number has slipped into a human sentence three times
+// elsewhere, and here a digit would be the one thing a code is made of.
+for (const [locale, sentence] of [
+  ["de-DE", "Diese Anlage ist noch nicht benutzbar. Der Betreiber muss die Einrichtung abschließen."],
+  ["fr-FR", "Cette installation n'est pas encore utilisable. L'exploitant doit terminer la configuration."],
+]) {
+  test.describe(`the unpaired notice in ${locale}`, () => {
+    test.use({ locale });
+    test("states the fact, names no code and no way", async ({ shell }) => {
+      await fresh(shell);
+      const head = shell.locator("#setuptitle");
+      await expect(head).toHaveText(sentence);
+      // Read from the DOM, not the file: the sentence carries no digit.
+      expect(await head.textContent(), "no digit in the notice").not.toMatch(/[0-9]/);
+      // Mutant A -- the sentence or a lead reveals the code or its state. The
+      // old lead named the code and its place on the server screen.
+      await expect(
+        shell.getByText(/Bildschirm|steht ein Einmal-Code|Code lautet|wartet auf|nicht gepaart/i),
+        "nothing on the page reveals the code or the pairing state",
+      ).toHaveCount(0);
+      // Mutant B -- the page tells a visitor the way in. The field stays as the
+      // operator's door, but no instruction and no link names it.
+      await expect(
+        shell.getByText(/tippen Sie|geben Sie den Code|Code eingeben|Einrichtung starten|setup fortsetzen/i),
+        "nothing on the page names the way to the setup",
+      ).toHaveCount(0);
+      // The operator's door is still there: the first run pairs through it, and
+      // that is the living control that this change must not break (part B, B1).
+      await expect(shell.getByLabel("Einmal-Code")).toBeVisible();
+    });
+  });
+}
