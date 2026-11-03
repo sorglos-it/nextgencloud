@@ -111,6 +111,27 @@ export const BUILT_IN = Object.freeze({
   "setup.password.missing": "Please choose a password.",
   "setup.password.different": "The two passwords are not the same.",
   "setup.signin": "NGC is set up. Please sign in now.",
+  // The six accent colours of the start menu. They are in here and not only
+  // in the files for the reason the comment above gives: without a sentence
+  // the six swatches have no name at all, and a name is the only way to hit
+  // them - there is no colour picker to fall back on.
+  "look.accent": "Color {name}",
+  "look.accent.blue": "Blue",
+  "look.accent.teal": "Turquoise",
+  "look.accent.pink": "Pink",
+  "look.accent.orange": "Orange",
+  "look.accent.violet": "Violet",
+  "look.accent.green": "Green",
+  // The band and the window commands. In here for the same reason as the rest:
+  // without a sentence the mark at the left of the band has no name, the dock
+  // has no name, and the menu of the app in front is four empty buttons.
+  "bar.start": "Start",
+  "bar.dock": "Dock",
+  "win.minimize": "Minimise",
+  "win.maximize": "Maximise",
+  "win.restore": "Restore",
+  "win.tile": "Arrange windows",
+  "win.close": "Close",
 });
 
 // A map of strings, read through the house decoder with a budget: a language
