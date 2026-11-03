@@ -546,3 +546,64 @@ export async function skipWithoutSessionKeys(shell) {
 export async function hasSessionKeys(shell) {
   return (await loginGap(shell)) === "";
 }
+
+// ---- why a login that should have worked did not --------------------------
+//
+// WHAT THIS IS FOR, measured and not guessed. A full web suite on 31.10.2026
+// had 137 red cases, and 131 of them failed with
+// `expect(locator).toBeVisible() failed` - the desktop did not come up. WHY it
+// did not stood in none of the 131 reports, because the mask draws the same one
+// sentence for 22 different causes, on purpose
+// (docs/login-fehlerklassen.md). A whole afternoon of reading 131 identical
+// reports is what that costs.
+//
+// This asks the MOCK instead of reading the screen. It is one line in the
+// message of an expectation, and then a red case says where the attempt died
+// rather than only that it did:
+//
+//   await expect(page.locator("#taskbar"), await whyLoginFailed(page))
+//     .toBeVisible();
+//
+// WHAT IT CAN TELL APART, so nobody expects more: whether /login/finish
+// arrived at all. That is the line between "the attempt died in the browser"
+// (a refused challenge, a name with no passkey, an Argon2id that did not
+// answer, no session keys) and "the API answered and the shell refused what
+// came back" (a bad signature, a trust list that does not hold). Which exact
+// class it was, it does not say - the shell does not know either, and that is
+// the security property this must not spend.
+//
+// IT ASKS THE TEST SERVER, NOT THE SHELL. /api/v1/mock is mock/api.js's own
+// door; nothing of apps/web/public knows it (shell/login.spec.js has the case
+// that pins that), and on a real installation Apache answers that address.
+//
+// It never throws: it runs inside a message that is being built for a case
+// that is already failing, and a helper that fell over there would hide the
+// failure it was called to explain.
+export async function whyLoginFailed(page) {
+  try {
+    const seen = await page.evaluate(async () => {
+      const ask = async (q) => {
+        const res = await fetch("/api/v1/mock?ask=" + q, { cache: "no-store" });
+        return res.ok ? (await res.text()) : "?";
+      };
+      const box = document.querySelector("form.loginbox");
+      const said = box?.querySelector('[role="alert"]')?.textContent ?? "";
+      const msg = document.querySelector("#root .msg")?.textContent ?? "";
+      return {
+        finishes: await ask("finishes"), proofs: await ask("proofs"),
+        said, msg, mask: box !== null,
+      };
+    });
+    const where = seen.finishes === "0"
+      ? "the attempt died in the BROWSER - no /login/finish ever arrived"
+      : `the API was asked (${seen.finishes} finishes so far, proofs "${seen.proofs}")`
+        + " - so the shell refused what came back, or the desktop broke after it";
+    const screen = seen.mask
+      ? `the mask is still up and says "${seen.said}"`
+      : seen.msg !== "" ? `the mask is gone and the shell says "${seen.msg}"`
+        : "the mask is gone and the desktop is not there";
+    return `no desktop: ${where}; ${screen}`;
+  } catch (e) {
+    return `no desktop, and the mock could not be asked why (${e?.message ?? e})`;
+  }
+}

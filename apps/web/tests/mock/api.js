@@ -892,6 +892,83 @@ export async function startMockAPI({ world, port, phpPort }) {
     return f;
   }
 
+  // ------------------------------------------------- a login that breaks at
+  //                                                   one NAMED step
+  //
+  // WHY THIS IS NOT ANOTHER `fault=`. `fault=` means "the NEXT request fails",
+  // one slot, taken once, in front of every path - a transport that is away.
+  // These three are a different animal: they let ONE step of a login answer
+  // WRONGLY while every other step works, and a login is four requests, so the
+  // setting has to survive until the step it is about is reached. One slot that
+  // is taken by the first request would fire at /login/start and never at the
+  // trust chain. So it is its own switch, it STAYS set until it is cleared
+  // (`break=` with nothing after it) and it is cleared with the world.
+  //
+  // WHAT IT IS FOR: docs/login-fehlerklassen.md measured 25 error classes that
+  // all draw the same one sentence. Eighteen of them cannot be brought about at
+  // all today, so no case can measure that the mask keeps its promise for
+  // them. These three bring about three of those classes - and they do it from
+  // the SERVER side, so nothing on the shell has to be touched and the mask
+  // goes on saying its one sentence.
+  //
+  // THE SWITCH LIVES IN apps/web/tests AND NOWHERE ELSE, which is the whole
+  // reason it is allowed to exist: this folder is the only npm ground in the
+  // project (CLAUDE.md, "npm nur in apps/web/tests/") and is not shipped;
+  // mock/api.js is the test server, and on a real installation Apache answers
+  // that address. Nothing of the shipped shell reads this flag, and
+  // tests/shell/login.spec.js has the counter-case that measures exactly that.
+  //
+  //   badsig   - the API certificate of the login answer is signed with a key
+  //              NOBODY in the trust list holds. The envelope is whole, the kid
+  //              still names api-1, and only the signature does not hold:
+  //              contracts/session.js:332, "session: bad signature".
+  //   badlist  - the trust chain carries a properly SIGNED version whose
+  //              content the contract refuses (issued = 0, which
+  //              trust.validateList turns away): contracts/trust.js:238,
+  //              "trust: invalid list". Measured in node on 03.11.2026, with a
+  //              control that had to pass: the untouched list parses, the one
+  //              with issued = 0 answers exactly that sentence.
+  //   nochain  - the trust chain is there and EMPTY (204, which is what this
+  //              path answers for a version nobody has): auth/login.js:101,
+  //              "login: no trust list".
+  //
+  // AFTER A SETUP `badlist` IS OUT OF ORDER, said rather than hidden: a setup
+  // that goes through makes the version the ADMIN signed this world's chain
+  // (installSetup below), and w.listSigner no longer signed it. Today nothing
+  // notices, because the stand-in auth/login.js:99-104 parses the version and
+  // follows no signature; after PR 164 it would. The cases below run no setup.
+  let breakAt = "";
+  const BREAKS = ["badsig", "badlist", "nochain"];
+  // The key that is NOT in the trust list, for badsig. Built once and on
+  // demand, so a run that never asks for it pays nothing.
+  let strangeKey = null;
+  async function strangeSigner() {
+    if (strangeKey === null) {
+      strangeKey = await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
+    }
+    return strangeKey.privateKey;
+  }
+
+  // brokenChain writes a chain whose one version is signed with the key that
+  // signed the real one and whose CONTENT the contract refuses. It is built
+  // fresh on every call out of the world's current list, so it cannot drift
+  // away from it.
+  async function brokenChain() {
+    const broken = { ...w.list, issued: 0 };
+    const payload = trust.encodeList(broken);
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" },
+      w.listSigner.priv, sign.message(sign.PURPOSE_TRUST_LIST, payload)));
+    return utf8(JSON.stringify({
+      versions: [{
+        payload: b64encode(payload),
+        proof: {
+          kind: proof.KIND_PASSWORD, kid: await sign.keyID(w.listSigner.pub),
+          sig: b64encode(sig), authData: "", clientData: "",
+        },
+      }],
+    }));
+  }
+
   // sendFault answers one of the two the way busy.go does. onSetupPath takes
   // the server's own conversion with it.
   function sendFault(res, kind, onSetupPath) {
@@ -934,6 +1011,10 @@ export async function startMockAPI({ world, port, phpPort }) {
     w.chainBytes = saved.chainBytes;
     w.logins = saved.logins;
     w.user = saved.user;
+    // A broken step belongs to the world it was set in. A case that puts the
+    // world back and then logs in must get a WORKING login, or it measures
+    // the leftover of the case before it.
+    breakAt = "";
   }
 
   function startFresh(foreign) {
@@ -1115,6 +1196,14 @@ export async function startMockAPI({ world, port, phpPort }) {
         // every name alike.
         const fault = url.searchParams.get("fault");
         if (fault !== null) faultNext = fault === "busy" || fault === "away" ? fault : "";
+        // Which step of the NEXT login answers wrongly. It needs no session
+        // for the same reason the lock does not: there is none before a login.
+        // Anything that is not one of the three clears it, so `break=` with
+        // nothing after it is how a case puts the world straight again - and a
+        // case that misspells the word gets a WORKING login and a red
+        // assertion, not a silently different fault.
+        const brk = url.searchParams.get("break");
+        if (brk !== null) breakAt = BREAKS.includes(brk) ? brk : "";
         // A fresh installation needs no session either: there is no user yet.
         // "1" takes the admin away, "0" puts the world buildWorld made back.
         const setup = url.searchParams.get("setup");
@@ -1238,6 +1327,12 @@ export async function startMockAPI({ world, port, phpPort }) {
 
     if (path === session.PATH_TRUST && req.method === "GET") {
       if (url.searchParams.get("from") !== "1") { res.writeHead(204, { "Cache-Control": "no-store" }); res.end(); return; }
+      // nochain: the same 204 this path gives for a version nobody has. The
+      // shell reads that as "no list" (auth/login.js:101) and not as an error
+      // of the transport, which is the whole point of answering it here
+      // instead of failing the request.
+      if (breakAt === "nochain") { res.writeHead(204, { "Cache-Control": "no-store" }); res.end(); return; }
+      if (breakAt === "badlist") { sendJSON(res, 200, await brokenChain()); return; }
       sendJSON(res, 200, w.chainBytes);
       return;
     }
@@ -1365,7 +1460,14 @@ export async function startMockAPI({ world, port, phpPort }) {
       inst: w.installation, node: w.api.id, client: b64encode(await session.certHash(cert)),
       dh: b64encode(apiDH), iat: c.iat, exp: c.exp,
     }));
-    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, w.api.sign.priv,
+    // badsig: the same document, signed by a key no node of the list holds.
+    // The kid still names api-1, so session.verifyAPI finds the node and the
+    // key it expects and gets as far as the signature - which is the step
+    // being measured. A kid that named nobody would be turned away one check
+    // earlier, with "session: malformed certificate", and the case would
+    // measure a different class than its name says.
+    const signer = breakAt === "badsig" ? await strangeSigner() : w.api.sign.priv;
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, signer,
       sign.message(sign.PURPOSE_API_CERT, payload)));
     const out = utf8(JSON.stringify({
       api: { payload: b64encode(payload), kid: await sign.keyID(w.api.sign.pub), sig: b64encode(sig) },
