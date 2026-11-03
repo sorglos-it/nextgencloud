@@ -428,6 +428,13 @@ Dazu, in derselben Änderung, die Prüfung in `audit.go` neben die vorhandene (Z
 
 Mehr ist es in `shared/` nicht. Die acht bzw. neun Stellen darunter folgen daraus.
 
+**Aber zwei Zeilen sind nicht der ganze Umfang.** Eine Änderung an `shared/` ist eine
+Vertragsänderung und gehört nach den Regeln des Repos ins Entscheidungsprotokoll. Der kleinste
+ehrliche Umfang ist darum: die zwei Zeilen **und** ein Buchpunkt. Die Zeilen allein wären eine
+Vertragsänderung ohne Spur. Die Begründung, die der Buchpunkt braucht, steht im Kommentar oben —
+vor allem der Satz, warum es **zwei** Felder sind und nicht eines: dieselbe Spalte mit zwei
+Bedeutungen macht jede früher geschriebene Zeile unlesbar.
+
 Die Stellen, die mitziehen müssen — damit niemand die Hälfte baut:
 
 | Stelle | Datei |
