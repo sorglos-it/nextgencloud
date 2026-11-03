@@ -129,7 +129,20 @@ async function plantService(shell, [user, password]) {
       const http = await import("/assets/js/net/http.js");
       const { adapterFor } = await import("/assets/js/net/world.js");
       const { login } = await import("/assets/js/auth/login.js");
-      const h = await login({ name: who, password: pw });
+      const { anchorFor, openerFor } = await import("/assets/js/shell/trustlist.js");
+      const { loadConfig } = await import("/assets/js/net/config.js");
+      // THE REAL OPENER, and no stand-in: login() has no default for
+      // openTrust any more, because the one it used to have took version 1 --
+      // the oldest version of a list that grows. This case used to live off
+      // that default and is the fifth call site the repair had to find; it was
+      // missed at first because a search of apps/web/public does not see the
+      // calls the tests make.
+      //
+      // It opens against the anchor of /config.json like the shell does, which
+      // is only possible since the anchor is DERIVED from the mock world's
+      // seeds (tools/trust-anchor.mjs) instead of being a filler pattern.
+      const anchor = await anchorFor(await loadConfig());
+      const h = await login({ name: who, password: pw, openTrust: openerFor({ anchor }) });
       const chain = await http.trustChain(1);
       const list = await trust.parseList(chain.versions[0].payload);
       const ctl = list.nodes.find((n) => n.kind === trust.NODE_CONTROLLER);
