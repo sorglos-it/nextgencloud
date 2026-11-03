@@ -231,7 +231,7 @@ gibt, aber erst nach dem Schreiben.
 | 97 | Die Skripte tragen eine frische Maschine — der Prüflauf trug sie nicht | gilt – `ulh` ohne Handgriff durchgelaufen, **Wand 1 am Dienst belegt weg**; sechs Befunde am Prüflauf behoben, Station 2w neu, 11 Stationen 0 rot; ab Station 3 Browser nötig | Messung |
 | 98 | Der Weg bis zur bedienbaren App ist gegangen — und eine zweite Person kommt nicht hinein | gilt – Uhr läuft im Fenster, zwei `exec` im Protokoll; zwei Wände: gehärtete Vorlage lässt nur Port 22 durch, Wurzel-Dateisystem ohne `encrypt` — beide behoben, Station 2a neu; der offene Befund zu anna ist in **Punkt 99** berichtigt | Messung |
 | 99 | Eine Ablehnung wegen fehlendem Recht hinterlässt keine einzige Spur | gilt – **berichtigt Punkt 98**; Meldung absichtlich erzeugt, Rechteänderung wirkt sofort; dazu: zweiter `install` mit anderem Namen sperrt alle aus, eine unlesbare Zeile verwirft das ganze Protokoll, Firewall-Regel überlebte kein Neuladen | Messung |
-| 100 | Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden offen | gilt – **berichtigt eine eigene Abwägung dieser Prüfrunde**; Startseite byte-gleich (451), aber `/api/v1/setup` gepaart 404 / ungepaart 200 mit vollständiger Auskunft samt MAC, `config.json` ohne `anchor`; 302 Klagen in sieben Tagen sind der dokumentierte Normalfall | Messung |
+| 100 | Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden eine offene Akte | gilt – **berichtigt eine eigene Abwägung dieser Prüfrunde**; Startseite byte-gleich (451), aber `/api/v1/setup` gepaart 404 / ungepaart 200 mit vollständiger Auskunft samt MAC, `config.json` ohne `anchor`; **Übernahme ausgeschlossen** (code-geschlüsselter MAC, sterbender Mutant einer Nachbarsitzung); 302 Klagen in sieben Tagen sind der dokumentierte Normalfall | Messung |
 
 ### Die Widersprüche auf einen Blick
 
@@ -8221,7 +8221,7 @@ gesetzt zeigte — und das ist kein Versäumnis dieses Punktes, sondern sein Geg
 Anlage hat darüber nichts aufgeschrieben, und nachträglich ist nichts mehr zu holen. Die
 Maschine 310 ist am 30.10.2026 abgebaut, nachdem dieser Punkt geschrieben war; nachzuprüfen ist er an der Aufschreibung, nicht an ihr.
 
-## Punkt 100: Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden offen
+## Punkt 100: Eine ungepaarte Anlage ist für den Betreiber unsichtbar und für den Fremden eine offene Akte
 
 **Gemessen am 3.11.2026** an zwei Anlagen gleichzeitig: `ngc-ein` (10.2.3.216, eingerichtet
 und nie gepaart) und der kleinen Anlage (Web-Knoten 10.2.3.210, gepaart, Anker bei `seq 8`).
@@ -8285,30 +8285,65 @@ Installation ohne Rückweg (Punkt 97, und `docs/installation-kleines-system.md`,
 nur in einer Logzeile, die absichtlich nur bei Änderung erscheint. Sieben Tage unbemerkt sind
 damit nicht Nachlässigkeit, sondern Bauart.
 
-**Für den Fremden offen:** derselbe Zustand wird an einem unauthentifizierten Endpunkt
-vollständig ausgeplaudert. Wer eine ungepaarte Installation findet, weiss, dass hier eine
-Einrichtung aussteht, und kennt Knoten, Laden und Schlüssel.
+**Für den Fremden eine offene Akte, aber eine verschlossene Tür:** derselbe Zustand wird an
+einem unauthentifizierten Endpunkt vollständig ausgeplaudert — wer eine ungepaarte
+Installation findet, kennt Kennung, Knoten mit `noise`/`sign`/`tls`, Tunneladresse,
+`releaseKey` und den Laden samt Adresse und Schlüssel. **Übernehmen kann er sie damit
+nicht.** Die Abstufung ist der Kern dieses Punktes: es ist Aufklärung ohne Anmeldung, nicht
+ein Weg hinein.
 
-### Was daraus noch zu bauen wäre
+### Warum die Tür zu ist, am Quelltext nachgelesen
 
-1. **Erst die Frage, dann die Meldung.** Vor jeder Gestaltung steht: darf die
-   Einrichtungsauskunft überhaupt öffentlich sein? Heute ist sie es. Die naheliegende
-   Antwort — der ungepaarten Maschine eine sichtbare Aussage auf der Seite geben — macht das
-   Problem für den Fremden **grösser**, nicht kleiner, solange der Endpunkt offen ist.
-2. **Die Aussage, wenn sie kommt**, muss dem Menschen vor der Seite genug sagen („diese
-   Installation ist noch nicht benutzbar, der Betreiber muss die Einrichtung abschliessen")
-   und dem Fremden nichts — insbesondere nicht, dass ein lebender Einrichtungscode daliegt
-   und wie man ihn benutzt.
-3. **Der Betreiber braucht den Hinweis dort, wo er hinsieht**, nicht im Journal: eine
-   Installation ohne Vertrauensliste ist kein laufender Betrieb und sollte in keiner
-   Zustandsabfrage als gesund gelten.
+- `shared/session/session.go`: `VerifySetup` prüft als **erstes**
+  `!ValidSetupCode(code) || !hmac.Equal(s.MAC, SetupMAC(code, s.Trust.Payload))`, bevor
+  irgendetwas entschlüsselt wird. Ohne den Code gibt es keinen gültigen MAC.
+- `apps/server-api/classes/setup/setup.go`: genau dieser Aufruf steht im `take`-Pfad, dem
+  POST, das die erste Fassung annimmt.
+- **Zwei MACs, nicht einer** — die Stelle, die den Riegel dichter macht als erwartet: die
+  GET-Auskunft trägt `OfferMAC` über `"ngc/setup-offer/v1"`, das POST verlangt `SetupMAC`
+  über `"ngc/setup/v1"`. Der Quelltext sagt dazu in eigenen Worten, die Label hielten die
+  beiden auseinander, „so a MAC made for one direction never passes for the other". Der MAC
+  aus der öffentlichen Auskunft ist also nicht einmal wiederverwendbar.
+- Der Code selbst: Alphabet A-H, J-N, P-Z, 2-9 — **32 Zeichen** ohne I, O, 0 und 1, 20
+  Stellen, also 32²⁰ = **2¹⁰⁰**. Erzeugt in `apps/server-api/classes/secrets/random.go` aus
+  `crypto/rand` über `Bytes(20)` und `int(c)%32`; weil 256 = 8·32 ist, verzerrt der Rest
+  nichts. Der MAC gibt den Code nicht her.
+
+**Woher diese Antwort kommt:** die Frage stand in der ersten Fassung dieses Punktes
+ausdrücklich als *nicht gemessen* offen. Beantwortet hat sie die Nachbarsitzung „Eine
+ungepaarte Anlage verrät sich jedem" am 3.11.2026 an einer **eigenen örtlichen**
+Installation, nicht an `ngc-ein`: fremder Admin-Schlüssel mit eigener erster Fassung ohne
+Code → 403, dann 429 (`E_LOCKED`), Vertrauensliste blieb leer; positive Kontrolle mit echtem
+Code → 204. Der tragende Beleg ist ein **sterbender Mutant**: wird die Code-Prüfung in
+`take()` per Überlagerung entfernt (`shared/` unberührt), antwortet der fremde Versuch 204
+und die negative Kontrolle wird rot. Der code-geschlüsselte MAC ist also wirklich der Riegel
+und nicht nur die erste Hürde davor.
+
+Die vier Quellstellen oben habe ich selbst gegengelesen; die lebende Gegenprobe und den
+Mutanten habe ich **nicht** selbst gefahren.
+
+### Was dieser Punkt offenlässt — und wer es führt
+
+Dieser Punkt hält die **Frage und ihre Abstufung** fest, nicht den Entwurf einer Behebung.
+Gebaut wird in der Nachbarsitzung „Eine ungepaarte Anlage verrät sich jedem", und deren Blatt
+ist die Stelle, an der der Stand steht; hier wird er nicht verdoppelt. Dort ist Teil A
+entschieden (die Auskunft bleibt offen, mit Begründung — sie ist der nötige Weg für die erste
+Person) und Teil B freigegeben: ein ehrlicher Satz auf der Seite, der weder den Code noch
+seinen Zustand noch den Weg dorthin nennt.
+
+Was aus **diesem** Punkt für jede Behebung bindend bleibt: eine Installation ohne
+Vertrauensliste ist kein laufender Betrieb und sollte in keiner Zustandsabfrage als gesund
+gelten. Heute gilt sie es — und genau das ist die blinde Hälfte des Befundes.
 
 **Getrennt gehalten:** gemessen sind die neun Zahlen der Gegenprobe-Tabelle, der byte-gleiche
 `diff` der beiden Startseiten, der Inhalt der 711 Byte samt `mac`, das Fehlen des
 `anchor`-Schlüssels in `config.json` der ungepaarten Maschine und die vier Quellstellen.
 Abgewogen ist die Einordnung als zwei Seiten eines Befundes und jede Zeile der letzten Liste.
-**Nicht gemessen** ist, ob ein Fremder mit dieser Auskunft die Installation tatsächlich
-übernehmen könnte — dazu hätte ich den Paarungsweg an einer fremden Maschine gehen müssen,
-und das war nicht meine Maschine. Es ist die erste Frage, die der Bau zu klären hat, und bis
-dahin ist dieser Punkt eine offene Frage und keine belegte Lücke. `ngc-ein` ist unverändert;
-an ihr wurde nur gelesen (vier Abfragen), nichts eingerichtet und nicht gepaart.
+Von **mir selbst gelesen, nicht gemessen** im Sinne eines Laufs sind die vier Quellstellen
+zum Riegel: die Reihenfolge in `VerifySetup`, ihr Sitz im `take`-Pfad, die beiden
+auseinandergehaltenen MAC-Label und die Erzeugung des Codes aus `crypto/rand` über ein
+32-Zeichen-Alphabet. **Von einer anderen Sitzung gemessen** und hier übernommen sind die
+lebende Gegenprobe (403, 429, leere Liste; 204 mit echtem Code) und der sterbende Mutant.
+**Nicht mehr offen** ist damit die Frage der ersten Fassung dieses Punktes, ob ein Fremder
+übernehmen kann: er kann es nicht. `ngc-ein` ist unverändert; an ihr wurde nur gelesen (vier
+Abfragen), nichts eingerichtet und nicht gepaart.
