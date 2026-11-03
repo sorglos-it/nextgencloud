@@ -283,15 +283,25 @@ export function setupView(root, { config, onDone } = {}) {
   // page with nothing on it - and the live region the message was going to go
   // into would already be gone with the step before. This way the step that
   // stands stays standing until its successor is whole.
-  function box(lead) {
+  // heading defaults to the invitation of the steps that run AFTER the code is
+  // in - those are the operator's, reached only with a code that fit. Step one
+  // is the open page, and it passes the state sentence instead: it says what
+  // is true to whoever stands there and names neither the code nor the way,
+  // because GET /api/v1/setup already answers the whole offer to anyone who
+  // knows the endpoint, and the page must not read that file out a second time
+  // to somebody who does not (docs/setup-auskunft-und-meldung.md, part B).
+  function box(lead, heading = "NGC einrichten") {
     const form = el("form", "loginbox setupbox");
     // A form, so Enter works in every field - and one that never submits
     // itself, because a shell that navigates away from itself is gone.
     form.setAttribute("novalidate", "novalidate");
-    const head = el("h1", "loginhead", "NGC einrichten");
+    const head = el("h1", "loginhead", heading);
     head.id = "setuptitle";
     form.setAttribute("aria-labelledby", head.id);
-    form.append(head, el("p", "setuplead", lead));
+    form.append(head);
+    // A lead only when there is one: step one has none, so it gets no empty
+    // paragraph announced by nothing.
+    if (lead) form.append(el("p", "setuplead", lead));
     // One live region, built with the step and emptied again: a region that
     // appears only when there is news is announced by nothing.
     const said = note("", "error");
@@ -309,8 +319,12 @@ export function setupView(root, { config, onDone } = {}) {
   // ------------------------------------------------------------- step one
 
   function askCode() {
-    const { form, said } = box("Diese Anlage ist neu. Auf dem Bildschirm des Servers "
-      + "steht ein Einmal-Code. Bitte tippen Sie ihn hier ein.");
+    // The open page states only the fact: this installation is not usable yet
+    // and its operator has to finish the setup. No word of a code, where it is
+    // or how to use it; the field below is the operator's way in, and it
+    // reveals nothing a visitor could use. The old lead named the code and its
+    // place on the server screen -- the one thing part B's lock forbids.
+    const { form, said } = box("", t("setup.notready"));
     const code = field("Einmal-Code", "text");
     // Nothing of this field is remembered, suggested or corrected: it holds a
     // secret that is good once.
