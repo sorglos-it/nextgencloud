@@ -258,7 +258,14 @@ jobs:
     # for: a single total hides which engine carried it.
     name: web shell (${{ matrix.engine }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 20 minutes, and the number is measured, not chosen: a full suite per
+    # engine on the Windows machine takes 542 s (chromium), 469 s (firefox),
+    # 561 s (webkit) at a7d7b384 - 1572 s together, which is also why all
+    # three in one job died 1.2 minutes past a 25-minute limit (run
+    # 41703511513): the suite was not hanging, it was nearly done. The longest
+    # engine is 561 s, so this is a factor of 2.1 over the slowest measured
+    # shard, on a machine that is not this runner.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
