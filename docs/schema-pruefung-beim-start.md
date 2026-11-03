@@ -158,11 +158,27 @@ Alle vier kippen. Damit entscheidet die **Richtung** des Vergleichs, wie schlimm
 | `ngc_session.expires` | **Go** (`login/live.go:114`) | hält. Sitzung bleibt abgelaufen, beide Wege. Nur `SessionPurge` räumt auf SQLite nicht – Stabilität |
 | `ngc_lock.until` (`lockTake`, `until <= ?`) | SQL | hält – weil `<=` in die **sichere** Richtung kippt. Ein zweiter Halter bekommt das Schloss nicht (`ok=false`, beide Wege) |
 
-`LockTake` prüft `until` in Go **gar nicht** ([once.go:130](../apps/server-db/classes/sqlstore/once.go)),
-ebenso `takeLock` der Migrationen ([migrate.go:171](../apps/server-db/classes/migrate/migrate.go)).
-Dass beide trotzdem halten, ist kein Verdienst des Codes, sondern die Richtung des
-Vergleichs. Eine Umkehrung in die andere Richtung – etwa `until > ?` für „gehalten" – wäre
-zwei Server, die gleichzeitig DDL in ein Schema schreiben.
+### Die beiden Schlösser halten aus Glück, nicht aus Absicht
+
+Das ist die nächste Karte und gehört aufgeschrieben, nicht gebaut.
+
+`LockTake` sieht `until` in Go **überhaupt nicht** an
+([once.go:130](../apps/server-db/classes/sqlstore/once.go)) – die ganze Entscheidung
+„ist das Schloss frei?" steht in der einen SQL-Zeile `AND (owner = ? OR until <= ?)`.
+Dasselbe gilt für `takeLock` der Migrationen
+([migrate.go:171](../apps/server-db/classes/migrate/migrate.go)): `AND until <= ?`,
+und sonst nichts.
+
+Gemessen hält beides: ein zweiter Halter bekommt ein gehaltenes Schloss nicht
+(`ok=false`, beide Wege). **Aber es hält durch die Richtung des Vergleichs und nicht
+durch Absicht.** `<=` kippt auf `false`, und `false` heißt hier „nicht frei", also
+Abweisung – die sichere Richtung, zufällig getroffen.
+
+Wer je eine Migration schreibt, die daraus `until > ?` für „gehalten" macht, hat damit
+**zwei Server, die gleichzeitig DDL in ein Schema schreiben** – genau das, was das
+Migrationsschloss verhindern soll, und genau der Befund W-1 der Prüfung vom 10.10.2026.
+Die Zeile sieht dabei harmlos aus und liest sich sogar natürlicher als die heutige.
+Darum steht es hier und nicht nur im Kopf von jemandem.
 
 **Breit gesucht**, wie die Leitsitzung verlangt hat: alle SQL-Anweisungen in `apps/` mit
 einem Größenvergleich im `WHERE`, ohne `vendor/` und ohne Testdaten. Es sind sechs, sie
@@ -322,6 +338,36 @@ entschieden.
 
 **C bleibt in der Hinterhand**, für den Fall, dass eine Abweichung im Feld wirklich
 auftritt und A noch nicht reif ist.
+
+## Eine Null, die aus einem Fehler kam
+
+Gehört hierher, weil es diese Messung selbst beinahe entwertet hat.
+
+Um die Bedingungen eines Prüflaufs festzuhalten, sollte ein kleines Skript drei Zahlen
+liefern: Sockets in `TIME_WAIT`, Zahl der go-Prozesse, davon solche mit `test`. Die dritte
+Abfrage ist an den eigenen Anführungszeichen gescheitert
+(`Get-CimInstance : Die Anfrage ist ungültig`). In der Messdatei stand danach:
+
+```
+go_test_prozesse=0
+```
+
+**Diese Null ist keine Messung.** Sie ist die Länge einer leeren Liste nach einem Fehler –
+und sie ist in jeder Zählung plausibel, weshalb sie niemandem auffällt. Hätte ich sie
+gemeldet, hätte sie „kein fremder Prüflauf lief" bedeutet, und das wäre genau die Aussage
+gewesen, auf die es ankam.
+
+Die Abhilfe ist nicht „besser hinsehen", sondern eine **Formprüfung vor dem Lauf**: das
+Skript zählt, wie viele seiner Zeilen dem Muster `name=<Ziffern>` entsprechen, und bricht
+ab, wenn es nicht drei sind. Erst danach darf gemessen werden.
+
+Dazu eine zweite Lehre aus demselben Paar von Zahlen, und sie berichtigt meine eigene
+Deutung: `TIME_WAIT` stand vor dem Lauf bei 291 und danach bei 10 119. Die zweite Zahl
+stammt vom **Lauf selbst**. `TIME_WAIT` misst also nicht Fremdlast, und mein früherer
+Schluss, der Unterschied 8 329 zu 291 belege Fremdlast, war falsch gefolgert – die 8 329
+können Rückstand meiner eigenen vorigen Läufe gewesen sein. Was Fremdlast wirklich misst,
+ist die **Zahl der go-Prozesse**: vier am 30.10., null bei dem Lauf, der zählt.
+**Zwei Zahlen zu messen heißt nicht, die richtige gemessen zu haben.**
 
 ## Was nicht gemessen ist
 
