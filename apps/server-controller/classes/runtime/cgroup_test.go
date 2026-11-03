@@ -629,6 +629,36 @@ func TestKillCgroupEndsTheTasksAndWaitsForTheCgroupToBeEmpty(t *testing.T) {
 	}
 }
 
+// 16b. And the cgroup DIRECTORY is gone afterwards, not only empty. This is a
+// claim of its own and it was bought dearly: measured on svc-1 on 3.11.2026, a
+// child born into a cgroup that has had a write to cgroup.kill is killed, while
+// a process migrated into it survives. Start clones podman into exactly this
+// cgroup, so a kill that leaves the directory behind takes the orphans AND
+// makes the app unstartable - for every version of the program, because the
+// damage sits in the directory. Six minutes of two apps down on the running
+// plant are what this case is here to prevent.
+func TestKillCgroupTakesTheDirectoryAwayAndNotOnlyTheTasks(t *testing.T) {
+	k := aKernel(t)
+	paths.sleep = func(time.Duration) {}
+	const name = "ngc-uhr-ad8c00e2"
+	if _, err := ensureCgroup(name, Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	k.write(cgroupDirOf(name)+"/cgroup.procs", "4711")
+	if !HasCgroup(name) {
+		t.Fatal("the preparation of this case did not hold: no task in the cgroup")
+	}
+	if err := KillCgroup(name); err != nil {
+		t.Fatalf("KillCgroup = %v, want the tasks ended", err)
+	}
+	// The directory, not the emptiness. A cgroup that is empty and still there
+	// is what cost the plant the six minutes.
+	if _, err := os.Stat(cgroupDirOf(name)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(%s) = %v, want the directory to be gone after the kill",
+			cgroupDirOf(name), err)
+	}
+}
+
 // 17. And a kernel that does not get everything: the cgroup still holds a task
 // after the kill. Then this says so and does not pretend - the caller must not
 // start a second set of processes on the same data.

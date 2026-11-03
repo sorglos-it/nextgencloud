@@ -39,6 +39,12 @@ type restoreEngine struct {
 	// stopErr is what Stop answers with: a container that cannot be stopped is
 	// a container that keeps running, and nothing may be started beside it.
 	stopErr error
+	// surplus is how many tasks of earlier lives EndSurplus ends per app,
+	// surplusErr what it answers with instead, and asked every name it was
+	// called with, in order.
+	surplus    map[string]int
+	surplusErr map[string]error
+	asked      []string
 	// limits is what every Start was told, in order. The ceiling of an app
 	// has to come out of its own manifest at every start, so a case has to be
 	// able to read what was passed and not only that Start happened.
@@ -47,7 +53,8 @@ type restoreEngine struct {
 
 func newRestoreEngine() *restoreEngine {
 	return &restoreEngine{up: map[string]bool{}, runErr: map[string]error{},
-		failOn: map[string]error{}}
+		failOn: map[string]error{}, surplus: map[string]int{},
+		surplusErr: map[string]error{}}
 }
 
 func (e *restoreEngine) note(s string) {
@@ -78,6 +85,14 @@ func (e *restoreEngine) Start(_ context.Context, name string, l runtime.Limits) 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.failOn[name]
+}
+
+// surplus is what EndSurplus answers per app name, and asked are the names
+// it was called with, in order. A case that wants no call at all looks at the
+// empty list.
+func (e *restoreEngine) EndSurplus(_ context.Context, name string) (int, error) {
+	e.asked = append(e.asked, name)
+	return e.surplus[name], e.surplusErr[name]
 }
 
 func (e *restoreEngine) Exec(_ context.Context, x runtime.Exec) (int, error) {
@@ -438,6 +453,8 @@ func (o *orderEngine) Start(ctx context.Context, name string, l runtime.Limits) 
 	*o.order = append(*o.order, "start "+name)
 	return o.e.Start(ctx, name, l)
 }
+func (o *orderEngine) EndSurplus(context.Context, string) (int, error) { return 0, nil }
+
 func (o *orderEngine) Exec(ctx context.Context, x runtime.Exec) (int, error) {
 	return o.e.Exec(ctx, x)
 }

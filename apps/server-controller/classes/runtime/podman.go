@@ -478,6 +478,66 @@ func (p *Podman) Running(ctx context.Context, name string) (bool, error) {
 	return len(bytes.TrimSpace(out.Bytes())) > 0, nil
 }
 
+// EndSurplus ends the process sets of this app that do not belong to the
+// container podman knows, and answers with how many tasks it ended.
+//
+// Why this exists beside Start's own wall and beside KillCgroup: see the head
+// of surplus.go. Short - where podman knows no container, cgroup.kill empties
+// the cgroup and there is nothing healthy in it; here the container podman
+// knows IS in there, so the surplus has to be named task by task.
+//
+// The number of the container's own process comes from podman and from nowhere
+// else, because podman is what decides which container counts as the one. The
+// four warning lines of rootless podman go to stderr at every call and are
+// kept OUT of the value: the answer is read from the last line, and it has to
+// be a number. The 477 bytes of point 78 have corrupted a measured value three
+// times in one day, and a value that is not a number must not become a pid
+// that something gets killed over.
+func (p *Podman) EndSurplus(ctx context.Context, name string) (int, error) {
+	u, err := ofName(name)
+	if err != nil {
+		return 0, err
+	}
+	var out, said bytes.Buffer
+	if _, err := p.run(ctx, u, nil,
+		[]string{"inspect", "-f", "{{.State.Pid}}", name}, nil, &out, &said); err != nil {
+		return 0, errors.Join(ErrSurplus, err, errors.New(trimSaid(said.String())))
+	}
+	pid, err := pidFromInspect(out.String())
+	if err != nil {
+		return 0, errors.Join(ErrSurplus,
+			fmt.Errorf("podman did not name a process number for %s: %w", name, err))
+	}
+	return endSurplus(name, pid)
+}
+
+// pidFromInspect reads the process number out of what podman answered.
+//
+// It stands apart from the call above so that it can be measured without an
+// engine: whether a value becomes a pid that something gets KILLED over is a
+// promise of the same weight as the walls in surplus.go, and a promise that
+// only a Linux case with a stand-in podman can reach is a promise that is
+// measured on one machine and skipped on the others.
+//
+// The LAST field, and it has to be a number. Rootless podman writes four
+// warning lines at every call (the 477 bytes of point 78), and they have
+// corrupted a measured value three times in one day. They go to standard
+// error here, so they cannot land in this string - but "cannot" rests on the
+// two buffers of one call, and this is what holds if that ever changes:
+// anything that is not a number is refused, and no pid comes out of it.
+func pidFromInspect(s string) (int, error) {
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return 0, errors.New("podman said nothing at all")
+	}
+	last := f[len(f)-1]
+	pid, err := strconv.Atoi(last)
+	if err != nil {
+		return 0, fmt.Errorf("%q is no process number", last)
+	}
+	return pid, nil
+}
+
 // execArgs is the argument list of Exec and the refusals that belong to it. It
 // stands apart from Exec for the reason given at createArgs: what this list
 // does and does not carry - no --privileged, no --cap-add, nothing that would

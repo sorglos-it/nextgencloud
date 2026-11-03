@@ -75,6 +75,15 @@ type Engine interface {
 	// joins its own cause - and an error without ErrKilled means the engine
 	// could not be run at all.
 	Exec(ctx context.Context, e Exec) (int, error)
+	// EndSurplus ends tasks of this app that run beside the container the
+	// engine knows, and answers with how many it ended. It is NOT an error
+	// when there were none - that is the ordinary case, and the answer is 0.
+	//
+	// It stands in this interface and not beside it because only the engine
+	// can say which container counts as the one: the number of its process
+	// comes from the engine, and everything else is weighed against it
+	// (surplus.go).
+	EndSurplus(ctx context.Context, name string) (int, error)
 }
 
 // Container is one container of one app.
