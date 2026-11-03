@@ -473,7 +473,11 @@ func (m *Manager) setUp(ctx context.Context, p appSetup, mf *store.Manifest,
 		_ = m.d.Engine.Stop(ctx, u.Name)
 		_ = m.d.Engine.Remove(ctx, u.Name)
 	}})
-	if err := m.d.Engine.Start(ctx, u.Name); err != nil {
+	// The same two numbers Create was given, said again: the ceiling of an app
+	// is written into its cgroup at every start, because a cgroup does not
+	// survive a restart of the machine (runtime.Engine.Start).
+	if err := m.d.Engine.Start(ctx, u.Name,
+		runtime.Limits{CPU: mf.CPU, Memory: mf.Memory}); err != nil {
 		return m.why(p.app, stepContainer, err)
 	}
 

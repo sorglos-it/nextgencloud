@@ -15,9 +15,12 @@ import (
 const (
 	onceInsert = "INSERT INTO ngc_once (kind, token, data, expires, used) VALUES (?, ?, ?, ?, ?)"
 	onceUse    = "UPDATE ngc_once SET used = ? WHERE kind = ? AND token = ? AND used = ? AND expires > ?"
-	onceRead   = "SELECT data FROM ngc_once WHERE kind = ? AND token = ?"
-	onceState  = "SELECT expires FROM ngc_once WHERE kind = ? AND token = ?"
-	oncePurge  = "DELETE FROM ngc_once WHERE expires <= ?"
+	// onceRead reads the data AND the time it was good until, in one
+	// statement, because OnceUse checks that time a second time in Go after
+	// the UPDATE has decided. See the bolt there for why.
+	onceRead  = "SELECT data, expires FROM ngc_once WHERE kind = ? AND token = ?"
+	onceState = "SELECT expires FROM ngc_once WHERE kind = ? AND token = ?"
+	oncePurge = "DELETE FROM ngc_once WHERE expires <= ?"
 
 	lockTake = "UPDATE ngc_lock SET owner = ?, until = ? WHERE name = ? AND (owner = ? OR until <= ?)"
 	lockRow  = "SELECT owner, until FROM ngc_lock WHERE name = ?"
@@ -124,7 +127,47 @@ func (s *store) OnceUse(ctx context.Context, kind string, value []byte, now int6
 			return err
 		}
 		if n > 0 {
-			return tx.QueryRowContext(ctx, onceRead, []byte(kind), blob(value)).Scan(&data)
+			// The second bolt, and the reason it exists is measured, not
+			// feared (30.10.2026, on the encrypted file this part really
+			// opens): the UPDATE above decides with "expires > ?", and that
+			// comparison runs IN SQL. On a database whose expires column
+			// carries another type than the migration gave it, SQLite does
+			// not fail that comparison - it INVERTS it. Measured at the same
+			// row: typeof(expires) reads "text" instead of "integer", and
+			// "expires > 5000" answers 1 where the value is 1000. SQLite
+			// orders every text after every number, so an expired one-time
+			// value matched the UPDATE, and this method handed its data out
+			// with no error anywhere. MariaDB 11.8.6 converts for the
+			// comparison and answered correctly, so this is one database's
+			// behaviour and not a rule of SQL.
+			//
+			// So the time is asked a second time HERE, in Go, where a wrong
+			// column type cannot turn a comparison around: Scan reads the
+			// text back into an int64 losslessly, and the three other places
+			// that compare a time in Go (ngc_user.locked, ngc_session.expires
+			// and the branch below) all held in the same measurement. A bolt
+			// in SQL can be inverted by the schema; a bolt in Go cannot.
+			//
+			// It is a SECOND bolt and not a replacement: the UPDATE keeps the
+			// deciding, so OnceUse is still spent by the write that hands it
+			// out and nothing was moved in front of it. There is deliberately
+			// no check BEFORE the UPDATE -
+			// TestOnceUseDecidesWithItsWrite reads this source and refuses
+			// one, and TestOnlyOneUseGetsTheValue measures with 32 racers why.
+			//
+			// Returning the error rolls the mark back (see write), so the
+			// value stays unused. That is sound rather than generous: this
+			// bolt rejects the same row on every later call too, so a value
+			// it caught can never be handed out, marked or not.
+			var expires int64
+			if err := tx.QueryRowContext(ctx, onceRead, []byte(kind), blob(value)).Scan(&data, &expires); err != nil {
+				return err
+			}
+			if expires <= now {
+				data = ""
+				return dbapi.ErrNotFound
+			}
+			return nil
 		}
 		// Why it matched nothing. The used column is not read: the UPDATE
 		// above asked for a row that is unused and in time, so a row it did

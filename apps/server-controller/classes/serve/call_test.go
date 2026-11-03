@@ -117,7 +117,7 @@ func (noEngine) RemoveImage(context.Context, string, string) error {
 func (noEngine) Create(context.Context, runtime.Container) error {
 	panic("a service call does not create a container")
 }
-func (noEngine) Start(context.Context, string) error {
+func (noEngine) Start(context.Context, string, runtime.Limits) error {
 	panic("a service call does not start a container")
 }
 func (noEngine) Stop(context.Context, string) error {
