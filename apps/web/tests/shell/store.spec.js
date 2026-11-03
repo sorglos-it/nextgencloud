@@ -37,7 +37,7 @@ async function store(page, world = {}) {
   await skipWithoutLogin(page);
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
-  await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();
+  await page.locator("#dock").getByRole("button", { name: "App-Store", exact: true }).click();
   await expect(page.locator(".store")).toBeVisible();
 }
 

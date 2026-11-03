@@ -301,7 +301,7 @@ for (const [what, twist] of TWISTS) {
     await skipWithoutLogin(page);
     await signIn(page);
     await expect(page.locator("#taskbar")).toBeVisible();
-    await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();
+    await page.locator("#dock").getByRole("button", { name: "App-Store", exact: true }).click();
     await expect(page.locator(".store")).toBeVisible();
     await page.getByRole("tab", { name: "Hochladen", exact: true }).click();
     await page.locator(".store input[type=file]").setInputFiles({
@@ -432,7 +432,7 @@ test("the password of the second confirmation reaches no wire and no link", asyn
   await skipWithoutLogin(page);
   await signIn(page);
   await expect(page.locator("#taskbar")).toBeVisible();
-  await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();
+  await page.locator("#dock").getByRole("button", { name: "App-Store", exact: true }).click();
   await expect(page.locator(".store")).toBeVisible();
   await page.getByRole("tab", { name: "Updates", exact: true }).click();
   await page.locator(".store").getByRole("button", { name: "Jetzt aktualisieren" }).click();

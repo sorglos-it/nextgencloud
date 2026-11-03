@@ -52,7 +52,7 @@ const REFUSED = "Die Liste der Apps konnte nicht geladen werden.";
 test("a name of 10 000 characters is refused, and nothing of it reaches the screen", async ({ page }) => {
   await desktop(page, [app({ id: "de.example.lang", name: "A".repeat(10000) }), CALC]);
   await expect(page.getByRole("status")).toHaveText(REFUSED);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   // Not one character of the name is anywhere in the page.
   expect(await page.evaluate(() => document.body.textContent.includes("AAAAAAAAAA"))).toBe(false);
   await stillADesktop(page);
@@ -61,14 +61,14 @@ test("a name of 10 000 characters is refused, and nothing of it reaches the scre
 test("a name of nothing but control characters is refused", async ({ page }) => {
   await desktop(page, [app({ id: "de.example.steuer", name: "\u0001\u0002\u0007\u001b\u007f" }), CALC]);
   await expect(page.getByRole("status")).toHaveText(REFUSED);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   await stillADesktop(page);
 });
 
 test("one control character inside an otherwise sound name is refused", async ({ page }) => {
   await desktop(page, [app({ id: "de.example.null", name: "Vor\u0000Nach" }), CALC]);
   await expect(page.getByRole("status")).toHaveText(REFUSED);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   expect(await page.evaluate(() => document.body.textContent.includes("Nach"))).toBe(false);
   await stillADesktop(page);
 });
@@ -79,7 +79,7 @@ test("a name with a bidi override in it is refused", async ({ page }) => {
   // printable one, so the contract does not let it in.
   await desktop(page, [app({ id: "de.example.bidi", name: "Rechner‮gpj.exe" }), CALC]);
   await expect(page.getByRole("status")).toHaveText(REFUSED);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   await stillADesktop(page);
 });
 
@@ -90,14 +90,14 @@ test("two apps with the same id are refused", async ({ page }) => {
     CALC,
   ]);
   await expect(page.getByRole("status")).toHaveText(REFUSED);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   await stillADesktop(page);
 });
 
 test("one app over the contract's thousand is refused", async ({ page }) => {
   await desktop(page, Array.from({ length: 1001 }, (_, i) => app({ id: "de.example.a" + i, name: "App " + i })));
   await expect(page.getByRole("status")).toHaveText(REFUSED);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   await stillADesktop(page);
 });
 
@@ -108,7 +108,7 @@ test("a thousand apps are shown, and the search is the way through them", async 
   // fixing round - so getByRole("status") would find it too; asking the
   // element directly says "empty" without going through a role to do it.
   await expect(page.locator(".status")).toHaveText("");
-  await expect(page.locator(".dicon")).toHaveCount(1000);
+  await expect(page.locator("#dock .dapp")).toHaveCount(1000);
   await page.getByRole("button", { name: "Start" }).click();
   await expect(page.locator("#smlist .smitem")).toHaveCount(1000);
   // The list scrolls inside the menu instead of pushing the menu off screen,
@@ -132,12 +132,16 @@ test("a thousand apps are shown, and the search is the way through them", async 
 test("a name from right to left is shown as the text it is", async ({ page }) => {
   const arabic = "مرحبا بالعالم";
   await desktop(page, [app({ id: "de.example.rtl", name: arabic }), CALC]);
-  await expect(page.locator(".dicon")).toHaveCount(2);
-  // Character for character, on the desktop, in the menu, in the title bar
-  // and in the taskbar. A name that arrives from the right must not come out
+  await expect(page.locator("#dock .dapp")).toHaveCount(2);
+  // Character for character, in the dock, in the menu, in the title bar and in
+  // the taskbar. A name that arrives from the right must not come out
   // shortened, reordered or with something stuck to it.
-  expect(await page.locator(".dicon .n").first().textContent()).toBe(arabic);
-  await page.locator("#icons").getByRole("button", { name: arabic, exact: true }).click();
+  //
+  // THE DOCK CARRIES NO NAMES, only icons, so the name is read off the LABEL -
+  // which is the stricter read of the two: a label is an attribute, and markup
+  // in an attribute can never become an element.
+  expect(await page.locator("#dock .dapp").first().getAttribute("aria-label")).toBe(arabic);
+  await page.locator("#dock").getByRole("button", { name: arabic, exact: true }).click();
   await expect(page.locator(".win")).toHaveCount(1);
   expect(await page.locator(".win .t").textContent()).toBe(arabic);
   expect(await page.locator("#tasks .task .lbl").textContent()).toBe(arabic);
@@ -156,13 +160,14 @@ test("names that try to be markup become text, and nothing of them runs", async 
     "<iframe src=javascript:alert(4)>",
   ];
   await desktop(page, [...bad.map((name, i) => app({ id: "de.example.b" + i, name })), CALC]);
-  await expect(page.locator(".dicon")).toHaveCount(5);
-  expect(await page.locator(".dicon .n").allTextContents()).toEqual([...bad, "Rechner"]);
+  await expect(page.locator("#dock .dapp")).toHaveCount(5);
+  expect(await page.locator("#dock .dapp").evaluateAll(
+    (bs) => bs.map((b) => b.getAttribute("aria-label")))).toEqual([...bad, "Rechner"]);
   await page.getByRole("button", { name: "Start" }).click();
   expect(await page.locator("#smlist .smitem .n").allTextContents()).toEqual([...bad, "Rechner"]);
   await page.keyboard.press("Escape");
   // Open one of them: the title bar and the taskbar get the same treatment.
-  await page.locator("#icons").getByRole("button", { name: bad[0], exact: true }).click();
+  await page.locator("#dock").getByRole("button", { name: bad[0], exact: true }).click();
   expect(await page.locator(".win .t").textContent()).toBe(bad[0]);
   // Nowhere a name is shown may an element out of that name have appeared.
   //
@@ -215,7 +220,7 @@ test("a notice the contract does not hold with is dropped without a word", async
 
 test("an empty list of apps leaves a desktop that still works", async ({ page }) => {
   await desktop(page, []);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   await expect(page.locator(".status")).toHaveText("");
   // docs/gestaltung.md point 3: one sentence, and it does not read as a
   // fault. Neither of the shell's two words for a defect is in it, and the
@@ -240,7 +245,7 @@ test("a list that could not be fetched is not an empty desktop", async ({ page }
   // and the desktop stays bare.
   await desktop(page, [app({ id: "de.example.lang", name: "A".repeat(10000) }), CALC]);
   await expect(page.getByRole("status")).toHaveText(REFUSED);
-  await expect(page.locator(".dicon")).toHaveCount(0);
+  await expect(page.locator("#dock .dapp")).toHaveCount(0);
   await expect(page.locator("#deskempty")).toBeHidden();
   await page.getByRole("button", { name: "Start" }).click();
   await expect(page.locator(".smempty")).toHaveCount(0);
