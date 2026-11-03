@@ -950,3 +950,280 @@ Fassung geprüft: `@playwright/test` **1.55.1**, gelesen aus
 zählt, was daliegt, nicht was eine Datei darüber behauptet — dasselbe
 Vorgehen, mit dem heute entschieden wurde, welche Datei an der Anlage wirklich
 ausgeliefert wird.
+
+## Der Grundlinienlauf, und warum er nichts zuordnen konnte (31.10.2026)
+
+Gefahren auf `origin/main` (dab25ef7) in einem eigenen Arbeitsbaum, drei
+Engines, 22,2 Minuten, nach Warteschleife von TIME_WAIT 16 854 auf 4 808:
+
+                 ok    rot   übersprungen
+    chromium    517      0        8
+    webkit      214      0      311
+    firefox     275      0      250
+    Summe      1006      0      569
+
+**`main` ist vollständig grün.** Damit ist der Zustand von `main` als Ursache
+der 137 roten Fälle meines Zweiglaufs ausgeschlossen.
+
+**Die Zuordnung trug trotzdem nicht.** In meinem chromium-Durchgang fehlten 84
+Fälle gegenüber `main`. Gesucht, gefunden: vier Prüfdateien, die `main` fährt,
+gab es auf meinem Zweig **nicht** (`bilder`, `closemessage`, `desktop-icons`,
+`selfupdate`, 25 Fälle). Dann gezählt:
+
+    git rev-list --count HEAD..origin/main   ->   325
+
+Mein Zweig hing **325 Commits** hinter `main`. Ich hatte geschrieben, der
+Arbeitsbaum sei „frisch aus `main` geschnitten" — falsch. Der Lauf verglich
+also nicht meine Änderung gegen nichts, sondern meinen alten Baum plus meine
+Änderung gegen einen 325 Commits neueren Baum. Die Zahlen waren richtig
+gemessen; **die Zuordnung war keine.** „Rot nur bei mir: 137" ist dann eine
+Differenz zweier verschiedener Bäume und keine Aussage über eine Änderung.
+
+Berichtigung zur Zählweise: die „24 statt 8 Fälle je Datei" in meinem Lauf
+waren **keine** Wiederholungen (0 Treffer für „retry"), sondern der Fehlerteil
+am Ende, der jeden gescheiterten Fall noch zweimal nennt. Mein `grep` hat ihn
+mitgezählt. Fünfter Fall derselben Figur an diesem Tag, diesmal in der Zählung
+statt in der Deutung: **welche Zahl messe ich.**
+
+## Nachgezogen, und der Anker neu gemessen
+
+`sync_with_base_branch` hat abgelehnt — das Werkzeug der Anwendung wirkt nur
+auf Arbeitsbäume, die sie selbst angelegt hat, und dieser ist von Hand
+angelegt. Also `git merge origin/main --no-edit`, Merge-Commit `5fac79e7`,
+**keine Konflikte**. Die sandbox-geschützten Dateien hat der Merge nicht
+angefasst, sonst wäre er daran gescheitert.
+
+Gezählt statt angenommen: Abstand 0, alle vier Dateien da, `openerFor` an
+beiden Stellen, `openTrustFromChain` null Treffer — der Stellvertreter ist nicht
+durch den Merge zurückgekommen.
+
+**Der Anker nach dem Merge dreimal neu abgeleitet, nicht übernommen:**
+
+    J3qr4-1LBiBkYpH6_a_Z1xWiTfVkmDfSEfg_yfahMUQ   (dreimal gleich)
+
+**Unverändert** zum Wert vor dem Merge. Die 325 Commits haben also weder
+`shared/testdata/trust.json` noch die Teile von `mock/world.js` berührt, aus
+denen Fassung 1 entsteht — das war die Sorge, die diese Wiederholung überhaupt
+veranlasst hat.
+
+Und daraus der Satz, der allgemeiner ist als dieser Fall: **eine Messung, die
+dasselbe Ergebnis liefert wie die Annahme, ist nicht umsonst — sie ist der
+Unterschied zwischen Wissen und Glück.** Hätte ich den Wert übernommen, hätte
+ich dieselbe Zahl gehabt und nicht gewusst, dass sie noch gilt.
+
+## Erwartung an den sauberen Vergleich, vor dem Lauf
+
+Jetzt erst ist der Vergleich sauber: derselbe Baum, dieselben drei Engines,
+dieselbe Fassung, einmal mit und einmal ohne meine Änderung.
+
+**Erwartet: die anmeldenden Fälle werden rot.** Die Ankerdatei trägt noch den
+Platzhalter, und die Ankerprüfung greift jetzt erstmals. **Grün wäre der Grund
+zur Sorge** — es hieße, dass die Fälle meinen Weg nicht anfassen, und dann wäre
+das Ergebnis so wenig eine Messung wie die unveränderten 323 zu 0 von
+`tools/check.sh`.
+
+## Für die noch zu schreibenden Fälle: den richtigen Haken nehmen
+
+Gemessen vom Strang „Anmeldung in zwei von drei Browsern ungeprüft" (`8dd205b0`),
+und es betrifft die Fälle, die dieser Auftrag noch schuldet:
+
+Drei Dateien — `contracts/proof.spec.js`, `contracts/session.spec.js`,
+`shell/users.spec.js` — sind teils nur von einem **lokalen** `hasEd25519`
+bewacht, der an `fixtures/page.js` vorbeigeht und nur `importKey("raw", …)`
+fragt. In firefox sagt dieser Haken **ja**.
+
+Ein neuer Fall dort, der `proof.publicFromSeed` anfasst, wird in firefox also
+**rot** — und das Rot sieht wie ein Fehler im Code aus, nicht wie eine
+Browsergrenze. So sind dort am 01.10.2026 157 rote Fälle entstanden.
+
+**Also: `skipWithoutSeedKeys` und nicht der lokale Haken**, für jeden Fall, den
+dieser Auftrag noch anlegt — der Mutant zur ersten Anmeldung, der Gegenfall mit
+dem fremden Schlüssel, und der Fall, der den Anker neu ableitet.
+
+Dazu die Grenzen, jetzt gemessen statt vermutet:
+
+    firefox   kann 23 von 25 Krypto-Zellen; die zwei Nein sind derselbe
+              Aufruf exportKey("jwk") an einem EINGEFÜHRTEN Schlüssel
+              (OperationError). Signaturen kann er vollständig --
+              signatureGap ist dort LEER.
+    webkit    die CFRG-Kurven fehlen ganz; P-256 kann es vollständig.
+
+**Zwei verschiedene Grenzen, zwei verschiedene Behebungen.** Meine frühere
+Formulierung „webkit kann hier kein Ed25519" war eine Vermutung aus einem
+Übersprung; sie ist damit ersetzt.
+
+Folgerung für meine eigenen Zahlen, noch nicht geprüft: die 250 Übersprungenen
+in firefox hängen demnach **nicht** an Signaturen, sondern an der Saat-Stufe und
+an allem, was einen Schreibtisch braucht. Die JSON-Annotationen meines Laufs
+sagen es — stimmen sie mit dieser Lesart, ist die Zahl von zwei Seiten
+unabhängig erklärt; weichen sie ab, ist eine der beiden Messungen falsch.
+
+## Warnung zu `attemptOver`, und eine Erwartung vor der Messung (31.10.2026)
+
+Gemessen vom Strang „Anmeldung in zwei von drei Browsern ungeprüft" (`2bdc450f`),
+nach vier falschen Läufen, dreimal derselbe Fehler in anderem Mantel:
+
+`loginState` in `shell/login.spec.js:115` wartet mit `every(b => b.disabled)` —
+„der Versuch läuft, solange ALLE Knöpfe aus sind". **In firefox ist „Anmelden"
+dauerhaft aus**, weil die Engine keinen Passwortschlüssel macht. Die Bedingung
+ist dort also schon **vor** dem Klick wahr, `attemptOver` kehrt sofort zurück,
+und wer danach ohne nachwartende Zusicherung liest, liest einen
+Zwischenzustand. Der Beleg war jedes Mal die Laufzeit: 1,3 s für eine
+Anmeldung.
+
+Meine bestehenden Fälle merken es nicht, weil sie danach mit
+`expect(locator).toBeVisible()` auf den Schreibtisch warten, und das wartet von
+selbst nach. Der Riegel liegt also woanders und hält — aber **zufällig.**
+
+Die Verschärfung, die daraus folgt und die allgemeiner ist als der Fall:
+
+> Eine Kontrollvariante deckt nur die Annahmen ab, die sie mit den anderen
+> Varianten **teilt**. Darum fragt eine Wartebedingung nach einer **Änderung**,
+> nicht nach einem Zustand — eine Änderung gibt es in jeder Variante, einen
+> Zustand nicht.
+
+Für jeden Fall, den dieser Auftrag noch anlegt, gilt damit: nach einer Änderung
+fragen, nicht nach einem Zustand, und `skipWithoutSeedKeys` statt des lokalen
+Hakens.
+
+## Erwartung an den nächsten Lauf, vor der Messung
+
+Der Lauf von 14:38 lief auf einem Baum, in dem Fassung 1 noch von einem
+Schlüssel unterschrieben war, der **in keiner Fassung steht**. `trust.open`
+verlangt für Fassung 1 einen **Verwalter dieser Fassung** (`contracts/trust.js`,
+`open` → `verifySigner`), also konnte die Kette dort gar nicht aufgehen —
+unabhängig vom Anker. Das war der zweite Teil des Mangels, und mein Ankerfix
+allein hätte nicht gereicht.
+
+Seit `mock/world.js` mit annas Verwalterschlüssel unterschreibt und die Kette
+zwei Fassungen hat, erwarte ich:
+
+- **E8** Die 176 roten chromium-Fälle fallen weitgehend weg. Bleiben viele,
+  habe ich die Ursache nicht getroffen, sondern nur eine von mehreren.
+- **E9** Der eine rote firefox-Fall (`shell/login.spec.js:349`, Passkey mit
+  Software-Authentikator) wird grün. Er war auf `main` grün, und sein
+  Fehlschlag auf meinem Zweig hatte dieselbe Ursache: die Kette ging nicht auf.
+  Bleibt er rot, ist er ein eigener Fehler und nicht der des Ankers.
+- **E10** Die acht Fälle mit `login: no way to open the trust list` fallen weg —
+  die fünfte Aufrufstelle ist verdrahtet.
+- **E11** Die Zahl der übersprungenen Fälle bleibt bei 8 in chromium. Wandert
+  sie, ist zuerst die Umgebung verdächtig und nicht mein Umbau.
+
+## Die unangenehmste Lehre des Tages (31.10.2026, von einem Nachbarstrang)
+
+> **Ein richtiges Ergebnis aus einer falschen Messung sieht von außen aus wie
+> ein richtiges Ergebnis.**
+
+Gemessen am eigenen Fall: ein Lauf druckte „Weg 1c trägt nicht" und hatte
+nichts dergleichen gemessen — er war vor der gemeinten Stelle abgewiesen worden
+und hat die **frühere Wand** gemessen. Das Wort war richtig. Der Weg dahin war
+keiner. Gefangen hat es nur, dass der Satz gegen die **Frage** gelesen wurde:
+die Frage betraf, was **nach** dem Beweis passiert, und ein Lauf, der die Maske
+nie sieht, hat davon nichts berührt.
+
+Die zwei anderen Lehren desselben Strangs haben je einen Lauf gekostet. Diese
+hätte nichts gekostet und wäre trotzdem falsch gewesen — darum ist sie die
+teuerste.
+
+Für dieses Blatt heißt das: jeder grüne Fall und jede bestätigte Erwartung muss
+gegen die **Frage** gelesen werden, nicht nur gegen das Ergebnis. „E8 ist
+eingetreten" ist keine Aussage, solange nicht dasteht, dass der Lauf die
+gemeinte Stelle überhaupt erreicht hat.
+
+Und genau so ist der Fehler von heute 14:56 gefunden worden: 7 rote Fälle sahen
+aus wie „die Ursache ist nicht getroffen" — die Sonde in der Seite zeigte, dass
+Fassung 1 längst aufging und nur Fassung 2 ungültig war. Ohne die Sonde hätte
+ich die richtige Ursache für widerlegt erklärt.
+
+## Die Übernahme, und was auf dem Zweig nicht lag (03.11.2026)
+
+Die erbauende Sitzung war nicht mehr erreichbar. Der Auftrag sagte, die Arbeit
+liege **vollständig auf dem Zweig**. Gemessen, als erstes und vor allem
+anderen:
+
+    git status --short
+     M apps/web/tests/mock/api.js
+     M apps/web/tests/mock/seeded.js
+     M apps/web/tests/mock/world.js
+     M apps/web/tests/shell/world.spec.js
+     M apps/web/tests/trust-anchor.json
+     M docs/messung-erste-anmeldung.md
+    ?? apps/web/tests/contracts/anchor.spec.js
+    ?? apps/web/tests/shell/trustgrowth.spec.js
+
+**Fünf geänderte und zwei neue Dateien, nicht committet**, nur im Arbeitsbaum.
+Darin lagen Punkt 1 (die fünfte Aufrufstelle), der größere Teil von Punkt 4
+(Fassung 2, die Prüftür, der abgeleitete Anker) und Punkt 5
+(`trustgrowth.spec.js`) — fertig geschrieben. Als erstes unverändert committet
+(`e3b4cffb`).
+
+Das ist kein Nebenbefund. Archivieren räumt den Arbeitsbaum auf; wäre diese
+Sitzung archiviert worden, wäre die Arbeit weg gewesen, und der Nächste hätte
+sie nach dem Auftragstext **neu gebaut**, ohne zu wissen, dass sie dastand.
+**Also: beim Erben einer Sitzung ist die erste Messung `git status` im
+Arbeitsbaum, nicht das Lesen des Zweigs.**
+
+Zweiter Punkt derselben Art: der Abstand war **nicht 0, sondern 29**. Die 0 im
+Abschnitt davor war am 31.10. richtig und ist verfallen. **Eine Zahl in einem
+Bericht trägt ein Datum, und eine gemessene Zahl von vorgestern ist heute eine
+Annahme.** Nach `git merge origin/main` gezählt statt angenommen: Abstand 0,
+0 gelöschte Dateien, jede `.spec.js` von `main` da, `openTrustFromChain` null
+Treffer, Merge `3218fb50`, keine Konflikte.
+
+Der Anker danach dreimal neu abgeleitet: dreimal
+`J3qr4-1LBiBkYpH6_a_Z1xWiTfVkmDfSEfg_yfahMUQ`, und das Werkzeug meldet selbst
+`trust-anchor: the file agrees`.
+
+## Die Kette war da und wurde nicht geprüft
+
+Die eine echte Lücke in Punkt 4: es gab keinen Gegenfall mit **fremdem
+Schlüssel**. Das Nachbild hatte zwei Fassungen und hielt die zweite gegen
+nichts — jeder Fall wäre grün gewesen, ob die Unterschrift über Fassung 2
+etwas bedeutet oder nicht. `contracts/trustchain.spec.js` schließt das mit drei
+Fällen über `trust.open`, demselben Weg wie die Oberfläche.
+
+**Und dann hat der Kontrollfall mich selbst erwischt**, was der Grund ist, dass
+dieser Abschnitt hier steht und nicht nur im PR.
+
+Der erste Lauf der Datei: der **Kontrollfall rot** (`trust: bad signature` an
+`trust.js:365` — das ist die Selbstunterschrift von **Fassung 1**), ein
+Fälschungsfall rot, **einer grün**. Der grüne war grün aus dem falschen Grund:
+alle drei fielen an derselben **früheren Wand**, und bei einem passte die
+Meldung zufällig auf seine Erwartung.
+
+Die Ursache, in vier Sonden ohne Playwright und ohne Port getrennt:
+
+| Sonde | Antwort |
+|---|---|
+| `sign.verifyRaw(pub aus der Liste, sig)` | **true** |
+| `key.id == keyID(key.pub)` | true |
+| `kid == key.id` | true |
+| `proof.verify(...)` | **false** |
+
+Die Unterschrift war **gültig** und der Schlüssel **richtig**. Also nicht der
+Schlüssel, sondern die **Form des übergebenen Werts**: `trust.open` erwartet
+eine Kette, die durch `session.parseTrustChain` gegangen ist, und `proof.verify`
+nimmt `sig` nur als `Uint8Array` — für den base64-Text aus der JSON **antwortet
+es false, statt zu werfen**. Die Kette kam aus `JSON.parse`. Behoben, und die
+Richtung sei genannt: eine Verwechslung endet in „abgewiesen", nie in
+„angenommen" — keine Lücke, aber eine Stolperstelle, die einen Programmierfehler
+als Prüfergebnis ausgibt.
+
+**Vorher hatte ich eine falsche Ursache schon aufgeschrieben:** den
+handgeschriebenen PKCS#8-Import im Nachbild. Die Tabelle oben widerlegt ihn.
+Die Umstellung auf `proof.privateFromSeed` ist behalten, weil sie für sich
+richtig ist — eine Zahl im Nachbild, die eine Zahl des Vertrags spiegelt, kommt
+aus derselben Quelle —, und daneben steht, dass sie **nichts behoben hat**. Ein
+falscher Grund im Repo ist schlimmer als keiner: der Nächste hält ihn für die
+Behebung und sucht nicht weiter.
+
+Dazu eine Zahl, die **gleich geblieben** ist und erst dadurch in Ordnung war,
+dass der Grund dafür gemessen wurde: der Anker änderte sich durch die geänderte
+Unterschrift **nicht**. `trust.hash` bildet nur über `payload`, nie über
+`proof`. Hätte ich das Gleichbleiben hingenommen, hätte ich eine Übereinstimmung
+für einen Beleg gehalten, die keiner war.
+
+Nach der Behebung, chromium, 02:20:30 bis 02:21:19, TIME_WAIT 10 423 vor und
+9 630 nach dem Lauf: **5 bestanden, 0 rot, Ausstiegscode 0** über
+`trustchain.spec.js` und `anchor.spec.js`. Dieselben fünf Zusicherungen noch
+einmal in node gemessen, ohne Playwright und ohne Port, mit demselben Ausgang.
