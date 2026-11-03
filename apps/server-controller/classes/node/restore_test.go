@@ -139,7 +139,7 @@ type restoreStand struct {
 	noCgroup map[string]bool
 	// orphan names the apps whose cgroup still holds tasks although the
 	// engine knows no container of them: the state a hard death of the
-	// controller leaves behind (point 98). It is a state of its own and not
+	// controller leaves behind (point 102). It is a state of its own and not
 	// the opposite of noCgroup - "runs braked by nothing" and "runs although
 	// podman forgot it" are two different faults.
 	orphan map[string]bool
@@ -682,7 +682,7 @@ func TestRestoreGivesBackABrokenDatabase(t *testing.T) {
 // container of it are ENDED before the app is started again - and they are
 // looked at twice, with a wait in between.
 //
-// This is the state a hard death of the controller leaves behind (point 98):
+// This is the state a hard death of the controller leaves behind (point 102):
 // systemd deletes /run/ngc with the unit, podman refreshes its own state and
 // then says nothing runs, while the processes live on - since the limits are
 // real they no longer sit in the cgroup of the unit, so the death of the
