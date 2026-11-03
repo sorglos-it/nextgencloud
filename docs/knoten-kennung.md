@@ -1,8 +1,8 @@
 # Welcher API-Knoten hat geantwortet?
 
-Stand 03.11.2026. Gemessen im Repo auf `origin/main` (0471b02d) und im ulh-Repo; **nicht** an der
-Anlage — die drei Messungen der Leitsitzung vom 30./31.10.2026 sind hier nachgelesen, soweit das
-Repo sie trägt, und die Lücken stehen unten unter „Was noch an der Anlage zu lesen ist".
+Stand 03.11.2026. Gemessen im Repo auf `origin/main` (0471b02d) und im ulh-Repo. Die vier Lesungen
+an der Anlage hat die Leitsitzung am 03.11.2026 gefahren; sie stehen in Abschnitt 7 mit dem
+Ergebnis. **Eine davon hat einen Fund dieses Blatts widerlegt** — Abschnitt 2b sagt, welchen.
 
 Rangfolge dieses Blatts: **Sicherheit > Stabilität > Geschwindigkeit.** Es entscheidet nichts.
 
@@ -30,38 +30,68 @@ Inhalt der Vorlage: `<Proxy "balancer://ngc-api">`, je API ein `BalancerMember` 
 `retry=5 timeout=65 connectiontimeout=2 keepalive=On upgrade=websocket`, dazu
 `ProxySet lbmethod=byrequests failontimeout=On`. Deckt sich mit der Messung.
 
-**Abweichung:** die Leitsitzung nennt `retry=5 timeout=65 keepalive=On upgrade=websocket` — ohne
-`connectiontimeout=2`. Entweder wurde es beim Abschreiben weggelassen, oder die Datei an der Anlage
-stammt aus einer älteren Fassung. Das ist nachzulesen (siehe Abschnitt 7).
+**Abweichung, am 03.11.2026 an der Anlage geklärt:** `/etc/ngc/apache-apis.conf` auf api-1 hat
+`retry=5 timeout=65 keepalive=On upgrade=websocket` — **ohne** `connectiontimeout=2`. Das Abschreiben
+der Leitsitzung war vollständig; die Datei an der Anlage ist älter als die Vorlage.
+
+Und sie passt zu **keiner** der vier Stellen von heute:
+
+| | `connectiontimeout=2` | `upgrade=websocket` steht am |
+|---|---|---|
+| Vorlage des Controllers (heute) | ja | `BalancerMember` |
+| `.example` und ulh `render_balancer()` | nein | `ProxyPass` |
+| **Anlage (03.11.2026)** | **nein** | **`BalancerMember`** |
+
+Die Datei stammt also vom **Controller** (Rolle `web`, siehe 7b), aus einer Fassung **zwischen**
+den beiden — nicht von `ngc-web.sh`. Eigener kleiner Befund: die Anlage fährt eine Vorlage, die den
+Verbindungs-Zeitablauf nicht hat. Offen ist, ob sie die Zeilen `Header always set Retry-After` und
+`LogLevel proxy:info` schon trägt; das würde die Fassung genau festnageln (Abschnitt 7, Lesung e).
 
 **Eigener Fund, unabhängig von dieser Aufgabe:** `apache-apis.conf.example` behauptet im Kopf, die
 Bezugsfassung zu sein, weicht aber von der Vorlage des Controllers ab — `upgrade=websocket` steht
 dort am `ProxyPass` statt am `BalancerMember`. Zwei Fassungen derselben Datei, und keine Prüfung
 hält sie zusammen. Eigener Punkt, eigener PR.
 
-### b) Kein Protokollformat trägt den Namen des Arbeiters — bestätigt, und die Ursache ist gefunden
+### b) Kein Protokollformat trägt den Namen des Arbeiters — bestätigt
 
-Keine der vier Stellen schreibt `LogFormat` oder `CustomLog` in den Lastverteiler. Richtig.
+Keine der vier Stellen schreibt `LogFormat` oder `CustomLog` in den Lastverteiler. Richtig, und das
+ist der Befund, um den es geht.
 
-Die Messung sagt weiter, die `LogFormat`-Definitionen seien die Debian-Vorgaben. Das Repo
-widerspricht dem auf dem **einen** Weg und bestätigt es auf dem **anderen**:
+#### Und ein Fund dieses Blatts, der widerlegt wurde
 
-- `apps/web/templates/apache-vhost.conf:316` definiert ein **eigenes** Format mit dem Rufnamen
-  `ngc` und benutzt es in beiden virtuellen Rechnern (Zeilen 337 und 347). Es lässt die
-  Abfragezeichenkette, den Verweis (`Referer`) und das Kennwortplätzchen (`Cookie`) absichtlich weg
-  — begründet mit „Geheimnisse nie ins Log" aus der CLAUDE.md.
-- ulh `ngc-web.sh`, `render_site()`, Zeile 1027, schreibt dagegen
-  `CustomLog ${APACHE_LOG_DIR}/ngc-web-access.log combined` — die **Debian-Vorgabe**. Der Rufname
-  `ngc` wird dort nie definiert.
+Bis zum 03.11.2026 stand hier, die Anlage protokolliere mit `combined` und damit die vollständige
+Abfragezeichenkette — ein Geheimnis-im-Protokoll-Fund. **Das ist falsch.** Die Leitsitzung hat die
+Dateien der Anlage gelesen:
 
-Also: die Anlage ist mit ulh aufgesetzt, und darum stehen dort nur die Debian-Formate. Die Messung
-der Leitsitzung ist richtig, und der Grund liegt nicht an der Anlage, sondern in der Abweichung
-zwischen Skript und Vorlage.
+```
+/etc/apache2/sites-available/ngc-web.conf:331  LogFormat "%h %l %u %t \"%m %U %H\" %>s %O \"%{User-Agent}i\"" ngc
+ngc-web.conf:352                               CustomLog …/ngc-web-80-access.log ngc
+ngc-web.conf:362                               CustomLog …/ngc-web-access.log    ngc
+```
 
-**Das ist ein Sicherheitsfund, kein Nebenbefund:** `combined` protokolliert die vollständige
-Abfragezeichenkette und den Verweis. Genau das, wogegen die Vorlage mit Begründung entschieden hat.
-Ein Einmal-Code oder eine Rücksetz-Marke in einer Adresse landet damit im Zugriffsprotokoll. Eigener
-Punkt, eigener PR, und er ist dringender als die Knotenkennung selbst.
+Die Anlage **definiert** das Format `ngc` und benutzt es für **beide** NGC-Rechner. `%U` ist der
+Pfad ohne Abfragezeichenkette, kein `Referer`, kein `Cookie` — genau die Entscheidung, die in der
+Vorlage steht. `combined` steht nur in `default-ssl.conf:13` und `000-default.conf:21`, den
+Debian-Vorgaben für Rechner, die nicht NGC sind.
+
+**Wie dieser Fehlschluss zustande kam, und was daraus zu lernen ist:** gemessen war eine Abweichung
+zwischen zwei Dateien im **Repo** (`apache-vhost.conf` definiert `ngc`, ulhs `render_site()` Zeile
+1027 schreibt `combined`). Daraus wurde geschlossen, was an der **Anlage** steht. Das ist keine
+Messung, sondern eine Kette am Code: die Anlage ist nicht aus dieser Zeile entstanden, oder die
+Zeile ist jünger als die Installation. Ein Satz über eine laufende Anlage braucht eine Lesung an der
+Anlage, und zwar in der Datei, die dort wirklich gilt.
+
+Die Messung der Leitsitzung („die `LogFormat`-Definitionen sind die Debian-Vorgaben") war ihrerseits
+unvollständig: gegrept waren `apache2.conf` und `/etc/ngc/*.conf`, nicht `sites-available/`. Zwei
+unvollständige Messungen, die sich gegenseitig bestätigt haben — das ist die Form, in der ein
+falscher Befund stabil aussieht.
+
+**Was von dem Fund übrig bleibt, und es bleibt etwas:** ulhs `render_site()` schreibt `combined` und
+definiert `ngc` nie. Für die **laufende** Anlage ist das belegt bedeutungslos. Für die **nächste**
+Installation aus diesem Zweig ist es eine Falle: sie bekäme das Format, gegen das die Vorlage mit
+Begründung entschieden hat. Also kein offenes Geheimnis im Log, sondern ein Mangel, der beim
+nächsten Aufsetzen zuschlägt. Nur das Zweite ist belegt. Eigener Punkt, und er liegt im ulh-Zweig
+`ngc-web`, nicht an der Anlage.
 
 ### c) Beide API-Knoten protokollieren keine einzelne Anfrage — stimmt mit dem Code
 
@@ -194,19 +224,20 @@ antwortenden API mitgeben.
 
 ## 6. Empfehlung nach der Rangfolge
 
-1. **Zuerst, und unabhängig von der Knotenfrage: `combined` auf der Anlage ersetzen.** Das ist ein
-   Geheimnis-im-Protokoll-Fund, und Sicherheit steht oben. Erst danach lohnt es, dem Format ein Feld
-   hinzuzufügen — sonst wird ein Feld in ein Format eingebaut, das selbst ein Fund ist.
-2. **Weg A, in der Fassung des Controllers** (eigenes Protokoll in `apache-apis.conf.tmpl` mit
+Der frühere Punkt 1 („`combined` auf der Anlage ersetzen") ist nach 2b **weg**: an der Anlage gibt
+es nichts zu ersetzen. Es bleibt ein Punkt im ulh-Zweig `ngc-web`, und er hält diese Reihenfolge
+nicht auf.
+
+1. **Weg A, in der Fassung des Controllers** (eigenes Protokoll in `apache-apis.conf.tmpl` mit
    `env=BALANCER_WORKER_NAME`): nichts nach außen, kein Go, kein Vertrag, Rückbau in einer Zeile,
    und `configtest` schützt die laufende Anlage. Er beantwortet die gestellte Frage für jede Anfrage,
-   die von draußen kommt.
-3. **Weg D als Nachtrag**, wenn der Koordinator ein eigenes Feld vergibt: er setzt die Antwort genau
-   an das Ereignis, das gekostet hat.
-4. **Weg C nur**, wenn gemessen wird, dass A und D eine Lücke lassen, die trägt (etwas, was die API
+   die von draußen kommt. Entwurf in Abschnitt 9.
+2. **Weg D als Nachtrag**, mit einem **eigenen** Feld, nicht durch Umdeuten von `Node`. Feldform in
+   Abschnitt 10; die Entscheidung und die Änderung an `shared/` liegen beim Koordinator.
+3. **Weg C nur**, wenn gemessen wird, dass A und D eine Lücke lassen, die trägt (etwas, was die API
    ohne Anfrage von draußen tut). Er ist der teuerste und der einzige, der eine neue Stelle schafft,
    an der ein Geheimnis verloren gehen kann.
-5. **Weg B nicht.**
+4. **Weg B nicht.**
 
 Zu Thomas' Stand: das Protokollformat des Stellvertreters ist tatsächlich das Billigste und
 Ungefährlichste. Der Einwand „es greift nur dort, wo ein Stellvertreter steht, und api-2 hat keinen"
@@ -214,19 +245,29 @@ trägt in dieser Form **nicht**: es gibt nur **einen** Stellvertreter, und jede 
 über ihn, gleich welcher Knoten antwortet. Was wirklich fehlt, ist etwas anderes — alles, was die
 API ohne Anfrage von draußen tut.
 
-## 7. Was noch an der Anlage zu lesen ist
+## 7. Die Lesungen an der Anlage
 
-Diese Sitzung hat keinen eigenen Zugang und nimmt keinen. Zu lesen, je Frage eine Datei:
+Gefahren von der Leitsitzung am 03.11.2026; diese Sitzung hat keinen eigenen Zugang und nimmt
+keinen. Erwartung und Ergebnis je Lesung:
 
-1. `/etc/ngc/apache-apis.conf` auf der Maschine, die den Stellvertreter trägt: steht in den beiden
-   `BalancerMember`-Zeilen `connectiontimeout=2`? (Wenn nein, ist die Datei älter als die Vorlage.)
-2. Welche Maschine ist das, und welche Rollen stehen in ihrer `/etc/ngc/controller.json`
-   (`roles`)? Die Messung nennt api-1 — nach dem Aufbau wäre das die Rolle `web`.
-3. Auf **derselben** Maschine: `grep -rn 'LogFormat\|CustomLog' /etc/apache2/` — welche Rufnamen
-   gibt es, und welchen benutzt der virtuelle Rechner, der `/etc/ngc/apache-apis.conf` einbindet?
-   Erwartung aus dem Repo: nur die Debian-Formate, benutzt wird `combined`. Das ist die
-   Gegenprobe zu Abschnitt 2b, und sie entscheidet, ob Punkt 1 der Empfehlung an der Anlage gilt.
-4. Hat api-2 einen Apache (`systemctl status apache2`)? Erwartung: nein.
+| | Erwartung | Gemessen |
+|---|---|---|
+| a) `connectiontimeout=2` in den `BalancerMember`-Zeilen? | unklar | **nein** — Datei älter als die Vorlage (2a) |
+| b) Rollen in `/etc/ngc/controller.json` auf api-1 | `web` | **`roles = ['web']`**, kein Feld `node` |
+| c) Rufnamen in `/etc/apache2/` und der benutzte | nur Debian, `combined` | **widerlegt:** `ngc` ist definiert und wird benutzt (2b) |
+| d) Apache auf api-2 | nein | **nein** — `inactive`, `not-found` |
+
+Zu b): `api-1` ist der **Maschinenname**, nicht die Rolle. Die Maschine mit dem Stellvertreter trägt
+die Rolle `web`, und das deckt sich mit dem Aufbau: `apache-apis.conf` schreibt der Controller mit
+Rolle `web`.
+
+Drei von vier bestätigen. Die dritte hat einen Fund dieses Blatts umgedreht, und das ist der
+Grund, warum Lesungen an der Anlage nicht durch Lesungen im Repo ersetzbar sind.
+
+**Noch offen, eine Lesung (e):** stehen in `/etc/ngc/apache-apis.conf` auf api-1 die Zeilen
+`Header always set Retry-After "5" …` und `LogLevel proxy:info proxy_balancer:info`? Damit wäre die
+Fassung, aus der die Datei stammt, genau festgenagelt — und damit, wie weit der Controller an der
+Anlage hinter der Vorlage her ist. Es hält Weg A nicht auf.
 
 ## 8. ulh — eigener Punkt
 
@@ -253,3 +294,105 @@ Daraus folgt:
 - Ein PR, der die Vorlage ändert, braucht darum zwei Teile: einen hier (`api`/`controller`-Gebiet)
   und einen im ulh-Repo auf `ngc-web`. Beide gehören dem Koordinator bzw. der Web-Sitzung —
   `apps/web/` und `apps/server-controller/` sind nicht das Gebiet dieser Sitzung.
+
+## 9. Entwurf zu Weg A — je Stelle die genaue Zeile
+
+Diese Sitzung baut das nicht; die vier Stellen gehören den Sitzungen, die diese Teile führen. Hier
+steht, was wohin kommt, damit die Leitsitzung es verteilen kann.
+
+### Die Zeile
+
+**Ein Rufname wird nicht vergeben.** `CustomLog` nimmt das Format auch direkt, und ein Rufname ist
+serverweit: ihn in `apache-apis.conf` zu definieren hieße, dass zwei Dateien aus zwei Repos ihn
+gemeinsam gültig halten müssen. Eine Zeile ohne Rufname hat diese Kopplung nicht.
+
+```apache
+# Which member answered. mod_proxy_balancer sets BALANCER_WORKER_NAME on every
+# request it hands on, so env= keeps this log to exactly those: without it the
+# whole virtual host would get a second line per request. The fields are the
+# ones of the "ngc" format in apache-vhost.conf and nothing more - %U is the
+# path WITHOUT the query string, and there is no Referer and no Cookie, because
+# this file is also written to on every failed login ("Geheimnisse nie ins
+# Log", CLAUDE.md). %D is the time it took, in microseconds.
+CustomLog ${APACHE_LOG_DIR}/ngc-api-access.log "%h %l %u %t \"%m %U %H\" %>s %O %{BALANCER_WORKER_NAME}e %D" env=BALANCER_WORKER_NAME
+```
+
+`${APACHE_LOG_DIR}` ist auf Debian und Ubuntu `/var/log/apache2`; `envvars` setzt es, und die
+Vorlage benutzt es in `apache-vhost.conf` schon so.
+
+### Wohin, je Stelle
+
+| Stelle | Datei | Einfügen | Wessen Gebiet |
+|---|---|---|---|
+| 1 | `apps/server-controller/templates/apache-apis.conf.tmpl` | **nach Zeile 22** (`LogLevel proxy:info …`), vor Zeile 24 (`ProxyPreserveHost Off`) | Controller |
+| 2 | `apps/server-controller/classes/apache/testdata/apache-apis.conf` | **nach Zeile 23**, vor Zeile 25 — gleiche Stelle, die Testdaten müssen die Vorlage spiegeln | Controller |
+| 3 | `apps/web/templates/apache-apis.conf.example` | **nach Zeile 23**, vor Zeile 25 | Web |
+| 4 | ulh `apps/cli/assets/scripts/ngc-web.sh`, `render_balancer()` | als Eintrag in die `printf '%s\n'`-Liste **nach** `'ProxyPreserveHost Off' \` (Zweig `ngc-web`, Zeile 956) | Web / ulh |
+
+Zu Stelle 4: die Zeile enthält `"` und `${APACHE_LOG_DIR}`. Im Skript steht sie in **einfachen**
+Anführungszeichen, dann gibt die Shell nichts davon an. Also:
+
+```sh
+'CustomLog ${APACHE_LOG_DIR}/ngc-api-access.log "%h %l %u %t \"%m %U %H\" %>s %O %{BALANCER_WORKER_NAME}e %D" env=BALANCER_WORKER_NAME' \
+```
+
+### Was dazugehört, sonst ist es nicht fertig
+
+- **Der Test des Controllers muss rot werden, wenn die Zeile fehlt.** `apache_test.go` vergleicht
+  gegen `testdata/apache-apis.conf`; Stelle 2 ohne Stelle 1 ist also rot, und Stelle 1 ohne Stelle 2
+  auch. Das ist die Prüfung, die es gibt — und sie deckt die Stellen 3 und 4 **nicht**. Ein Test,
+  der `.example`, die Vorlage und `render_balancer()` gegeneinander hält, fehlt; er ist der
+  eigentliche Fund aus Abschnitt 2a und gehört in einen eigenen PR.
+- **Eine Drehung des Protokolls** (`logrotate`): die neue Datei wächst mit jeder `/api/`-Anfrage.
+  `/etc/logrotate.d/apache2` dreht auf Debian `/var/log/apache2/*.log`, das Muster fasst die neue
+  Datei also mit. Zu prüfen, nicht zu glauben: eine Lesung an der Anlage.
+- **Rückbau:** eine Zeile zurücknehmen, Controller schreibt die Datei neu, `configtest`, Neuladen.
+
+### Was an der laufenden Anlage passiert
+
+Der Controller mit Rolle `web` schreibt `apache-apis.conf` neu, prüft mit `apachectl configtest`
+und lädt Apache erst danach neu (`apps/server-controller/classes/apache/apache.go`). Ein Tippfehler
+erreicht die laufende Anlage also nicht; was sie erreicht, ist ein Neuladen. **Das ist ein Eingriff
+und wird vorher angesagt.** Diese Sitzung macht ihn nicht.
+
+## 10. Feldform zu Weg D — zur Entscheidung des Koordinators
+
+`Node` nicht umdeuten: bei `Channel` und `Task` steht dort der Controller, und eine Spalte mit zwei
+Bedeutungen macht jede vorhandene Zeile unlesbar. Also ein eigenes Feld. Vorschlag:
+
+```go
+// API is the API node that answered - the node of its api.json
+// (config.API.Node), not the controller Node names. Empty in every entry
+// written before this field existed, and empty is a legitimate value: an entry
+// is never refused because of it.
+API string `json:"api,omitempty"`
+```
+
+- **Name:** `API` / `api`. Nicht `node2`, nicht `source`: der Leser der Ansicht soll am Namen sehen,
+  welcher der beiden Knoten gemeint ist.
+- **Grammatik:** `wire.ValidName`, dieselbe wie `Node`. Verletzung → `Dropped`, Eintrag wird
+  trotzdem geschrieben; das ist die Regel dieses Pakets und sie gilt auch hier.
+- **Wer füllt es:** die API aus ihrer eigenen `api.json`. Der Wert kommt **nicht** von außen, nie
+  aus einem Kopffeld und nie aus einer Anfrage — sonst schreibt der Anrufer in den Prüfeintrag.
+- **Zuerst bei `Login`** (`audit.go:189`), denn das ist der Fall, der gekostet hat. Danach sinnvoll
+  in jedem Eintrag, den die API schreibt.
+- **Nichts Geheimes:** ein Knotenname ist ein Rechnername des inneren Netzes, und die Ansicht sehen
+  nur Administratoren. Kein Nutzer-Browser bekommt ihn.
+
+Die Stellen, die mitziehen müssen — damit niemand die Hälfte baut:
+
+| Stelle | Datei |
+|---|---|
+| Vertrag | `shared/core/results.go:149` (`LogEntry`) — **Koordinator** |
+| Prüfung des Feldes | `apps/server-api/classes/audit/audit.go:179` (`keep(&e.Node, …)`) |
+| Füllen | `audit.go:189` (`Login`), dann die weiteren Einstiegspunkte |
+| Spalte und Einfügen | `apps/server-db/classes/sqlstore/log.go:24` (`INSERT INTO ngc_log …`) und die Abfrage daneben |
+| Wanderung | `apps/server-db/classes/migrate/` — eine neue Spalte in `ngc_log` |
+| Gedächtnisspeicher | `shared/dbapi/memstore/memstore.go:344` |
+| Prüfsatz der Speicher | `shared/dbapi/dbtest/dbtest.go` (ab Zeile 277) |
+| Ansicht | „Benutzer & Rechte" in `apps/web/` — eine Spalte mehr |
+
+**Eine Frage, die der Koordinator mitentscheiden muss:** soll das Feld auch in `core.LogQuery`
+filterbar werden („zeig mir alles, was api-2 geantwortet hat")? Das ist der eigentliche Nutzen bei
+einer Ursachensuche, aber es ist eine zweite Vertragsänderung. Dieses Blatt empfiehlt: erst das
+Feld, Filtern später, wenn gemessen ist, dass es gebraucht wird.
