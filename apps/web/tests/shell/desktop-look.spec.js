@@ -578,3 +578,51 @@ test("the font steps are fixed and the density moves only the body", async ({ sh
   await shell.getByRole("button", { name: "Start" }).click();
   expect(await shell.locator("#taskbar").evaluate((e) => getComputedStyle(e).fontSize)).toBe("13px");
 });
+
+test("the font travels with NGC instead of coming from the machine", async ({ shell }) => {
+  // WHAT THIS CASE IS FOR. The sizes above are fixed now, but a size only
+  // means something together with the shape it is measured in: 13px of Segoe
+  // UI, of Roboto and of San Francisco are three different widths, so one
+  // design was three pictures depending on the machine. Inter lies in the
+  // repository (assets/vendor/inter/, OFL 1.1) and is asked for FIRST.
+  //
+  // The last two numbers are the whole point and the reason this is not a
+  // source-code reading. A declared @font-face whose FILE never arrives fails
+  // silently: the browser drops to the next family and everything still
+  // looks fine. So the same string is measured twice, once with Inter in
+  // front of the stack and once with the old stack alone. If the file did not
+  // arrive, both spans are set in the same fallback and the two widths are
+  // EQUAL - which is the failure, and nothing else here would have shown it.
+  const gemessen = await shell.evaluate(async () => {
+    await document.fonts.ready;
+    const breite = (familie) => {
+      const s = document.createElement("span");
+      s.textContent = "Fenster Rechner Einstellungen 0123";
+      s.style.cssText = "position:absolute;left:-9999px;white-space:pre;font-size:40px;" +
+                        "font-family:" + familie;
+      document.body.append(s);
+      const w = s.getBoundingClientRect().width;
+      s.remove();
+      return w;
+    };
+    const alt = '"Segoe UI",system-ui,Roboto,sans-serif';
+    return {
+      erste: getComputedStyle(document.body).fontFamily.split(",")[0].replace(/["']/g, ""),
+      faces: [...document.fonts].filter((f) => f.family === "Inter")
+        .map((f) => ({ weight: f.weight, style: f.style, status: f.status })),
+      nutzbar: document.fonts.check("16px Inter"),
+      mitInter: breite('"Inter",' + alt),
+      ohneInter: breite(alt),
+    };
+  });
+
+  expect(gemessen.erste, "the stack asks for Inter first").toBe("Inter");
+  // ONE face and one only: Inter is a variable font, so 100-900 is the axis it
+  // really carries and the four weights this sheet asks for (400, 500, 600,
+  // 700) come out of that one file. A second face here would mean somebody
+  // added a static cut nobody needs.
+  expect(gemessen.faces).toEqual([{ weight: "100 900", style: "normal", status: "loaded" }]);
+  expect(gemessen.nutzbar, "the browser can really set text in it").toBe(true);
+  expect(gemessen.mitInter, "the file arrived, so the shape changed")
+    .not.toBe(gemessen.ohneInter);
+});

@@ -248,10 +248,18 @@ test("every file the web server hands out itself carries walls too", async ({ re
   //   LICENSE - NO extension, so the server sends no Content-Type at all. That
   //             is the file nosniff is in that block for, and the loop below
   //             measures that it really has no type.
+  //   a .woff2 - the fourth shape, and the first file here that is not text.
+  //             The shell's font travels in the repository now
+  //             (assets/vendor/inter/, OFL 1.1), which means NGC's own origin
+  //             hands out a BINARY that the browser's font engine parses. A
+  //             block written per type would be the thing that leaves it bare,
+  //             and nothing above would have noticed: a font with no walls
+  //             still renders.
   const files = [
     "/assets/js/shell/dom.js",
     "/assets/css/shell.css",
     "/assets/vendor/noble-hashes/LICENSE",
+    "/assets/vendor/inter/InterVariable.woff2",
   ];
   for (const path of files) {
     const res = await request.fetch(path);

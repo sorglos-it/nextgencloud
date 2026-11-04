@@ -171,7 +171,29 @@ html,body{height:100%;margin:0}
    same file, and that is the finding, not a failed measurement. On a Mac it
    WAS reached, and there the look now follows system-ui instead of being
    named Apple's font outright. */
-body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
+/* And the font the stack now reaches FIRST is one that travels with NGC.
+   Until here the look followed whatever the machine happened to have, which
+   is why the same desktop was Segoe UI on Windows, Roboto on Android and
+   something else again on a Mac - three different pictures of one design.
+   Inter is in the repository (assets/vendor/inter/, SIL OFL 1.1, provenance
+   in its SOURCE.md) and is served from NGC's own origin, so no browser asks
+   a font service for it: a request to fonts.gstatic.com would tell a third
+   party the address of every person who opens this desktop, once per cache.
+   That is the deciding step - Security over Speed - and it costs 352 KB once
+   per browser cache, because the assets block sends no Cache-Control and
+   Apache answers a second load with 304.
+
+   ONE file for every weight: Inter is a variable font, so 100-900 below is
+   not a lie but the axis it really carries, and 400, 500, 600 and 700 - the
+   four this sheet asks for - come out of the same 352 KB.
+
+   font-display:swap and not the default: a desktop whose text is INVISIBLE
+   for the first moment is worse than one whose text changes shape once. The
+   fallback behind Inter is the old stack, unchanged, so a browser that
+   refuses woff2 still gets exactly what it got before. */
+@font-face{font-family:"Inter";font-style:normal;font-weight:100 900;font-display:swap;
+           src:url("/assets/vendor/inter/InterVariable.woff2") format("woff2")}
+body{font:var(--fs)/1.45 "Inter","Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
      color:var(--bar-fg);background:var(--page-bg);-webkit-user-select:none;user-select:none;
      touch-action:manipulation}
 #root{position:fixed;inset:0}

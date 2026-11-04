@@ -300,10 +300,56 @@ Beim reinen Einführen der Marken wurde **keine einzige Zahl bewegt**: 42 sichtb
 und nachher gemessen, kein Unterschied. Erst der zweite Schritt — 12,5 und die drei Überschriften
 auf die Stufen — verändert das Bild, und zwar absichtlich.
 
-**Die Schriftfamilie ist noch offen.** `-apple-system` steht in `shell.css` nicht mehr; sie liegt nur
-noch in `apps/web/assets/apps/calculator/app.css`, `.../terminal/app.css` und `docs/prototype.html`,
-alle hinter der Rahmengrenze oder in fremder Hand. Inter mitzuliefern heißt Schriftdateien ins Repo
-zu legen — eine Entscheidung für Thomas, keine, die ich nebenbei treffe.
+### Die Familie: Inter reist mit, entschieden am 04.11.2026
+
+Thomas hat entschieden: **Inter liegt im Repo.** `apps/web/public/assets/vendor/inter/`, SIL OFL 1.1,
+Fassung 4.1, eine Datei (`InterVariable.woff2`, 352 240 Bytes), Herkunft und Prüfsummen in deren
+`SOURCE.md`. `shell.css` fragt sie als Erste, der alte Stapel bleibt dahinter stehen.
+
+**Warum überhaupt eine mitgelieferte Schrift.** Bis hierher folgte die Oberfläche der Schrift, die
+die Maschine gerade hatte: dasselbe Blatt war Segoe UI unter Windows, Roboto unter Android und San
+Francisco auf einem Mac. Das sind drei Bilder einer Gestaltung — und jede Zahl in Abschnitt 5 gilt
+nur für eines davon, weil 13 px in drei Schriften drei verschiedene Breiten sind.
+
+**Eine Datei für vier Gewichte.** Inter ist eine variable Schrift; die Achse 100–900 trägt die 400,
+500, 600 und 700, die dieses Blatt verlangt, in denselben 352 KB. Kursiv ist **nicht** dabei:
+`shell.css` enthält kein einziges `italic` (gemessen, `grep -c` ergibt 0).
+
+**Vom Hersteller und nicht von Google Fonts, und das ist die Entscheidung.** Beide Wege waren offen
+und beide sind gemessen: Googles Teilsätze `latin` + `latin-ext` sind 48 256 + 85 068 Bytes, also
+siebenmal kleiner, und für die fünf Sprachen reicht `latin` völlig — von den **71** verschiedenen
+Zeichen in `de/en/es/fr/it.json` liegt **kein einziges** außerhalb. Genommen ist trotzdem die Datei
+des Herstellers: Googles Teilsätze nennen keine Inter-Fassung, sondern eine Baunummer (`v20`), und
+niemand außerhalb Googles kann sie nachrechnen. Eine Schriftdatei liest das Schriftwerk des
+Browsers — das ist eine Angriffsfläche, und wer diese Bytes geliefert hat, muss nachprüfbar sein.
+**Sicherheit vor Geschwindigkeit**, und die Geschwindigkeit kostet es einmal je
+Browser-Zwischenspeicher: der `assets/`-Block sendet kein `Cache-Control`, Apache beantwortet den
+zweiten Aufruf mit 304.
+
+Nebenbei fällt damit auch der Aufruf an `fonts.gstatic.com` weg, der einem Dritten die Adresse jedes
+Menschen verraten hätte, der diesen Desktop öffnet.
+
+**Was keine der beiden Quellen liefert: eine veröffentlichte Prüfsumme.** Die GitHub-API gibt für
+dieses Release `digest: None`, `fonts.gstatic.com` gibt gar nichts. Bei `noble-hashes` kam sie von
+der npm-Registry selbst. Beide Wege hängen hier allein an TLS; die Prüfsummen in `SOURCE.md` sind
+unsere eigenen und bemerken einen *späteren* Austausch, sie beweisen nicht den ersten. Die der
+`LICENSE` ist dafür doppelt belegt — dieselben 4380 Bytes aus dem Archiv **und** aus
+`raw.githubusercontent.com`.
+
+**Die Apps hinter dem Rahmen erreicht die Schrift nicht**, und das bleibt so: ihre Richtlinie lässt
+nur `font-src data:` zu (`classes/Page.php`, `FRAME_CSP`). Mit `'self'` dürfte eine App unseren
+Server um jede Adresse bitten, und ein Aufruf ist ein Weg, etwas hinauszutragen. Eine App, die Inter
+will, trägt sie in ihrem eigenen `ui-tar`. Damit steht `-apple-system` weiter in
+`apps/web/assets/apps/calculator/app.css`, `.../terminal/app.css` und `docs/prototype.html` — alle
+hinter der Rahmengrenze oder in fremder Hand.
+
+**Offen geblieben, gemessen und nicht erledigt:** `tools/release/extra-web.txt` müsste `LICENSE` und
+`SOURCE.md` nennen, weil kein Verweis sie erreicht (die Schrift selbst erreicht `closure.go` von
+allein — es folgt `url(…)` in einem Stilblatt; gemessen: 80 Dateien, 64 erreicht, 0 fehlend, 0
+nackt). Die Zeilen gehen heute nicht grün: `TestRealArchiveIsClosed` prüft die Liste gegen
+`origin/web`, einen Zweig vom 12.10.2026 und **1154 Commits hinter main**, der die Dateien nicht
+kennt. Sie gehören in denselben Schritt, der `origin/web` nachzieht. Bis dahin enthält kein Paket
+die Schrift überhaupt.
 
 Zweiter Text nimmt `--muted`. **Keine Großbuchstaben** in Abschnittsköpfen: „Inhalt", nicht
 „INHALT".
