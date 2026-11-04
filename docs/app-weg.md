@@ -105,7 +105,7 @@ Das Manifest der Uhr, vollständig (`apps/uhr/templates/manifest.json`):
 
 | Feld | Pflicht | Regel |
 |---|---|---|
-| `id` | ja | `wire.ValidAppID`; **kein** Name einer Kern-App (`ngc.desktop`, `ngc.users`, `ngc.store`) |
+| `id` | ja | `wire.ValidAppID`; darf **nicht mit `ngc.` anfangen** — `wire.CoreApp` sperrt den ganzen Namensraum, nicht drei Namen (`ngc.desktop`, `ngc.users`, `ngc.store` sind Beispiele) |
 | `name` | ja | 1–64 Byte druckbarer Text |
 | `version` | ja | `MAJOR.MINOR.PATCH` oder `MAJOR.MINOR.PATCH.BUILD`, jede Stelle ohne führende Null |
 | `publisher` | ja | 1–64 Byte |
