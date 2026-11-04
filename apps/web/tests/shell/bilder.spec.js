@@ -144,7 +144,9 @@ test("a window pushed at the edge", async ({ page }) => {
   // Point 2, and the picture is of the price: pushed hard past the bottom
   // right, the window is still whole and still has its three buttons.
   const g = await win.locator(".titlebar").boundingBox();
-  await page.mouse.move(g.x + 40, g.y + g.height / 2);
+  // 20 px in from the right end: the three buttons stand at the LEFT of the
+  // bar since 2026-11-03, so that is where the free part of it is.
+  await page.mouse.move(g.x + g.width - 20, g.y + g.height / 2);
   await page.mouse.down();
   await page.mouse.move(900, 1400, { steps: 12 });
   await shot(page, "15-fenster-am-rand");

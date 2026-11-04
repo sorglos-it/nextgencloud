@@ -438,3 +438,103 @@ test("what the system says stands under the band, clear of the dock", async ({ s
   // And clear of the dock, which is the whole point.
   expect(bar.y + bar.height).toBeLessThan(dock.y);
 });
+
+// THE WINDOW FRAME, section 6 of docs/gestaltung-lordos.md. Measured rather
+// than described: "the buttons are on the left" and "the title is centred"
+// are both claims about pixels, and both were wrong here before today.
+test("the window buttons stand at the left, close first, and the title is centred", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const win = shell.locator(".win");
+  await expect(win).toBeVisible();
+  // Wide enough that the middle is reachable at all: at 300 across, 120 px of
+  // buttons against a title of about 76 leaves 111 px a side, so a centred
+  // title would have to lie under a button. This asks for the centre where
+  // there IS a centre to ask for.
+  await win.evaluate((w) => { w.style.width = "800px"; });
+
+  const m = await win.evaluate((w) => {
+    const bar = w.querySelector(".titlebar");
+    const b = bar.getBoundingClientRect();
+    const t = bar.querySelector(".t").getBoundingClientRect();
+    const g = bar.querySelector(".g").getBoundingClientRect();
+    const btn = [...bar.querySelectorAll(".wbtn")];
+    return {
+      // The order as the BROWSER lays them out, read off the name each button
+      // answers to, so a renamed class cannot quietly pass this.
+      reihe: btn.map((x) => [x.getAttribute("aria-label"), Math.round(x.getBoundingClientRect().left - b.left)]),
+      // The icon and the title together are what the eye reads as "the title",
+      // so it is the pair that has to sit in the middle.
+      mitte: Math.round((g.left + t.right) / 2 - (b.left + b.width / 2)),
+      frei: Math.round(g.left - btn[btn.length - 1].getBoundingClientRect().right),
+    };
+  });
+  expect(m.reihe).toEqual([["Schließen", 0], ["Minimieren", 40], ["Maximieren", 80]]);
+  expect(Math.abs(m.mitte)).toBeLessThanOrEqual(1);
+  // And it never reaches under them.
+  expect(m.frei).toBeGreaterThan(0);
+});
+
+// Front and back are told apart by the SHADOW and no longer by a second
+// title colour - LordOS does it that way, and the colour that stood in for
+// the shadow is gone. The case asks both halves: the colours are the same,
+// and something still tells the two windows apart.
+test("the window in front is known by its shadow, not by a tint", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "App-Store", exact: true }).click();
+  await expect(shell.locator(".win")).toHaveCount(2);
+  await expect(shell.locator(".win.focus")).toHaveCount(1);
+
+  const m = await shell.evaluate(() => {
+    const vorn = document.querySelector(".win.focus");
+    const hinten = document.querySelector(".win:not(.focus)");
+    const lies = (w) => {
+      const bar = getComputedStyle(w.querySelector(".titlebar"));
+      return { bar: bar.backgroundColor, schatten: getComputedStyle(w).boxShadow };
+    };
+    return { vorn: lies(vorn), hinten: lies(hinten) };
+  });
+  expect(m.vorn.bar).toBe(m.hinten.bar);
+  expect(m.vorn.schatten).not.toBe(m.hinten.schatten);
+  // A shadow that is there and not the word "none", or the window in front
+  // would be told apart by having no shadow at all.
+  expect(m.vorn.schatten).not.toBe("none");
+  expect(m.hinten.schatten).not.toBe("none");
+});
+
+// Every button by the NAME it answers to, in a row, because the three were
+// wired by their place in the row (children[0], [1], [2]) and moving them to
+// the left handed each one the wrong job - close minimized. The place is a
+// matter of looks and may change again; what a button does must not travel
+// with it.
+test("each window button does its own job, whatever place it stands in", async ({ shell }) => {
+  const öffne = async () => {
+    await shell.getByRole("button", { name: "Start" }).click();
+    await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+    await expect(shell.locator(".win")).toHaveCount(1);
+  };
+  const win = shell.locator(".win");
+
+  await öffne();
+  await win.getByRole("button", { name: "Minimieren" }).click();
+  await expect(win).toHaveClass(/min/);
+  await expect(win).not.toHaveClass(/max/);
+  await shell.locator("#taskbar .task").first().click();
+  await expect(win).not.toHaveClass(/min/);
+
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).toHaveClass(/max/);
+  await expect(shell.locator(".win")).toHaveCount(1);
+
+  // The same button again, and it is still called "Maximieren" while the
+  // window is maximised - the app menu renames its entry to Wiederherstellen,
+  // this button does not. Named here rather than repaired: it is one of the
+  // German strings of the title bar that go into the language files together.
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).not.toHaveClass(/max/);
+
+  await win.getByRole("button", { name: "Schließen" }).click();
+  await expect(shell.locator(".win")).toHaveCount(0);
+});
