@@ -48,13 +48,13 @@
   --win-bg: #1f1f23;
   --win-fg: #f5f5f7;
   --win-border: rgba(255,255,255,.12);
+  /* ONE title colour, because the SHADOW says which window is in front -
+     LordOS does it that way, and this file carried a second colour only
+     until the shadow arrived. It has arrived (--shadow and --shadow-back
+     below), so the stand-in goes: a window in front now differs by lying
+     24 px off the page instead of by about ten units of grey, which is the
+     difference a tired eye misses. */
   --title-bg: #2b2b30;
-  /* LordOS tells the window in front from the one behind by its SHADOW, not
-     by this colour, and would set it equal to --title-bg. That shadow is the
-     next step, so until then this keeps a visible difference: a shell where
-     nobody can tell which window is in front is worse than one that is not
-     yet finished. Chosen by me, and it goes when the shadow arrives. */
-  --title-bg-active: #35353b;
   --bar-bg: rgba(24,24,30,.42);
   --bar-fg: #f5f5f7;
   --menu-bg: rgba(36,36,42,.72);
@@ -95,7 +95,7 @@
 }
 html[data-theme="light"]{
   --win-bg:#ffffff; --win-fg:#1d1d1f; --win-border:rgba(0,0,0,.14);
-  --title-bg:#ececef; --title-bg-active:#e1e1e6;
+  --title-bg:#ececef;
   --bar-bg: rgba(250,250,252,.55); --bar-fg:#1d1d1f;
   --menu-bg: rgba(246,246,248,.78);
   --shadow: 0 24px 56px rgba(30,45,70,.22);
@@ -111,7 +111,7 @@ html[data-theme="light"]{
 @media (prefers-color-scheme: light){
   html:not([data-theme]){
     --win-bg:#ffffff; --win-fg:#1d1d1f; --win-border:rgba(0,0,0,.14);
-    --title-bg:#ececef; --title-bg-active:#e1e1e6;
+    --title-bg:#ececef;
     --bar-bg: rgba(250,250,252,.55); --bar-fg:#1d1d1f;
     --menu-bg: rgba(246,246,248,.78);
     --shadow: 0 24px 56px rgba(30,45,70,.22);
@@ -359,24 +359,51 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 .win.min{display:none}
 .win.max{border-radius:0}
 .win.anim{transition:left .16s,top .16s,width .16s,height .16s}
-.titlebar{display:flex;align-items:center;height:40px;padding-left:12px;gap:8px;
+/* The three buttons stand at the LEFT and the title is centred - LordOS
+   section 6. The buttons are lifted out of the flow so that the room they
+   take is a PADDING and not a flex item: that is what centres the title with
+   one rule, instead of balancing it against a second, empty box.
+   What centres it in the WINDOW and not merely in the room left over is the
+   empty box after it: the buttons are 3 x 40 = 120 wide (Thomas, 30.10.2026
+   - a finger, not LordOS's 13 px lights), so the same 120 stands on the
+   right as a spacer, and the title sits between two equal weights - no
+   padding beside it, or the two sides would not be equal any more.
+   That the spacer may SHRINK is the whole reason it is a box and not a
+   second padding: a padding of 120 on both sides of the smallest window NGC
+   allows - 240 across - would leave the title exactly 0 px to live in.
+   It gives way FIRST, and not in step with the title: with both yielding
+   together, a 300 px window cut "Rechner" down to "Rech..." while the empty
+   box still held 96 px - room given to nothing at the cost of the only thing
+   in the bar that says anything. The 9999 at .titlebar::after is not a
+   width, it is an order of precedence: the box yields everything before the
+   title yields a letter. Off-centre and readable beats centred and
+   unreadable, and wherever there is room nothing is given up at all. The buttons' own box is at
+   .wbtns below. */
+.titlebar{position:relative;display:flex;align-items:center;justify-content:center;height:40px;
+          padding-left:calc(3 * 40px);gap:8px;
           background:var(--title-bg);border-bottom:1px solid var(--win-border);cursor:default;
           flex:0 0 auto;touch-action:none}
-.win.focus .titlebar{background:var(--title-bg-active)}
 .titlebar .g{display:flex;align-items:center;justify-content:center;width:20px;height:20px;
              font-size:12px;font-weight:600;border-radius:6px;color:#fff;
              background:var(--tint,var(--accent));
              background:linear-gradient(135deg,var(--tint,var(--accent)),
                          color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
-.titlebar .t{flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
-             white-space:nowrap;opacity:.9}
+/* flex:1 would push the title back to the left edge of the free room, so it
+   takes only the width it needs and shrinks when the window is too narrow. */
+.titlebar .t{flex:0 1 auto;min-width:0;font-size:13px;font-weight:600;overflow:hidden;
+             text-overflow:ellipsis;white-space:nowrap;opacity:.9}
 .win.focus .titlebar .t{opacity:1}
 /* The three window buttons. Forty by forty pixels, by Thomas' decision of
    2026-10-30 - a deliberate step away from the LordOS template, whose round
    lights measure 13 x 13: NGC is touched with a finger, and a finger needs
    about 40. The height comes from the title bar, which is why that bar is
    exactly 40 high: 40 across x 40 down, with no number chosen twice. */
-.wbtns{display:flex;height:100%}
+/* 120 minus the 8 px gap that stands between the title and this box: the gap
+   belongs to the right-hand side as much as the box does, and 8 + 112 is the
+   120 the buttons take on the left. MEASURED without the subtraction: the
+   title group sat 4 px left of the middle of an 800 px bar - half a gap. */
+.titlebar::after{content:"";flex:0 9999 calc(3 * 40px - 8px);min-width:0}
+.wbtns{position:absolute;left:0;top:0;display:flex;height:100%}
 .wbtn{width:40px;height:100%;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;
       line-height:1;opacity:.8}
 .wbtn:hover{background:rgba(127,127,127,.25);opacity:1}
