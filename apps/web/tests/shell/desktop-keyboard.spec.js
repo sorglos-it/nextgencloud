@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // Getting through the desktop with the keyboard alone, and what a screen
 // reader is told. The people this is built for include the ones who never
@@ -12,7 +12,7 @@ import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 const active = (shell) => shell.evaluate(() => {

@@ -36,6 +36,14 @@ type Dialect interface {
 	// DDLInTx reports whether CREATE and ALTER can live in a transaction.
 	// MariaDB commits them on its own, SQLite does not.
 	DDLInTx() bool
+	// RowLock reports whether a read inside a transaction has to say FOR
+	// UPDATE when a write to the same row follows it in that transaction.
+	// MariaDB does: measured on 03.11.2026 against 11.8.6, a plain read in
+	// front of the write of LockTake answers "Error 1020: Record has changed
+	// since last read in table 'ngc_lock'" under concurrent takers, and
+	// shared/dbapi/dbtest caught it. SQLite does not, and knows no such
+	// clause: one connection writes, and the transaction keeps its place.
+	RowLock() bool
 }
 
 // MariaDB is the dialect of MariaDB and MySQL.
@@ -111,6 +119,8 @@ func (mariaDialect) Gone(err error) bool {
 
 func (mariaDialect) DDLInTx() bool { return false }
 
+func (mariaDialect) RowLock() bool { return true }
+
 type sqliteDialect struct{}
 
 func (sqliteDialect) Type(p string) string {
@@ -184,6 +194,8 @@ func (sqliteDialect) Exists(err error) bool {
 func (sqliteDialect) Gone(err error) bool { return errors.Is(err, sqlite3.IOERR) }
 
 func (sqliteDialect) DDLInTx() bool { return true }
+
+func (sqliteDialect) RowLock() bool { return false }
 
 // isNetwork reports whether err comes from the network below the driver.
 //

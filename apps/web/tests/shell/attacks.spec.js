@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 import { vectors } from "../fixtures/vectors.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
 
@@ -93,7 +93,7 @@ test.describe("a user interface that does not fit its proof", () => {
   test.beforeEach(async ({ shell }) => {
     await skipWithoutLogin(shell);
     await signIn(shell);
-    await expect(shell.locator("#taskbar")).toBeVisible();
+    await expectDesktop(shell);
   });
 
   const openTerminal = async (shell) => {
@@ -300,7 +300,7 @@ for (const [what, twist] of TWISTS) {
     await page.goto("/");
     await skipWithoutLogin(page);
     await signIn(page);
-    await expect(page.locator("#taskbar")).toBeVisible();
+    await expectDesktop(page);
     await page.locator("#dock").getByRole("button", { name: "App-Store", exact: true }).click();
     await expect(page.locator(".store")).toBeVisible();
     await page.getByRole("tab", { name: "Hochladen", exact: true }).click();
@@ -431,7 +431,7 @@ test("the password of the second confirmation reaches no wire and no link", asyn
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   await page.locator("#dock").getByRole("button", { name: "App-Store", exact: true }).click();
   await expect(page.locator(".store")).toBeVisible();
   await page.getByRole("tab", { name: "Updates", exact: true }).click();

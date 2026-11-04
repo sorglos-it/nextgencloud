@@ -110,9 +110,14 @@ func runShell(ctx context.Context, in io.Reader, out io.Writer, idle time.Durati
 		pts.Close()
 		return 0, err
 	}
-	// The child holds it from here. Without this close the read side would
-	// never end, because this process would still be a writer.
-	pts.Close()
+	// This side keeps its own writer on the pts until the shell is gone. The
+	// child holds one too, and closing ours here is what the read side needs
+	// to ever end - but on Linux the kernel DISCARDS what is still in the
+	// pseudo terminal once the LAST writer closes it, so a shell that writes
+	// and exits in the same millisecond loses its output and the terminal
+	// hands back a clean exit code and an empty screen. Ours is closed below,
+	// after the shell ended, and the read side sees its end from there.
+	defer pts.Close()
 
 	act := newActivity(idle, time.Now)
 	runCtx, stop := context.WithCancel(ctx)
@@ -133,7 +138,13 @@ func runShell(ctx context.Context, in io.Reader, out io.Writer, idle time.Durati
 	go ended(fail, "terminal.pumpIn", func() error {
 		return pumpIn(in, ptmx, func(cols, rows uint16) error { return setWinsize(ptmx, cols, rows) }, act)
 	})
-	go ended(fail, "terminal.pumpOut", func() error { return pumpOut(out, ptmx, act) })
+	// drained closes once pumpOut has read everything the pseudo terminal had
+	// and come back.
+	drained := make(chan struct{})
+	go ended(fail, "terminal.pumpOut", func() error {
+		defer close(drained)
+		return pumpOut(out, ptmx, act)
+	})
 	go ended(fail, "terminal.watch", func() error { return watch(runCtx, act) })
 	done := make(chan error, 1)
 	// The same for the wait on the child: it answers through done, and a
@@ -141,11 +152,29 @@ func runShell(ctx context.Context, in io.Reader, out io.Writer, idle time.Durati
 	// that has already ended.
 	go ended(done, "terminal.wait", cmd.Wait)
 
+	// endOfShell is the ONE way back once the shell itself has ended, and
+	// there are two places that take it. The exit code can be there before
+	// the output is: this side closes its own writer so the read side sees
+	// the end, and then waits for the pump - bounded by the same LastWord
+	// every other wait here is bounded by. Returning on the exit code alone
+	// hands back a clean code and an empty screen.
+	endOfShell := func() (int, error) {
+		code := cmd.ProcessState.ExitCode()
+		pts.Close()
+		grace := time.NewTimer(LastWord)
+		defer grace.Stop()
+		select {
+		case <-drained:
+		case <-grace.C:
+		}
+		return code, nil
+	}
+
 	var first error
 	select {
 	case first = <-fail:
 	case <-done:
-		return cmd.ProcessState.ExitCode(), nil
+		return endOfShell()
 	case <-runCtx.Done():
 		first = runCtx.Err()
 	}
@@ -165,7 +194,7 @@ func runShell(ctx context.Context, in io.Reader, out io.Writer, idle time.Durati
 		for {
 			select {
 			case <-done:
-				return cmd.ProcessState.ExitCode(), nil
+				return endOfShell()
 			case err := <-fail:
 				// The other pump reaching the end of the pseudo terminal is
 				// the shell going away, not a fault - the exit code is on its

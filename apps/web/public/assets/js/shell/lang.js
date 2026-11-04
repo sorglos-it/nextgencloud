@@ -90,9 +90,9 @@ export const NO_PASSWORD_LOGIN = Object.freeze(["Firefox"]);
 
 export const BUILT_IN = Object.freeze({
   __proto__: null,
-  "boot.tooold": "This browser is too old for NGC. Please use Chrome 137 or Safari 17.4 or newer.",
-  "boot.noroute.password": "This browser cannot do NGC's password login: it does not hand out the public half of a password key. Please use Chrome 137 or Safari 17.4 or newer. Firefox cannot do it up to version 141.",
-  "boot.noroute.passkeysoff": "No login is possible in this browser: it cannot do the password login, and passkeys are switched off here. Please switch passkeys on in the browser settings, or use Chrome 137 or Safari 17.4 or newer.",
+  "boot.tooold": "This browser cannot create the keys NGC needs for a login. Please use a current Chrome or Safari.",
+  "boot.noroute.password": "This browser cannot do NGC's password login: it does not hand out the public half of a password key. Please use a current Chrome or Safari. Firefox cannot do it at present.",
+  "boot.noroute.passkeysoff": "No login is possible in this browser: it cannot do the password login, and passkeys are switched off here. Please switch passkeys on in the browser settings, or use a current Chrome or Safari.",
   "err.unreachable": "Service unavailable. Please try again later.",
   "err.busy": "The service is busy right now. Please try again in {seconds} seconds.",
   "login.failed": "Login failed.",
