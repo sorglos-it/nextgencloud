@@ -538,3 +538,43 @@ test("each window button does its own job, whatever place it stands in", async (
   await win.getByRole("button", { name: "Schließen" }).click();
   await expect(shell.locator(".win")).toHaveCount(0);
 });
+
+// THE FIXED STEPS of section 5 of docs/gestaltung-lordos.md. They were 38
+// loose numbers in shell.css and one token, so the same 13 stood written out
+// ten times and no step could be moved without hunting for every place that
+// happened to agree with it.
+//
+// What this measures is the promise that makes them steps at all: the density
+// moves the BODY and leaves them alone. A step wired to --fs by mistake would
+// travel with the density, which is what this case would catch - it reads the
+// DRAWN values, not the stylesheet.
+test("the font steps are fixed and the density moves only the body", async ({ shell }) => {
+  const stufen = () => shell.evaluate(() => {
+    const c = getComputedStyle(document.documentElement);
+    const lies = (n) => c.getPropertyValue(n).trim();
+    return {
+      body: getComputedStyle(document.body).fontSize,
+      caption: lies("--fs-caption"), callout: lies("--fs-callout"),
+      chrome: lies("--fs-chrome"), headline: lies("--fs-headline"),
+      title: lies("--fs-title"),
+    };
+  });
+  const fest = { caption: "11px", callout: "12px", chrome: "13px", headline: "15px", title: "17px" };
+
+  expect(await stufen()).toEqual({ body: "14px", ...fest });
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Eng", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "eng");
+  expect(await stufen()).toEqual({ body: "12.5px", ...fest });
+
+  await shell.getByRole("button", { name: "Luftig", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "luftig");
+  expect(await stufen()).toEqual({ body: "15.5px", ...fest });
+
+  // And the steps are actually WORN: the band is the shell's own chrome, one
+  // step under the text of a window on purpose. A token nobody reads would
+  // pass every check above and change nothing on the screen.
+  await shell.getByRole("button", { name: "Start" }).click();
+  expect(await shell.locator("#taskbar").evaluate((e) => getComputedStyle(e).fontSize)).toBe("13px");
+});

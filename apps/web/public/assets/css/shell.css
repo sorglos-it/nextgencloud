@@ -83,6 +83,37 @@
      Schrift, Zeilen mit 10 Pixel Polster. Was gemessen und geprüft wurde,
      bleibt damit das, was ohne Zutun erscheint. */
   --fs: 14px;
+  /* THE FIXED STEPS of the sheet's section 5, read off LordOS docs/DESIGN.md.
+     They were 38 loose numbers in this file and one token: the same 13 was
+     written out ten times, so a step could never be moved without hunting for
+     every place that happened to agree with it.
+     --fs above is NOT one of these steps and must not be confused with them:
+     it is the body size that the density setting moves (12.5 / 14 / 15.5),
+     while a step is fixed and stays where it is at every density. LordOS
+     calls its 13 px step "--fs" and makes it the base; NGC's base is 14 and
+     has been measured at 14, so the 13 keeps a name of its own - it is the
+     size of the SHELL's own chrome, the band, the menus and the labels, which
+     sits one step under the text of a window on purpose. */
+  --fs-caption: 11px;
+  --fs-callout: 12px;
+  --fs-chrome: 13px;
+  --fs-headline: 15px;
+  --fs-title: 17px;
+  /* WHAT IS NOT A STEP and was left where it stands: the four sizes that draw
+     a GLYPH rather than a word - the mark in the band (16), the tray icons
+     (16), the letter on an app's badge in the start menu (18) and the signs
+     on the window buttons (14). A glyph's size is how big a drawing is, not
+     which step of the type scale it sits on, and snapping them to the scale
+     would resize icons for a reason that has nothing to do with reading.
+     The 12.5 that stood in nine places WAS text, and it was never a step at
+     all: 12.5 is the body size of the "eng" density, written out by hand in
+     places that wanted "a little smaller than the text". They read the
+     callout step now, which is what the sheet has for a second line.
+     TWO places asked in rem (.85rem = 13.6 px), which is a third thing again:
+     a size that follows the BROWSER's root and so answers neither to the
+     scale nor to the density - the one text in the shell that would have
+     stayed put while a person made everything else tighter. They read the
+     callout step too. */
   --pad: 10px;
   /* The one colour that means "stop". It stands with the others because the
      shell reads every colour from these tokens, and an alarm painted in a
@@ -176,8 +207,8 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 /* Der Knopf ist das Einzige hier, was angeklickt wird; die Fläche darum
    nimmt keine Klicks, sonst liegt sie über dem Hintergrund und fängt sie ab. */
 #deskempty .b{pointer-events:auto}
-#deskempty .emptymain{margin:0;font-size:15px}
-#deskempty .muted{margin:0;font-size:13px;color:#fff;opacity:.8}
+#deskempty .emptymain{margin:0;font-size:var(--fs-headline)}
+#deskempty .muted{margin:0;font-size:var(--fs-chrome);color:#fff;opacity:.8}
 
 
 /* ---------- App-Icons ----------
@@ -198,7 +229,7 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 #taskbar{position:fixed;top:0;left:0;right:0;height:var(--bar-h);display:flex;align-items:center;
          gap:6px;padding:0 8px;background:var(--bar-bg);backdrop-filter:blur(var(--blur)) saturate(150%);
          border-bottom:1px solid rgba(127,127,127,.25);color:var(--bar-fg);z-index:100000;
-         font-size:13px;font-weight:500}
+         font-size:var(--fs-chrome);font-weight:500}
 /* THE MARK AT THE LEFT IS A MARK, not a coloured pill. It wore the accent as
    a gradient with a drop shadow - a lit button sitting in a band that is
    translucent and quiet, the loudest thing on a screen that has nothing to
@@ -227,7 +258,7 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
          color:var(--win-fg)}
 #appdrop.open{display:block}
 #appdrop button{display:flex;width:100%;align-items:center;height:26px;padding:0 9px;border:0;
-                border-radius:5px;background:none;color:inherit;font:inherit;font-size:13px;
+                border-radius:5px;background:none;color:inherit;font:inherit;font-size:var(--fs-chrome);
                 text-align:left;cursor:pointer}
 #appdrop button:hover{background:rgba(127,160,220,.20)}
 #appdrop button:disabled{opacity:.45;cursor:default;background:none}
@@ -245,7 +276,7 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 #tray button:hover{opacity:1}
 /* ONE line, because two cannot stand in a band of 28. The time keeps its own
    weight so it is still the part the eye finds first. */
-#clock{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:13px}
+#clock{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:var(--fs-chrome)}
 #clock b{font-weight:600}
 
 /* ---------- Dock ----------
@@ -318,12 +349,12 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
 #smsearch{margin:12px;padding:9px 12px;border-radius:8px;border:1px solid var(--win-border);
           background:var(--field-bg);color:var(--win-fg);font:inherit;outline:none}
 #smsearch:focus{border-color:var(--accent)}
-#smhead,#smlookhead{padding:0 16px 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+#smhead,#smlookhead{padding:0 16px 4px;font-size:var(--fs-caption);letter-spacing:.08em;text-transform:uppercase;
                     color:var(--muted)}
 #smlist{overflow:auto;padding:8px;display:grid;
         grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px}
 .smitem{display:flex;flex-direction:column;align-items:center;gap:6px;padding:calc(var(--pad) * 1.2) 6px;
-        border-radius:10px;cursor:pointer;text-align:center;font-size:12.5px}
+        border-radius:10px;cursor:pointer;text-align:center;font-size:var(--fs-callout)}
 .smitem:hover{background:rgba(127,160,220,.20)}
 .smitem.off{opacity:.55}
 .smitem .g{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
@@ -384,13 +415,13 @@ body{font:var(--fs)/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden;
           background:var(--title-bg);border-bottom:1px solid var(--win-border);cursor:default;
           flex:0 0 auto;touch-action:none}
 .titlebar .g{display:flex;align-items:center;justify-content:center;width:20px;height:20px;
-             font-size:12px;font-weight:600;border-radius:6px;color:#fff;
+             font-size:var(--fs-callout);font-weight:600;border-radius:6px;color:#fff;
              background:var(--tint,var(--accent));
              background:linear-gradient(135deg,var(--tint,var(--accent)),
                          color-mix(in oklab,var(--tint,var(--accent)) 62%,#fff))}
 /* flex:1 would push the title back to the left edge of the free room, so it
    takes only the width it needs and shrinks when the window is too narrow. */
-.titlebar .t{flex:0 1 auto;min-width:0;font-size:13px;font-weight:600;overflow:hidden;
+.titlebar .t{flex:0 1 auto;min-width:0;font-size:var(--fs-chrome);font-weight:600;overflow:hidden;
              text-overflow:ellipsis;white-space:nowrap;opacity:.9}
 .win.focus .titlebar .t{opacity:1}
 /* The three window buttons. Forty by forty pixels, by Thomas' decision of
@@ -450,20 +481,20 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .tab.on{opacity:1;background:var(--field-bg);border-color:var(--win-border)}
 .storepanel{flex:1;overflow:auto;padding:calc(var(--pad) * 1.4) 16px}
 .storepanel:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.store .h{margin:0 0 4px;font-size:15px}
+.store .h{margin:0 0 4px;font-size:var(--fs-headline)}
 .store p{margin:0 0 10px}
 .rows{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;
      padding:var(--pad) 12px;border:1px solid var(--win-border);border-radius:9px;background:var(--field-bg)}
 .rowmain{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
-.rowmain .desc{color:var(--muted);font-size:12.5px}
+.rowmain .desc{color:var(--muted);font-size:var(--fs-callout)}
 .rowmain span{overflow-wrap:anywhere}
-.rowside{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.rowside{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:var(--fs-callout);color:var(--muted)}
 .warnline{width:100%;margin:6px 0 0;color:#d2932a}
 .store .fail,.upfail{padding:10px 12px;border:1px solid #e13e3e;border-radius:9px}
 .kv{display:flex;gap:8px;flex-wrap:wrap;padding:calc(var(--pad) * .3) 0}
 .kv .k{min-width:9rem;color:var(--muted)}
-.kv .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}
+.kv .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--fs-callout);overflow-wrap:anywhere}
 .fieldrow{display:flex;gap:8px;align-items:center;margin:10px 0}
 .fieldrow .k{color:var(--muted)}
 .store select,.store input[type=file]{padding:6px 8px;border-radius:7px;border:1px solid var(--win-border);
@@ -501,9 +532,9 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
              justify-content:center;z-index:100003;padding:16px}
 .confirmbox{width:min(420px,100%);padding:18px;border-radius:12px;border:1px solid var(--win-border);
             background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
-.confirmhead{margin:0 0 8px;font-size:16px}
+.confirmhead{margin:0 0 8px;font-size:var(--fs-headline)}
 .confirmbox p{margin:0 0 12px}
-.confirmlabel{display:block;margin-bottom:4px;color:var(--muted);font-size:12.5px}
+.confirmlabel{display:block;margin-bottom:4px;color:var(--muted);font-size:var(--fs-callout)}
 .confirmbox input{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--win-border);
                   background:var(--field-bg);color:var(--win-fg);font:inherit}
 .confirmrow{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
@@ -516,10 +547,10 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
            justify-content:center;z-index:100010;padding:16px}
 .alarmbox{width:min(460px,100%);padding:20px 22px;border-radius:12px;border:2px solid var(--alarm);
           background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
-.alarmhead{margin:0 0 12px;font-size:17px;color:var(--alarm)}
+.alarmhead{margin:0 0 12px;font-size:var(--fs-title);color:var(--alarm)}
 .alarmbox p{margin:0 0 10px}
 .alarmmain{font-weight:600}
-.alarmfoot{margin:16px 0 0;color:var(--muted);font-size:12.5px}
+.alarmfoot{margin:16px 0 0;color:var(--muted);font-size:var(--fs-callout)}
 .alarmbox:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
 /* ---------- Meldungen ---------- */
@@ -575,16 +606,16 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .tab.on{background:var(--field-bg);border-color:var(--win-border);opacity:1;
                   font-weight:600;margin-bottom:-1px}
 .usersapp .panels{flex:1;overflow:auto;padding:calc(var(--pad) * 1.4) 16px calc(var(--pad) * 2)}
-.usersapp h3{margin:0 0 10px;font-size:15px}
-.usersapp h4{margin:0 0 6px;font-size:13px;text-transform:none}
+.usersapp h3{margin:0 0 10px;font-size:var(--fs-headline)}
+.usersapp h4{margin:0 0 6px;font-size:var(--fs-chrome);text-transform:none}
 .usersapp section{margin:0 0 20px;padding:0 0 14px;border-bottom:1px solid var(--win-border)}
 .usersapp section:last-child{border-bottom:0}
-.usersapp .hint{margin:0 0 8px;color:var(--muted);font-size:12px}
+.usersapp .hint{margin:0 0 8px;color:var(--muted);font-size:var(--fs-callout)}
 /* "note", not "msg": .msg above is the shell's own boot-message card. An empty
    note keeps no room but stays in the page, so a screen reader can find it. */
-.usersapp .note{margin:0 0 8px;font-size:13px}
+.usersapp .note{margin:0 0 8px;font-size:var(--fs-chrome)}
 .usersapp .note:empty{margin:0}
-.usersapp table{width:100%;border-collapse:collapse;font-size:13px}
+.usersapp table{width:100%;border-collapse:collapse;font-size:var(--fs-chrome)}
 .usersapp th{text-align:left;font-weight:600;padding:calc(var(--pad) * .4) 10px calc(var(--pad) * .6) 0;color:var(--muted);
              border-bottom:1px solid var(--win-border);white-space:nowrap}
 .usersapp td{padding:calc(var(--pad) * .5) 10px calc(var(--pad) * .5) 0;border-bottom:1px solid var(--win-border);
@@ -602,7 +633,7 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .pending .row,.usersapp .pendapi .row{display:flex;flex-wrap:wrap;gap:10px;
              align-items:center;padding:calc(var(--pad) * .8) 0;border-bottom:1px solid var(--win-border)}
 .usersapp .row .nm{font-weight:600}
-.usersapp .row .since{color:var(--muted);font-size:12px}
+.usersapp .row .since{color:var(--muted);font-size:var(--fs-callout)}
 .usersapp .fp{background:var(--field-bg);border:1px solid var(--win-border);border-radius:6px;
               padding:2px 6px}
 .usersapp .code{background:var(--field-bg);border:1px solid var(--win-border);border-radius:6px;
@@ -611,7 +642,7 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .newrole,.usersapp .newuser{border:1px solid var(--win-border);border-radius:8px;
   margin:16px 0 0;padding:8px 12px 12px}
 .usersapp .newrole legend,.usersapp .newuser legend{padding:0 6px;font-weight:600}
-.usersapp .newrole .muted,.usersapp .newuser .muted{margin:0 0 8px;font-size:12px}
+.usersapp .newrole .muted,.usersapp .newuser .muted{margin:0 0 8px;font-size:var(--fs-callout)}
 .usersapp .role legend{padding:0 6px;font-weight:600}
 .usersapp .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
 .usersapp .opt{display:flex;gap:8px;align-items:center;cursor:pointer}
@@ -619,9 +650,9 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    and the same fact in the row of a listed server. The lists of the picker
    scroll inside the question - an installation may have many users, and a
    question taller than the window hides its own buttons. */
-.usersapp .sub{margin:8px 0 2px;font-weight:600;font-size:13px}
+.usersapp .sub{margin:8px 0 2px;font-weight:600;font-size:var(--fs-chrome)}
 .usersapp .rootpick .opts{max-height:9rem;overflow:auto}
-.usersapp .row .root{color:var(--muted);font-size:12px}
+.usersapp .row .root{color:var(--muted);font-size:var(--fs-callout)}
 /* A right the role admin holds without a row: named, with no box to clear. */
 .usersapp .opt.fixed{cursor:default;padding-left:20px}
 .usersapp button.go{border:1px solid var(--win-border);border-radius:8px;background:var(--title-bg);
@@ -633,7 +664,7 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .usersapp .ask{max-width:30rem;width:100%;max-height:100%;overflow:auto;padding:18px;
                border:1px solid var(--win-border);border-radius:var(--radius);
                background:var(--win-bg);box-shadow:var(--shadow)}
-.usersapp .ask h2{margin:0 0 10px;font-size:16px}
+.usersapp .ask h2{margin:0 0 10px;font-size:var(--fs-headline)}
 .usersapp .ask p{margin:0 0 8px}
 .usersapp .ask ul{margin:0 0 10px;padding-left:20px}
 .usersapp .ask .who{color:var(--muted)}
@@ -648,11 +679,11 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .loginbox{width:min(360px,calc(100vw - 32px));margin:14vh auto;padding:22px;
           border:1px solid var(--win-border);border-radius:12px;
           background:var(--win-bg);color:var(--win-fg);box-shadow:var(--shadow)}
-.loginhead{margin:0 0 16px;font-size:18px}
+.loginhead{margin:0 0 16px;font-size:var(--fs-title)}
 /* The caption sits over its field and not beside it: at 360px a caption
    beside the box leaves the box too narrow to read a password in. */
 .field{display:block;margin-bottom:12px}
-.fieldname{display:block;margin-bottom:4px;color:var(--muted);font-size:12.5px}
+.fieldname{display:block;margin-bottom:4px;color:var(--muted);font-size:var(--fs-callout)}
 .field input{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--win-border);
              background:var(--field-bg);color:var(--win-fg);font:inherit}
 /* Under 380px the two buttons stop fitting side by side and go below each
@@ -673,7 +704,7 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    Mittig unter dem Anmeldekasten, nicht am Schirmrand: unten links steht der
    Passkey-Hinweis und unten mittig der Meldungsstreifen des Schreibtisches. */
 .poweredby{margin:0 auto;padding:0 16px;max-width:min(360px,calc(100vw - 32px));
-           text-align:center;color:var(--muted);font-size:12px}
+           text-align:center;color:var(--muted);font-size:var(--fs-callout)}
 
 /* The standing advice to move to passkeys. Bottom left.
    THE REASON WRITTEN HERE WAS NO LONGER TRUE: it said "because the notice bar
@@ -715,7 +746,7 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
 .passkeyhint{position:fixed;left:8px;top:calc(var(--bar-h) + 8px);z-index:100001;margin:0;padding:8px 12px;
              pointer-events:none;
              border-radius:10px;border:1px solid #d2932a;background:var(--win-bg);
-             color:var(--win-fg);box-shadow:var(--shadow);font-size:12.5px;
+             color:var(--win-fg);box-shadow:var(--shadow);font-size:var(--fs-callout);
              max-width:min(280px,calc(100vw - 32px))}
 
 /* ---------- Ersteinrichtung ---------- */
@@ -725,19 +756,19 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    card is taller than a phone and the shell's own body never scrolls. */
 .setupbox{width:min(460px,calc(100vw - 32px));margin:6vh auto;max-height:88vh;overflow-y:auto}
 .setuplead{margin:0 0 16px;color:var(--muted)}
-.setuphead{margin:18px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;
+.setuphead{margin:18px 0 8px;font-size:var(--fs-chrome);text-transform:uppercase;letter-spacing:.06em;
            color:var(--muted)}
 .setupfacts{margin:0 0 10px;padding:8px 10px;border-radius:8px;border:1px solid var(--win-border);
             background:var(--field-bg)}
 .setupline{display:flex;flex-wrap:wrap;gap:2px 10px}
-.setupcaption{flex:0 0 7.5rem;color:var(--muted);font-size:12.5px}
+.setupcaption{flex:0 0 7.5rem;color:var(--muted);font-size:var(--fs-callout)}
 /* The values the person compares with the server, character for character:
    a fixed-width font so a 1 cannot pass for an l, a break that can fall
    anywhere so nothing is cut off, and selectable - the shell switches
    selection off for the whole page, and a fingerprint nobody can select is a
    fingerprint nobody can check. */
 .setupvalue{flex:1 1 12rem;margin:0;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
-            font-size:12.5px;word-break:break-all;-webkit-user-select:text;user-select:text}
+            font-size:var(--fs-callout);word-break:break-all;-webkit-user-select:text;user-select:text}
 .setupcheck{display:flex;gap:9px;align-items:flex-start;margin:0 0 4px;cursor:pointer}
 .setupcheck input{margin:2px 0 0;width:16px;height:16px;accent-color:var(--accent)}
 
@@ -746,9 +777,9 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    what may be old, not one row in it. Small and quiet - it is a fact about the
    screen, not a message, and a message that shouts every time a window opens is
    a message people stop reading. */
-.stand{display:flex;align-items:center;gap:10px;margin:0 0 8px;font-size:.85rem;color:var(--muted)}
+.stand{display:flex;align-items:center;gap:10px;margin:0 0 8px;font-size:var(--fs-callout);color:var(--muted)}
 .stand .standtxt{flex:0 1 auto}
-.stand .standgo{padding:3px 9px;font-size:.85rem;border-radius:7px;
+.stand .standgo{padding:3px 9px;font-size:var(--fs-callout);border-radius:7px;
   border:1px solid var(--win-border);background:none;color:inherit;cursor:pointer}
 .stand .standgo:hover{color:var(--fg)}
 

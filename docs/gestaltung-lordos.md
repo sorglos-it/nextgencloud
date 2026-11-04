@@ -271,6 +271,40 @@ Dichte hängt (`docs/gestaltung.md` Punkt 5), und 14 Pixel sind das, was gemesse
 Die Stufen bleiben `12,5` eng und `15,5` luftig. Wer das auf 13 ziehen will, zieht eine Zahl an
 einer Stelle — aber dann sind alle Messungen der Oberfläche neu zu machen.
 
+### Stand am 04.11.2026: die Stufen stehen als Marken
+
+In `shell.css` standen **38 lose Zahlen und eine einzige Marke** (`--fs`). Dieselbe 13 war zehnmal
+ausgeschrieben, die 12 siebenmal — eine Stufe ließ sich nicht verschieben, ohne jede Stelle zu
+suchen, die zufällig mit ihr übereinstimmte. Jetzt gibt es fünf Marken: `--fs-caption` (11),
+`--fs-callout` (12), `--fs-chrome` (13), `--fs-headline` (15), `--fs-title` (17).
+
+**`--fs-chrome` heißt nicht `--fs`, und das ist Absicht.** LordOS nennt seine 13er-Stufe `--fs` und
+macht sie zur Grundschrift; NGC steht auf 14, und daran hängt die Dichte. Die 13 ist hier die Größe
+der **Hülle** — Band, Menüs, Aufschriften —, die bewusst eine Stufe unter dem Text in einem Fenster
+sitzt. Zwei verschiedene Dinge dürfen nicht denselben Namen tragen.
+
+Drei Funde beim Umbau, alle gemessen:
+
+1. **12,5 war nie eine Stufe.** Sie stand neunmal da, und 12,5 ist die Grundschrift der Dichte
+   „eng" — jemand hat „etwas kleiner als der Text" als Zahl hingeschrieben. Diese neun Stellen sind
+   Zweittext und lesen jetzt `--fs-callout`.
+2. **Zwei Stellen rechneten in `rem`** (`.85rem` = 13,6 px). Das folgt der Schriftgröße des Browsers
+   und damit weder der Stufe noch der Dichte: dieser eine Text wäre stehen geblieben, während ein
+   Mensch alles andere enger stellt. Auch sie lesen `--fs-callout`.
+3. **Vier Zahlen sind kein Text, sondern Zeichen** und bleiben, wo sie stehen: die Marke im Band
+   (16), die Symbole in der Ablage (16), der Buchstabe auf dem App-Schild im Startmenü (18) und die
+   Zeichen auf den Fensterknöpfen (14). Wie groß eine Zeichnung ist, hat mit der Schriftstufe
+   nichts zu tun.
+
+Beim reinen Einführen der Marken wurde **keine einzige Zahl bewegt**: 42 sichtbare Elemente vorher
+und nachher gemessen, kein Unterschied. Erst der zweite Schritt — 12,5 und die drei Überschriften
+auf die Stufen — verändert das Bild, und zwar absichtlich.
+
+**Die Schriftfamilie ist noch offen.** `-apple-system` steht in `shell.css` nicht mehr; sie liegt nur
+noch in `apps/web/assets/apps/calculator/app.css`, `.../terminal/app.css` und `docs/prototype.html`,
+alle hinter der Rahmengrenze oder in fremder Hand. Inter mitzuliefern heißt Schriftdateien ins Repo
+zu legen — eine Entscheidung für Thomas, keine, die ich nebenbei treffe.
+
 Zweiter Text nimmt `--muted`. **Keine Großbuchstaben** in Abschnittsköpfen: „Inhalt", nicht
 „INHALT".
 
