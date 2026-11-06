@@ -253,3 +253,85 @@ test("importPublic() only falls back for NotSupportedError and DataError, not an
   expect(got.threw).toBe(true);
   expect(got.name).toBe("QuotaExceededError");
 });
+
+// Class 25 of docs/login-fehlerklassen.md at the place it is thrown: a
+// handshake message of the wrong SIZE. It is the first thing readMessage1 and
+// readMessage2 ask (contracts/noise.js:276, :297), before a key is used, and
+// it has a sentence of its own - so it can be nailed down with equality
+// instead of being read off the one sentence the mask draws.
+//
+// A FRESH PAIR PER SUB-CASE, and that is not tidiness: a handshake carries
+// state, and a readMessage1 that succeeded has moved it on. One pair for all
+// of them would measure the second refusal against a changed object and the
+// third against a changed one again.
+//
+// skipWithoutFixedKeys, like its neighbours above: the pair is built with
+// forTest(), which reads a public half out of a PKCS#8 document.
+test("a handshake message of the wrong size is refused before any key is used",
+  async ({ shell }) => {
+  await skipWithoutFixedKeys(shell);
+  const got = await shell.evaluate(async (d) => {
+    const n = await import("/assets/js/contracts/noise.js");
+    const { b64decode } = await import("/assets/js/contracts/b64.js");
+    const prologue = b64decode(d.prologue);
+    const pair = async () => ({
+      init: await n.HandshakeKK.forTest(true, prologue, b64decode(d.initStatic.private),
+        b64decode(d.respStatic.public), b64decode(d.initEphemeral.private)),
+      resp: await n.HandshakeKK.forTest(false, prologue, b64decode(d.respStatic.private),
+        b64decode(d.initStatic.public), b64decode(d.respEphemeral.private)),
+    });
+    // The real message 1, kept for its length and for the control below.
+    const real1 = await (await pair()).init.writeMessage1();
+    const read1 = async (m) => {
+      const { resp } = await pair();
+      try {
+        await resp.readMessage1(m);
+        return "accepted";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    const read2 = async (m) => {
+      const { init, resp } = await pair();
+      // Message 2 is only read after message 1 went out and in, so the state
+      // this measures is the one a real session is in at that moment.
+      await resp.readMessage1(await init.writeMessage1());
+      try {
+        await init.readMessage2(m);
+        return "accepted";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    return {
+      size: real1.length, want: n.HANDSHAKE_SIZE,
+      one: {
+        empty: await read1(new Uint8Array(0)),
+        short: await read1(real1.subarray(0, real1.length - 1)),
+        long: await read1(new Uint8Array(real1.length + 1)),
+      },
+      two: {
+        empty: await read2(new Uint8Array(0)),
+        short: await read2(new Uint8Array(real1.length - 1)),
+        long: await read2(new Uint8Array(real1.length + 1)),
+      },
+      // The control that has to LIVE: the message of the right length gets
+      // past this check. Without it the case would pass just as well if
+      // readMessage1 refused everything.
+      good: await read1(real1),
+    };
+  }, v);
+  // Two numbers and not one: that what is WRITTEN is the length the reader
+  // demands (so neither side drifts alone), and that the number itself is the
+  // 48 Go writes (shared/noisep) - a contract that changed on both sides at
+  // once would otherwise still pass.
+  expect(got.size, "the written message is as long as the reader demands").toBe(got.want);
+  expect(got.want, "and that length is Go's 48").toBe(48);
+  expect(got.one).toEqual({
+    empty: "noise: message 1", short: "noise: message 1", long: "noise: message 1",
+  });
+  expect(got.two).toEqual({
+    empty: "noise: message 2", short: "noise: message 2", long: "noise: message 2",
+  });
+  expect(got.good, "the right length gets past the size check").toBe("accepted");
+});
