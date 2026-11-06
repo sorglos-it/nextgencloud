@@ -14,23 +14,45 @@ import * as proof from "../contracts/proof.js";
 // it is for and when it goes stands at standIn() below.
 import { fakeWorld } from "./fake-link.js";
 
-const NEEDED = ["Ed25519", "X25519"];
 
 // The standing advice for somebody who got in with a password alone.
 const HINT = "Umstellen auf Passkeys empfohlen";
 
+// IT DOES THE WORK AND NOT A PREPARATION FOR IT - the same lesson
+// passwordLoginFits below was built on, paid for a second time one curve
+// further along.
+//
+// Until 6.11.2026 this gate made both keys with generateKey and stopped there.
+// MEASURED on Playwright's WebKit on Linux (run 42215156995): X25519
+// generateKey is taken and deriveBits answers no. So the gate said yes, the
+// mask came up with everything switched on, the person typed a password,
+// Argon2id ran - and no session could ever be opened. "Anmeldung
+// fehlgeschlagen.", the sentence for a wrong password, where no password in the
+// world would have got in. Exactly the lie passwordLoginFits exists to end.
+//
+// So both curves are USED, not merely made: the Ed25519 public half checks a
+// signature its own private half just made, and X25519 derives from both sides
+// and the two secrets have to AGREE. An engine whose deriveBits is there but
+// bent hands out two different secrets, and a length check alone would take
+// it - the same blind spot a bent jwk export walked through once already.
 export async function browserFits() {
-  // Both are needed for the session keys; a browser without them cannot open
-  // a session at all, so the shell says so instead of failing halfway.
-  for (const name of NEEDED) {
-    try {
-      const k = await crypto.subtle.generateKey({ name }, false, name === "Ed25519" ? ["sign", "verify"] : ["deriveBits"]);
-      if (!k) return false;
-    } catch {
-      return false;
-    }
+  try {
+    const signing = await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
+    const msg = new TextEncoder().encode("ngc: can this engine open a session");
+    const sig = await crypto.subtle.sign({ name: "Ed25519" }, signing.privateKey, msg);
+    if ((await crypto.subtle.verify({ name: "Ed25519" }, signing.publicKey, sig, msg)) !== true) return false;
+
+    const own = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+    const peer = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+    const mine = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: "X25519", public: peer.publicKey }, own.privateKey, 256));
+    const theirs = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: "X25519", public: own.publicKey }, peer.privateKey, 256));
+    if (mine.length !== 32 || theirs.length !== 32) return false;
+    return mine.every((b, i) => b === theirs[i]);
+  } catch {
+    return false;
   }
-  return true;
 }
 
 // passwordLoginFits: can this engine make the PASSWORD KEY of a seed?

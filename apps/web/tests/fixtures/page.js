@@ -185,11 +185,13 @@ export async function sessionKeyGaps(shell) {
       return "";
     };
 
-    // shell/main.js browserFits(): THESE TWO CALLS AND NOTHING ELSE. It is the
-    // only gate between a page load and the mask, so for the one question "does
-    // the shell come up" these two calls really are the whole action - the only
-    // place in this file where generateKey alone is an honest answer. Every
-    // other question below builds on it and asks for more.
+    // shell/main.js browserFits(), AND IT ASKS WHAT THAT GATE ASKS. It used to
+    // be the two generateKey calls and nothing else, mirroring a gate that
+    // stopped there - and on Playwright's WebKit on Linux both calls are taken
+    // while deriveBits answers no, so this probe said "the shell comes up"
+    // about an engine that can open no session (run 42215156995). The gate now
+    // uses both curves; so does this. Every other question below builds on it
+    // and asks for more.
     let signing = null, own = null, peer = null;
     const curves = await walk([
       ["Ed25519 generateKey", async () => {
@@ -200,6 +202,20 @@ export async function sessionKeyGaps(shell) {
         own = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
         peer = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
         return !!(own && own.privateKey && peer && peer.publicKey);
+      }],
+      // The step the gate stopped short of, and the two sides have to AGREE:
+      // a bent deriveBits hands out two different secrets and a length check
+      // alone would take it.
+      ["Ed25519 sign and check, the gate's own", async () => {
+        const sig = await crypto.subtle.sign({ name: "Ed25519" }, signing.privateKey, message);
+        return (await crypto.subtle.verify({ name: "Ed25519" }, signing.publicKey, sig, message)) === true;
+      }],
+      ["X25519 deriveBits", async () => {
+        const mine = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: peer.publicKey }, own.privateKey, 256));
+        const theirs = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: own.publicKey }, peer.privateKey, 256));
+        return mine.length === 32 && theirs.length === 32 && mine.every((b, i) => b === theirs[i]);
       }],
     ]);
 
