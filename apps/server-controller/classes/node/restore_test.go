@@ -770,6 +770,60 @@ func TestRestoreLeavesAnAppOffWhenItsSurplusTasksCannotBeEnded(t *testing.T) {
 	}
 }
 
+// The CONDITION that lets the surplus path be entered at all, in both
+// directions and in one case: tasks of earlier lives are named task by task
+// ONLY beside a container the engine knows, and never for one it does not.
+//
+// It is the branch nothing held. Measured on 4.11.2026 against the suite as it
+// stood: `if up` turned into `if true` and into `if !up` - both mutants LIVED,
+// every case green. So the engine could have been asked to pick single tasks
+// out of an app it believes is off (where cgroup.kill is the right tool and
+// the only one that gets them all), or the whole cgroup of a healthy container
+// could have been emptied, and no case would have said a word. What was held
+// until now is what happens INSIDE each half, not which half is taken.
+//
+// What this case does NOT measure, said out loud: whether `up` can be true at
+// all while a node comes up. That hangs on the runtime directory surviving the
+// start of the service, which is a systemd question and not a Go one - it is
+// measured against systemd, not here (ulh, RuntimeDirectoryPreserve). As long
+// as the directory is new at every start, podman answers "nothing runs" and
+// the first half below is unreachable on the plant, however green it is here.
+func TestRestoreNamesTheSurplusOnlyBesideAContainerTheEngineKnows(t *testing.T) {
+	// Half one: the engine KNOWS the container. The surplus is named task by
+	// task, nothing is waited for, and the cgroup is not emptied - emptying it
+	// would take the healthy container with it.
+	s := newRestoreStand(t)
+	s.put(firstApp, true, true)
+	name := runtime.UserName(firstApp)
+	s.eng.up[name] = true
+	s.eng.surplus[name] = 2
+	if err := Restore(context.Background(), s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(s.eng.asked, []string{name}) {
+		t.Fatalf("the surplus was named for %v, want exactly %s beside its running container", s.eng.asked, name)
+	}
+	if len(s.killed) != 0 {
+		t.Fatalf("emptied %v, and that would have ended the healthy container too", s.killed)
+	}
+
+	// Half two: the engine knows NO container, and tasks stand. Then the other
+	// tool is the right one, and naming them task by task would be the wrong
+	// one - there is no container whose own tasks would have to be kept.
+	o := newRestoreStand(t)
+	o.put(firstApp, true, true)
+	o.orphan[name] = true
+	if err := Restore(context.Background(), o.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(o.eng.asked) != 0 {
+		t.Fatalf("the surplus was named for %v although the engine knows no container", o.eng.asked)
+	}
+	if !reflect.DeepEqual(o.killed, []string{name}) {
+		t.Fatalf("emptied %v, want the cgroup of %s", o.killed, name)
+	}
+}
+
 // And the second living control: the ordinary restore of an app that is simply
 // off. Nothing is waited for and nothing is ended - otherwise every start of
 // every node would carry the wait of the branch above.
