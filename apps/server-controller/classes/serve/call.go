@@ -45,9 +45,23 @@ import (
 )
 
 // envDir is where the file with the environment of a call is written. It is
-// config.RunDir, because that is the one directory the engine takes an
-// EnvFile from (runtime.Exec.EnvFile) and a tmpfs, so no copy of NGC_PARAMS
-// outlives a restart.
+// config.RunDir, because that is the one directory the engine takes an EnvFile
+// from (runtime.Exec.EnvFile).
+//
+// What takes the file away again is the defer in call (os.Remove), and nothing
+// else. The line here used to say that config.RunDir is a tmpfs, "so no copy
+// of NGC_PARAMS outlives a restart", and that was the whole reason this
+// package needs no sweeping of its own. It is not true any more: the unit of
+// this service carries RuntimeDirectoryPreserve=yes (ulh, ngc-controller.sh),
+// so systemd keeps config.RunDir over a stop of the service, and a controller
+// that dies hard never runs its defer. Such a file then lies there with the
+// parameters of one call in it until the machine boots.
+//
+// OPEN, and deliberately not decided here: nobody sweeps config.RunDir. A
+// controller could take its own env-* files with it when it starts, before it
+// answers the first call - no running call of this service can own one of them
+// at that moment. That is a change to the start of the service and not to this
+// variable, so it is named and not built.
 //
 // Only a test moves it, to a directory it may write in. It is one variable for
 // the whole package, so two cases that move it at the same time would measure

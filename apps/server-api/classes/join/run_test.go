@@ -2,6 +2,8 @@ package join
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -19,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sorglos-it/nextgencloud/shared/core"
 	"github.com/sorglos-it/nextgencloud/shared/dbapi"
 	"github.com/sorglos-it/nextgencloud/shared/enc"
 	"github.com/sorglos-it/nextgencloud/shared/trust/trusttest"
@@ -84,13 +87,20 @@ func codeFor(t *testing.T, j *Join, srv *httptest.Server) tunnel.JoinCode {
 	return code
 }
 
+// The two long-term keys of the joining server, as its api.json holds them:
+// 32 bytes each, fixed, so a case can check what travelled against them.
+var (
+	testNoiseKey = bytes.Repeat([]byte{0x31}, 32)
+	testSignSeed = bytes.Repeat([]byte{0x32}, ed25519.SeedSize)
+)
+
 // runConfig is the configuration of a joining server inside dir.
 func runConfig(t *testing.T, dir string, code tunnel.JoinCode, client *http.Client, out *syncBuffer) JoinConfig {
 	t.Helper()
 	_, pin := trusttest.APITLS(0xE2, "api-2.test")
 	return JoinConfig{
 		Code: code.String(), Node: "api-2", URL: "wss://api-2.test:7443/tunnel", TLS: pin,
-		NoiseFile: filepath.Join(dir, "noise"), SignFile: filepath.Join(dir, "sign"),
+		NoiseKey: testNoiseKey, SignSeed: testSignSeed,
 		SecretFile: filepath.Join(dir, "join-secret"), Out: out, Client: client,
 		Retry: 20 * time.Millisecond, Timeout: 10 * time.Second,
 	}
@@ -171,37 +181,189 @@ func TestRunJoinsAndFetchesTheKeys(t *testing.T) {
 	if !bytes.Equal(shared.SecretKey, testSecretKey) || !bytes.Equal(shared.ChallengeKey, testChallengeKey) {
 		t.Fatal("the file holds other keys than the installation's")
 	}
-	// The private keys this server made lie in their files and are not the
-	// public ones that travelled.
-	noiseRaw, err := os.ReadFile(cfg.NoiseFile)
-	if err != nil {
-		t.Fatalf("noise file: %v", err)
+	// What got listed are the public halves of the two keys api.json holds,
+	// and not a pair Run made for itself. This is the live counter-check of
+	// the two writes that are gone: without it, a Run that goes back to
+	// making its own keys would still pass every other line of this case.
+	wantNoise, wantSign := publicHalves(t, cfg)
+	if !bytes.Equal(pending[0].Noise, wantNoise) {
+		t.Fatal("the listed Noise key is not the public half of the key in api.json")
 	}
-	priv, err := enc.B64.DecodeString(string(noiseRaw))
-	if err != nil || len(priv) != 32 {
-		t.Fatalf("the noise file holds no 32-byte key: %v", err)
+	if !bytes.Equal(pending[0].Sign, wantSign) {
+		t.Fatal("the listed signing key is not the public half of the key in api.json")
 	}
-	if bytes.Equal(priv, pending[0].Noise) {
-		t.Fatal("the file holds the public key, not the private one")
-	}
-	signRaw, err := os.ReadFile(cfg.SignFile)
-	if err != nil {
-		t.Fatalf("sign file: %v", err)
-	}
-	if seed, err := enc.B64.DecodeString(string(signRaw)); err != nil || len(seed) != 32 {
-		t.Fatalf("the sign file holds no 32-byte seed: %v", err)
-	}
-	// All three files are 0600 where the system has such modes at all.
+	// And the run directory holds the ONE file the ulh script takes away
+	// again. A private key of this server is in api.json; a second copy under
+	// config.RunDir would outlive the join (RuntimeDirectoryPreserve=yes) and
+	// nothing would ever read it.
+	onlyFileIs(t, dir, "join-secret")
+	// That one file is 0600 where the system has such modes at all.
 	if runtime.GOOS != "windows" {
-		for _, p := range []string{cfg.NoiseFile, cfg.SignFile, cfg.SecretFile} {
-			st, err := os.Stat(p)
-			if err != nil {
-				t.Fatalf("stat %s: %v", p, err)
-			}
-			if st.Mode().Perm() != fs.FileMode(0o600) {
-				t.Fatalf("%s has mode %o, want 600", p, st.Mode().Perm())
+		st, err := os.Stat(cfg.SecretFile)
+		if err != nil {
+			t.Fatalf("stat %s: %v", cfg.SecretFile, err)
+		}
+		if st.Mode().Perm() != fs.FileMode(0o600) {
+			t.Fatalf("%s has mode %o, want 600", cfg.SecretFile, st.Mode().Perm())
+		}
+	}
+}
+
+// publicHalves derives the two public keys of the configuration the way the
+// rest of the installation does: X25519 for the Noise key (setup.publicKeys,
+// controllers.noisePublic) and the Ed25519 public key out of the seed.
+func publicHalves(t *testing.T, cfg JoinConfig) ([]byte, []byte) {
+	t.Helper()
+	k, err := ecdh.X25519().NewPrivateKey(cfg.NoiseKey)
+	if err != nil {
+		t.Fatalf("noise key of the configuration: %v", err)
+	}
+	return k.PublicKey().Bytes(), ed25519.NewKeyFromSeed(cfg.SignSeed).Public().(ed25519.PublicKey)
+}
+
+// onlyFileIs holds that dir carries exactly the named files and nothing else.
+// It names what it found, because the name of a file Run left behind is the
+// whole finding - never its content: these are private keys.
+func onlyFileIs(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if len(got) != len(want) {
+		t.Fatalf("the run directory holds %v, want %v", got, want)
+	}
+	for i, n := range want {
+		if got[i] != n {
+			t.Fatalf("the run directory holds %v, want %v", got, want)
+		}
+	}
+}
+
+// TestRunLeavesNothingBehindWhenTheJoinFails is the error path of the case
+// above. A deletion that only sits on the good way leaves the keys lying in
+// exactly the case somebody looks at them, so this one makes sure there is
+// nothing to leave: the join is refused, and the run directory stays empty.
+func TestRunLeavesNothingBehindWhenTheJoinFails(t *testing.T) {
+	j, _ := newJoin(t)
+	srv, client := serveAPI(t, j)
+	code := codeFor(t, j, srv)
+	dir := t.TempDir()
+	cfg := runConfig(t, dir, code, client, &syncBuffer{})
+	// The same code twice: the second request is refused, so Run comes back
+	// after the POST and before any key of the installation arrives.
+	if err := Run(ctx, cfg); err != nil && !errors.Is(err, ErrJoinTimeout) {
+		t.Fatalf("first run: %v", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Timeout = 2 * time.Second
+	if err := Run(ctx, cfg); !errors.Is(err, ErrJoinRefused) {
+		t.Fatalf("second run = %v, want %v", err, ErrJoinRefused)
+	}
+	onlyFileIs(t, dir)
+}
+
+// TestRunSaysNothingWhenTheFetchedKeysCannotBeWritten keeps ErrJoinSecret
+// guarded. It is the one file Run still writes, and it is written only after
+// an admin has signed the server in, so this case has to walk the whole join
+// - a table case that gives up at the time limit never reaches the write.
+//
+// It checks the category and that the error names neither the path nor the
+// directory it stumbled over: a failed write answers with both, and that path
+// is where the keys of the installation would have gone.
+func TestRunSaysNothingWhenTheFetchedKeysCannotBeWritten(t *testing.T) {
+	j, fx := newJoin(t)
+	srv, client := serveAPI(t, j)
+	code := codeFor(t, j, srv)
+	dir := t.TempDir()
+	cfg := runConfig(t, dir, code, client, &syncBuffer{})
+	// A file where a directory would have to be: MkdirAll fails and names the
+	// path it stumbled over.
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SecretFile = filepath.Join(blocked, "join-secret")
+	cfg.Timeout = 30 * time.Second
+
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg) }()
+	pending := waitForOneRequest(t, j)
+	listTheWaitingServer(t, j, fx, pending)
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrJoinSecret) {
+			t.Fatalf("Run = %v, want %v", err, ErrJoinSecret)
+		}
+		if err.Error() != ErrJoinSecret.Error() {
+			t.Errorf("Run wrapped the category with a word of its own")
+		}
+		for _, q := range []struct{ what, text string }{
+			{"path of the fetched keys", cfg.SecretFile},
+			{"directory of the fetched keys", blocked},
+		} {
+			if strings.Contains(err.Error(), q.text) {
+				t.Errorf("Run error names the %s", q.what)
 			}
 		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not finish after the signature")
+	}
+}
+
+// waitForOneRequest waits until exactly one join request has arrived and gives
+// it back. The signature has to come AFTER the request, which is the real
+// order and the only one in which Run is at PathKeys when it is signed.
+func waitForOneRequest(t *testing.T, j *Join) core.PendingAPI {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		got, err := j.Waiting(ctx)
+		if err != nil {
+			t.Fatalf("waiting: %v", err)
+		}
+		if len(got) == 1 {
+			return got[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no join request arrived")
+	return core.PendingAPI{}
+}
+
+// TestRunRefusesAKeyOfThisServerItCannotUse holds the two new values Run
+// checks before anything travels. A key of the wrong length would otherwise
+// go into the trust list as a public half nobody can speak to.
+func TestRunRefusesAKeyOfThisServerItCannotUse(t *testing.T) {
+	j, _ := newJoin(t)
+	srv, client := serveAPI(t, j)
+	code := codeFor(t, j, srv)
+	for name, spoil := range map[string]func(c *JoinConfig){
+		"no Noise key":           func(c *JoinConfig) { c.NoiseKey = nil },
+		"a short Noise key":      func(c *JoinConfig) { c.NoiseKey = testNoiseKey[:16] },
+		"a long Noise key":       func(c *JoinConfig) { c.NoiseKey = bytes.Repeat([]byte{1}, 33) },
+		"no signing key":         func(c *JoinConfig) { c.SignSeed = nil },
+		"a short signing key":    func(c *JoinConfig) { c.SignSeed = testSignSeed[:16] },
+		"a signing key too long": func(c *JoinConfig) { c.SignSeed = bytes.Repeat([]byte{1}, 33) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := runConfig(t, dir, code, client, &syncBuffer{})
+			spoil(&cfg)
+			if err := Run(ctx, cfg); !errors.Is(err, ErrJoinInput) {
+				t.Fatalf("Run = %v, want %v", err, ErrJoinInput)
+			}
+			// Nothing went out and nothing was written.
+			onlyFileIs(t, dir)
+		})
 	}
 }
 
@@ -338,16 +500,17 @@ func quietValues(cfg JoinConfig, code tunnel.JoinCode, host string) []struct{ wh
 		{"hash of the one-time secret", secretHash(code.Secret)},
 		{"address of the issuing API", host},
 		{"path of the join request", tunnel.PathJoin},
-		{"path of the Noise key", cfg.NoiseFile},
+		{"file of the fetched keys", cfg.SecretFile},
 		// The error of a failed write names what it stumbled over, and that
 		// is often the DIRECTORY, not the file: measured, "mkdir <dir>\blocked:
 		// ..." carries the parent and not the full path. An assertion on the
 		// full path alone would have let this leak through -- it did, in the
 		// first red run of 17.10.2026.
-		{"directory of the Noise key", filepath.Dir(cfg.NoiseFile)},
-		{"path of the signing key", cfg.SignFile},
-		{"directory of the signing key", filepath.Dir(cfg.SignFile)},
-		{"file of the fetched keys", cfg.SecretFile},
+		{"directory of the fetched keys", filepath.Dir(cfg.SecretFile)},
+		// The two long-term keys of this server are values now, not paths, so
+		// the shape a careless line would carry them in is their base64.
+		{"Noise key of this server", enc.B64.EncodeToString(cfg.NoiseKey)},
+		{"signing key of this server", enc.B64.EncodeToString(cfg.SignSeed)},
 	}
 }
 
@@ -421,23 +584,6 @@ func TestRunAnswersWithACategory(t *testing.T) {
 			}
 			cfg := runConfig(t, t.TempDir(), code, client, &syncBuffer{})
 			return cfg, code, srv.Listener.Addr().String(), ErrJoinRefused
-		},
-		// A private key of this server cannot be written. Its error names
-		// the path of that key file, which is why it never leaves Run.
-		"a key will not be written": func(t *testing.T) (JoinConfig, tunnel.JoinCode, string, error) {
-			j, _ := newJoin(t)
-			srv, client := serveAPI(t, j)
-			code := codeFor(t, j, srv)
-			dir := t.TempDir()
-			cfg := runConfig(t, dir, code, client, &syncBuffer{})
-			// A file where a directory would have to be: MkdirAll fails and
-			// names the path it stumbled over.
-			blocked := filepath.Join(dir, "blocked")
-			if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			cfg.NoiseFile = filepath.Join(blocked, "noise")
-			return cfg, code, srv.Listener.Addr().String(), ErrJoinSecret
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

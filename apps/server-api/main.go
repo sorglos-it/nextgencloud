@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -42,15 +41,6 @@ import (
 
 // Version is set when building: -ldflags "-X main.Version=1.0.0".
 var Version = "0.0.0-dev"
-
-// Where ngc-api -join puts the two private keys it makes. They go to the run
-// directory and not next to api.json: the ulh script reads all three files
-// (these two and join.SecretFile) and writes them into api.json itself, and
-// a reboot clears what is left there.
-var (
-	joinNoiseFile = filepath.Join(config.RunDir, "join-noise")
-	joinSignFile  = filepath.Join(config.RunDir, "join-sign")
-)
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -212,9 +202,16 @@ func joinRun(ctx context.Context, path, code string) int {
 		slog.Error("das TLS-Zertifikat der API lässt sich nicht anlegen oder lesen", "error", err)
 		return 1
 	}
+	// The two long-term keys of this server go in as values, not as paths: the
+	// request has to name the public halves of what api.json holds, because
+	// that is what a trust.Node of kind API means (setup.publicKeys) and what
+	// this server answers with once it runs. Both copies are cleared again as
+	// soon as Run is through with them.
+	noiseKey, signSeed := cfg.NoiseKey.Bytes(), cfg.SignKey.Bytes()
+	defer func() { clear(noiseKey); clear(signSeed) }()
 	err = join.Run(ctx, join.JoinConfig{
 		Code: code, Node: cfg.Node, URL: cfg.URL, TLS: pin,
-		NoiseFile: joinNoiseFile, SignFile: joinSignFile,
+		NoiseKey: noiseKey, SignSeed: signSeed,
 	})
 	if err != nil {
 		slog.Error(joinFailure(err))

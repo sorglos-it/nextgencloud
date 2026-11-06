@@ -2,6 +2,7 @@ package join
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -101,10 +102,16 @@ type JoinConfig struct {
 	URL  string // its own tunnel address (trust.ValidTunnelURL)
 	TLS  []byte // trust.TLSPin of its own TLS key
 
-	// NoiseFile and SignFile are where the two private keys this function
-	// makes are written, 0600. The ulh script puts them into api.json.
-	NoiseFile string
-	SignFile  string
+	// NoiseKey and SignSeed are the long-term keys of THIS server, as
+	// api.json already holds them (config.API.NoiseKey, config.API.SignKey):
+	// 32 bytes each, the X25519 private key and the Ed25519 seed. Run
+	// registers their public halves and makes none of its own, because a
+	// trust.Node of kind API names the public halves of exactly these two
+	// (setup.go, publicKeys) - and the running server answers with them
+	// (controllers.staticKey, login/finish.go). A pair made here would put a
+	// key into the trust list that this server does not hold.
+	NoiseKey []byte
+	SignSeed []byte
 	// SecretFile is where the fetched shared keys land, 0600; empty means
 	// SecretFile above.
 	SecretFile string
@@ -124,7 +131,8 @@ type JoinConfig struct {
 }
 
 // Run is the side of the joining server, what ngc-api -join does. In order:
-// read the code, make this server's own keys and write them to files, build
+// read the code, take this server's own keys out of what the caller read from
+// api.json, build
 // the tunnel.JoinRequest and sign it with tunnel.JoinMAC, POST it to
 // tunnel.PathJoin of the issuing API, show tunnel.JoinFingerprint and the
 // anchor so the admin can compare them with what the shell shows him, then try
@@ -134,6 +142,11 @@ type JoinConfig struct {
 // Nothing here trusts the network: the POST verifies the API's TLS key against
 // the pin in the code, and the key exchange runs Noise_KK against the API's
 // Noise key from the code.
+//
+// It writes ONE file, SecretFile, and that one the ulh script takes away again.
+// No private key of this server goes to disk here: both are in api.json
+// already, so a copy in config.RunDir would be a second place to hold the
+// long-term keys of this node and nothing would ever read it.
 func Run(ctx context.Context, cfg JoinConfig) error {
 	code, err := tunnel.ParseJoinCode(cfg.Code)
 	if err != nil {
@@ -141,6 +154,10 @@ func Run(ctx context.Context, cfg JoinConfig) error {
 	}
 	if !wire.ValidName(cfg.Node) || !trust.ValidTunnelURL(cfg.URL) || len(cfg.TLS) != sha256.Size {
 		return ErrJoinInput
+	}
+	keys, signKey, err := ownKeys(cfg.NoiseKey, cfg.SignSeed)
+	if err != nil {
+		return err
 	}
 	out := cfg.Out
 	if out == nil {
@@ -162,18 +179,6 @@ func Run(ctx context.Context, cfg JoinConfig) error {
 		}
 		client = &http.Client{Timeout: 60 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: tlsCfg}}
-	}
-	keys, signKey, err := makeKeys()
-	if err != nil {
-		return err
-	}
-	// The private keys go to disk before anything travels: a request the API
-	// kept whose keys this server then lost would have to be signed off again.
-	if err := writeSecret(cfg.NoiseFile, []byte(enc.B64.EncodeToString(keys.Private))); err != nil {
-		return ErrJoinSecret
-	}
-	if err := writeSecret(cfg.SignFile, []byte(enc.B64.EncodeToString(signKey.Seed()))); err != nil {
-		return ErrJoinSecret
 	}
 	req := tunnel.JoinRequest{Node: cfg.Node, Noise: enc.Bytes(keys.Public),
 		Sign: enc.Bytes(signKey.Public().(ed25519.PublicKey)), TLS: enc.Bytes(cfg.TLS), URL: cfg.URL}
@@ -207,17 +212,25 @@ func Run(ctx context.Context, cfg JoinConfig) error {
 	return nil
 }
 
-// makeKeys makes this server's Noise and signing key pairs.
-func makeKeys() (noise.DHKey, ed25519.PrivateKey, error) {
-	keys, err := noisep.Keypair(rand.Reader)
-	if err != nil {
-		return noise.DHKey{}, nil, err
+// ownKeys builds this server's two key pairs out of the private halves api.json
+// holds. It is the same derivation setup.publicKeys does for the FIRST API of
+// an installation, and that is the point: both ends put the same two public
+// keys into the trust list, so a joined node is reachable under what it
+// answers with.
+//
+// It refuses a key of the wrong length rather than deriving from it: an
+// unusable key here would travel as a public half nobody can speak to. The
+// refusal names no value and no length.
+func ownKeys(noiseKey, signSeed []byte) (noise.DHKey, ed25519.PrivateKey, error) {
+	if len(signSeed) != ed25519.SeedSize {
+		return noise.DHKey{}, nil, ErrJoinInput
 	}
-	_, signKey, err := ed25519.GenerateKey(rand.Reader)
+	k, err := ecdh.X25519().NewPrivateKey(noiseKey)
 	if err != nil {
-		return noise.DHKey{}, nil, err
+		return noise.DHKey{}, nil, ErrJoinInput
 	}
-	return keys, signKey, nil
+	return noise.DHKey{Private: noiseKey, Public: k.PublicKey().Bytes()},
+		ed25519.NewKeyFromSeed(signSeed), nil
 }
 
 // postRequest sends the join request. The API answers 204 or a code, and

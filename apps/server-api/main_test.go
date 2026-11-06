@@ -124,8 +124,8 @@ func TestJoinAnswersEachFailureWithItsOwnLine(t *testing.T) {
 }
 
 // What the admin reads in the journal may carry no value, and this checks for
-// the ABSENCE of each: the address of the API, the path of the files the two
-// private keys go to, the join code and the hash of its one-time secret that
+// the ABSENCE of each: the address of the API, the file the keys of the
+// installation go to, the join code and the hash of its one-time secret that
 // the query names. The values are built here and looked for; none of them is
 // printed, because a journal line and a test report travel the same way.
 func TestJoinNamesNoValueWhateverGoesWrong(t *testing.T) {
@@ -134,8 +134,6 @@ func TestJoinNamesNoValueWhateverGoesWrong(t *testing.T) {
 	quiet := []struct{ what, text string }{
 		{"hash of the one-time secret", base64.RawURLEncoding.EncodeToString(sum[:])},
 		{"one-time secret", base64.RawURLEncoding.EncodeToString(secret)},
-		{"path of the Noise key", joinNoiseFile},
-		{"path of the signing key", joinSignFile},
 		{"file of the fetched keys", join.SecretFile},
 		{"path of the join request", tunnel.PathJoin},
 		{"directory of the run files", config.RunDir},
