@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The app window: the sandboxed frame an app's user interface runs in.
 //
@@ -24,7 +24,7 @@ test.beforeEach(async ({ shell }) => {
   // and the proof of a UI is an Ed25519 signature either way.
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 async function openTerminal(shell) {

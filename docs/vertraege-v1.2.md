@@ -9056,3 +9056,54 @@ Daten beschädigen, dass die Auffrischung podmans eigene ist, die Folge für den
 Zeile der Bauliste. Gemessen, aber in WSL und nicht an der Anlage: dass der Melder im Normalbetrieb
 NICHT ruhig bleibt, und dass die Bremse aus Punkt 101 nur rootlos trägt. Nicht gemessen ist die
 LÄNGE des Fensters mit einem Prozess 1, der SIGTERM behandelt.
+
+### Nachtrag vom 3.11.2026: `cgroup.kill` ist kein Einmalschuss — und beide Pfade an der Anlage gemessen
+
+Bei der Abnahme der Behebung auf `svc-1` kam ein Befund dazu, der die Behebung selbst betrifft, und
+er hat die Anlage sechs Minuten gekostet. Drei Messungen, gegeneinander gelesen, mit einem
+20-Zeilen-Programm, das `/bin/sleep` über `CLONE_INTO_CGROUP` in eine cgroup hinein startet — genau
+so, wie `run()` podman hineinstartet:
+
+| cgroup | Kind hineingeboren |
+|---|---|
+| frisch angelegt | **lebt** |
+| dieselbe, nach einem Schreiben auf `cgroup.kill` | **getötet** |
+| die cgroup einer App, von `KillCgroup` geleert | **getötet** |
+
+Ein Prozess, der mit `echo pid > cgroup.procs` **hineingeschoben** wird, überlebt in allen drei
+Fällen. Das Schreiben auf `cgroup.kill` wirkt also nicht nur einmal: die cgroup tötet weiter, was in
+sie hinein **geboren** wird. `Start` gebiert podman über `cgroupJoin` in genau diese cgroup — also
+hat `KillCgroup` die Waisen beendet **und** die App unstartbar gemacht.
+
+Die Diagnose kam daher, dass auch die **alte** Fassung ohne `KillCgroup` mit derselben Zeile
+scheiterte (`signal: killed`, `podman sagte nichts auf stderr`): ein Programm, das den Code nicht
+enthält, schließt den Code als Ursache aus. Der Schaden sitzt im **Verzeichnis**, nicht im Programm,
+und darum nimmt `KillCgroup` das Verzeichnis jetzt mit (`DropCgroup`, sobald die cgroup leer ist).
+Ein frisches Verzeichnis trägt keine Markierung.
+
+**Beide Pfade sind an der laufenden Anlage gemessen, am Behälter und nicht am Befehl:**
+
+- **Erster Pfad** (podman kennt keinen Behälter), dreimal, drei verschiedene Zustände, je einzeln:
+  12 s Wartezeit, dann geräumt, Verzeichnis weg, frisch gestartet — danach je App 1 Prozess zu 1
+  Datensatz, und der Überlebende ist die Nummer, die conmon im Laufordner nennt (21362/21360,
+  21579/21577, 21800/21798). Dieselbe Lage hat mit der alten Fassung **2 zu 1** erzeugt.
+- **Weg A** (podman kennt einen laufenden Behälter, Waisen daneben): die Lage musste von Hand
+  hergestellt werden, weil `RuntimeDirectoryPreserve=no` podmans Laufzeitzustand bei **jedem**
+  Neustart löscht — ohne diese Zeile ist `up` beim Hochkommen immer falsch und **Weg A auf dieser
+  Anlage nie erreichbar**. Mit zurückgelegtem `/run/ngc` und je einer überzähligen Aufgabe in der
+  cgroup: `tasks of earlier lives of this app were ended, its container keeps running … ended=1`,
+  die Stellvertreter getötet, und die Behälterprozesse **21800 und 21841 lebten weiter** — dieselben
+  Nummern wie vor dem Neustart. Das ist der ganze Unterschied zum ersten Pfad.
+
+**Getrennt gehalten.** Gemessen sind: die drei cgroup-Proben, die Gleichheit des Scheiterns mit und
+ohne `KillCgroup`, die drei Runden des ersten Pfades samt Nummern und Zeitstempeln, die
+Weg-A-Meldung samt überlebender Nummer, dass `/run/ngc` beim Neustart neu angelegt wird (21:01:06,
+Dienststart 21:01:06), dass `/run/ngc` **711** trägt und nicht die `0700` der Unit (`run.go:76`
+setzt es bedingungslos), und dass die alte Fassung die Datei öffnet, die die neue angefasst hat —
+der Rückweg ist **ein** Schritt, nicht zwei. Nicht gemessen ist die schlimmste Ausprägung: zwei
+verschiedene Programmfassungen auf einem Datenordner. Die überzählige Aufgabe bei Weg A war ein
+`sleep` als **Stellvertreter**, kein zweiter Behältersatz.
+
+**Zwei Ausfälle, von mir verursacht, der Vollständigkeit wegen:** 21:01:13–21:07:19 (sechs Minuten,
+beide Apps unten, Ursache die vergiftete cgroup) und 21:16–21:17:37 (anderthalb Minuten, weil ich
+die falsche der zwei Nummern von Hand beendet habe — eine 0 ist durchgefallen, und sie war meine).

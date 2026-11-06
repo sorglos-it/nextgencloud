@@ -184,8 +184,10 @@ nicht mehr.
 | `--alarm-veil` | `rgba(6,9,16,.86)` | `rgba(22,32,46,.62)` | heute in NGC, bleibt |
 
 `--title-bg-active` hat LordOS nicht: dort trägt der Unterschied zwischen vorn und hinten der
-**Schatten**, nicht die Farbe der Titelzeile (siehe Punkt 6). Die Marke bleibt vorerst stehen und
-wird gleich `--title-bg` gesetzt; sie fällt weg, wenn nachgesehen ist, wo sie noch gelesen wird.
+**Schatten**, nicht die Farbe der Titelzeile (siehe Punkt 6). **Erledigt am 03.11.2026:** die Marke
+ist weg, in beiden Fassungen und in der Regel, die sie las. Vorn und hinten unterscheidet jetzt nur
+noch der Schatten — gemessen: beide Titelzeilen tragen dieselbe Fläche, die Schatten sind
+verschieden, und keiner der beiden ist `none`.
 
 ### Die drei Knöpfe der Titelzeile
 
@@ -286,11 +288,25 @@ Alle Zahlen aus LordOS `themes/default/components/Window.jsx`.
 | Titel | mittig, Zeilenhöhe = Titelhöhe | LordOS |
 | Die drei Knöpfe | 13 × 13 px, Ecke 7 px, links, 14 px vom Rand | LordOS |
 | Reihenfolge | Schließen, Kleiner, Größer — **von links** | LordOS |
+| Stand am 03.11.2026 | **umgesetzt**: Knöpfe bei 0, 40, 80 von links, Titel mittig | gemessen |
 | Haarlinie unter der Titelzeile | 1 px, `--line` | LordOS |
 | Rand | 1 px, `--win-border` | LordOS |
 | Schatten **vorn** | `0 24px 56px rgba(0,0,0,.55)` | LordOS |
 | Schatten **hinten** | `0 10px 28px rgba(0,0,0,.32)` | LordOS |
 | Kleinste Größe | 240 × 150 px (`--win-min-w`, `--win-min-h`) | heute in NGC, **bleibt** |
+
+**Der Titel steht mittig im Fenster, nicht nur im Rest** (gemessen am 03.11.2026). Die Knöpfe nehmen
+links 3 × 40 = 120 px. Rechts steht darum ein leerer Kasten derselben Breite, abzüglich der 8 px
+Abstand, die zwischen Titel und Kasten ohnehin stehen — ohne diesen Abzug saß die Gruppe aus Zeichen
+und Titel 4 px links der Mitte, also genau einen halben Abstand. Der Kasten darf **schrumpfen**, und
+das ist der Grund, warum es ein Kasten ist und kein zweites Polster: 120 px Polster auf beiden Seiten
+ließen dem Titel im kleinsten erlaubten Fenster (240 px breit) genau 0 px. Gemessen: bei 800 px
+Fensterbreite steht die Gruppe **exakt** mittig, bei 300 px 6 px rechts davon — dort ist Mitte
+rechnerisch unmöglich, weil 120 px Knöpfe gegen rund 76 px Titel nur 111 px je Seite übrig lassen.
+
+**Ein Fehler, den der Umbau geweckt hat:** die drei Knöpfe hingen in `window.js` an ihrer *Stellung*
+(`children[0]`, `[1]`, `[2]`). Nach dem Umsortieren schloss „Schließen" nicht mehr, sondern
+minimierte. Sie hängen jetzt an ihrer Klasse. Eine Wache hält das fest.
 
 **Vorn und hinten unterscheidet der Schatten**, nicht die Farbe. Das Fenster vorn liegt höher: ein
 doppelt so weicher und doppelt so weit geworfener Schatten.

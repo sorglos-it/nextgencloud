@@ -90,6 +90,10 @@ type orderEngine struct {
 	note func(string)
 }
 
+// Not noted and not answered: these cases hold the ORDER of asking and
+// starting, and the surplus of earlier lives is no part of that order.
+func (e *orderEngine) EndSurplus(context.Context, string) (int, error) { return 0, nil }
+
 func (e *orderEngine) Running(ctx context.Context, name string) (bool, error) {
 	e.note("running")
 	return e.appEngine.Running(ctx, name)

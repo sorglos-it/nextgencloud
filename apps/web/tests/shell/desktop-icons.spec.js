@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The badges on the desktop, in the start menu, in the title bar and in the
 // taskbar.
@@ -16,7 +16,7 @@ const ICONS = join(here, "..", "..", "..", "..", "docs", "icons");
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 test("every badge in the dock carries an icon that was really drawn", async ({ shell }) => {
