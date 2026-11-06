@@ -1,5 +1,5 @@
 import {
-  test, expect, shellGap, loginGap, hasSessionKeys, signIn, expectDesktop
+  test, expect, shellGap, loginGap, passkeyAskGap, hasSessionKeys, signIn, expectDesktop
 } from "../fixtures/page.js";
 
 // What the boot of the shell has to end in, on every engine there is.
@@ -10,9 +10,10 @@ import {
 // is what keeps that skip from being a hole. A blank page is never a legal
 // ending, and neither is a mask that takes a password it cannot use.
 //
-// THERE ARE THREE LEGAL ENDINGS, and until 17.10.2026 this case knew two of
-// them, which is why it was red on Firefox while the shell was doing nothing
-// worse than coming up:
+// THERE ARE FOUR LEGAL ENDINGS, and this case has learned one of them twice
+// the same way: by being red while the shell was doing nothing worse than
+// coming up - on Firefox (ending 3, 17.10.2026) and on Playwright's WebKit on
+// Linux (ending 4, run 42215156995):
 //
 //   1. the desktop - the engine can finish a password login;
 //   2. the boot.tooold message - not even the two curves (Playwright's
@@ -22,6 +23,13 @@ import {
 //      out no public half of a password seed (Firefox 141, measured:
 //      OperationError at exportKey("jwk"); see shell/main.js
 //      passwordLoginFits).
+//   4. the boot.noroute.passkeysoff message and NO mask - the password route
+//      is shut AND this engine cannot be asked for a passkey either, so there
+//      is no way in at all (Playwright's WebKit on Linux, measured:
+//      navigator.credentials undefined; see fixtures/page.js passkeyAskGap).
+//      Ending 3 offers a passkey button, so it needs an engine that HAS the
+//      passkey route - which is why the third branch below asks for it
+//      instead of assuming it.
 //
 // The third was a white lie of a screen before this round: Firefox drew the
 // mask, took the password, ran Argon2id over it and said "Anmeldung
@@ -74,6 +82,16 @@ test("the shell either brings the desktop up or says why it cannot", async ({ sh
     await expect(shell.locator("#taskbar")).toHaveCount(0);
     return;
   }
+  // Ending 4. No password route and no passkey route: the shell says that and
+  // draws no mask. A mask here would offer a button that cannot be pressed.
+  const askGap = await passkeyAskGap(shell);
+  if (askGap !== "") {
+    await expect(shell.locator(".msg"))
+      .toContainText("In diesem Browser ist keine Anmeldung möglich");
+    await expect(shell.getByRole("heading", { name: "Bei NGC anmelden" })).toHaveCount(0);
+    await expect(shell.locator("#taskbar")).toHaveCount(0);
+    return;
+  }
   // Ending 3. The mask is there, it names the reason, and the one route that
   // cannot work is shut - not merely unlabelled.
   await expect(shell.getByRole("heading", { name: "Bei NGC anmelden" })).toBeVisible();
@@ -95,6 +113,11 @@ test("the shell either brings the desktop up or says why it cannot", async ({ sh
 test("where the boot shuts the password route, the seed step is what is missing", async ({ shell }) => {
   test.skip(await hasSessionKeys(shell), "this engine can finish a password login");
   test.skip((await shellGap(shell)) !== "", "this engine cannot run the shell at all");
+  // THE THIRD ENDING, NOT THE FOURTH. Where the engine cannot be asked for a
+  // passkey the boot takes ending 4 for a reason that is not the seed step, so
+  // this claim is about a screen that is not on it - the wrong door.
+  const askGap = await passkeyAskGap(shell);
+  test.skip(askGap !== "", `this engine reaches ending 4, not the mask - ${askGap}`);
   // The STEP is pinned, not the exception's name: an engine that refuses the
   // same step with another error is the same gap and the same third ending.
   expect(await loginGap(shell)).toContain("public half out of a PKCS#8 seed");

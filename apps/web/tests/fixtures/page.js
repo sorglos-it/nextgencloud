@@ -457,6 +457,24 @@ export async function fixedKeyGap(shell) {
   return g.x25519 || g.x25519FromDocument;
 }
 
+// CAN THIS ENGINE BE ASKED FOR A PASSKEY AT ALL - the question shell/main.js
+// passkeyFits() asks, and the one three cases assumed instead of measuring.
+//
+// MEASURED (run 42215156995, Playwright's WebKit on Linux): navigator.credentials
+// is undefined there, so shell/main.js takes hasParty && !canAsk and draws
+// boot.noroute.passkeysoff - NOT boot.noroute.password and NOT the mask with the
+// passkey button. Three cases held up the third ending on an engine that can
+// only reach the fourth, and read their own wrong door as a product fault.
+//
+// It asks for the CALL the path makes (navigator.credentials.get), not for
+// window.PublicKeyCredential: on WebKit the second one is an object while the
+// first is undefined, so a gate on PublicKeyCredential would say yes and be
+// wrong. Same reason as passkeyFits itself.
+export async function passkeyAskGap(shell) {
+  const ok = await shell.evaluate(() => typeof navigator?.credentials?.get === "function");
+  return ok ? "" : "navigator.credentials.get is not a function in this engine";
+}
+
 // ---- the skips -----------------------------------------------------------
 //
 // One line at the call site, and the reason is always the measured gap. Hand
