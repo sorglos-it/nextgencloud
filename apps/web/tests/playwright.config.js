@@ -70,6 +70,23 @@ export default defineConfig({
   testDir: ".",
   fullyParallel: false,
   workers: 1,
+  // WIEDERHOLUNGEN NUR IM LAUF, und sie verstecken nichts: tools/ci-count-web.mjs
+  // zaehlt einen flatternden Fall ROT. Sie trennen zwei Dinge, die bis zum
+  // 7.11.2026 ununterscheidbar waren.
+  //
+  // MEASURED, two runs of the same commit on firefox (42232875187 and
+  // 42368451560): 22 red and 23 red - and only THREE of them the same case.
+  // 19 fell in the first only, 20 in the second only. A list that changes
+  // almost completely between two runs of one commit is not 23 broken cases;
+  // it is a handful of broken cases inside twenty timing fallers, and nobody
+  // can tell which is which from one run. workers is 1, so it is not two cases
+  // treading on each other.
+  //
+  // A retry says it out loud: a case that passes on the second go is a faller
+  // and gets counted as "flatternd"; a case that falls three times is a
+  // finding. The count stays red either way, so nothing goes green that was
+  // not green - only the two kinds stop sharing one number.
+  retries: process.env.CI ? 2 : 0,
   reporter: [["list"]],
   // THE BROWSER'S LANGUAGE IS PART OF THE FIXTURE, not of the machine.
   // Since the five languages arrived (public/assets/lang/, shell/lang.js) the
@@ -100,6 +117,29 @@ export default defineConfig({
       command: `"${php}" -d variables_order=EGPCS -S 127.0.0.1:${phpPort} -t ../public ../public/index.php`,
       url: `http://127.0.0.1:${phpPort}/config.json`,
       reuseExistingServer: false,
+      // KEINE ARBEITER-ZEILE MEHR, und warum sie weg ist, gehoert hierhin:
+      // sie war eine Probe, und die Probe ist durchgefallen.
+      //
+      // page.goto laeuft auf firefox im Lauf gelegentlich in den Zeitablauf
+      // (30 s), ohne dass eine Zusicherung fiel. Der Verdacht war php -S, das
+      // eine Anfrage auf einmal bedient. PHP_CLI_SERVER_WORKERS, je ein Lauf:
+      //
+      //   1 Arbeiter  -> 23 flatternd   (42369907313)
+      //   4 Arbeiter  -> 10 flatternd   (42373539773)
+      //   16 Arbeiter -> 18 flatternd   (42374350103)
+      //
+      // 4 sah wie ein Beleg aus und war einer von EINEM Lauf. 16 haette die
+      // Zahl weiter druecken muessen und hat sie verdoppelt. Damit ist nicht
+      // belegt, dass der Arbeitervorrat etwas damit zu tun hat - die drei
+      // Zahlen streuen um 10 bis 23, und je Einstellung gibt es genau eine
+      // Messung. Also raus mit der Zeile, statt eine Zahl zu waehlen, die
+      // einmal guenstig ausfiel.
+      //
+      // WER DAS WEITERSUCHT, braucht pro Einstellung mindestens drei Laeufe,
+      // sonst misst er wieder Streuung. Die naechste Spur ist nicht die Zahl
+      // der Arbeiter, sondern WELCHE Anfrage 30 s offen bleibt: der
+      // Zeitablauf trifft page.goto, also die erste Navigation eines Falls -
+      // was haelt den Server dort auf?
       env: { NGC_WEB_CONFIG: "../tests/web.json", NGC_WEB_ANCHOR: "../tests/trust-anchor.json" },
     },
     {

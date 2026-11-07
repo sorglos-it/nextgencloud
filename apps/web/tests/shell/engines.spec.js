@@ -1,4 +1,4 @@
-import { test, expect, shellGap, seedKeyGap } from "../fixtures/page.js";
+import { test, expect, shellGap, seedKeyGap, passkeyAskGap } from "../fixtures/page.js";
 
 // THE THREE ENGINES, AND THE ROUTE EACH OF THEM REALLY HAS.
 //
@@ -286,6 +286,9 @@ const TURNED_AWAY = [
     // password one that is missing, and that is what the sentence is about.
     reach: async (page) => { await withoutSeedStep(page); await withoutTrustAnchor(page); },
     everywhere: false,
+    // This sentence lives on the branch where the passkey route EXISTS, so it
+    // needs an engine that can be asked for one.
+    needsPasskeyRoute: true,
     de: "Dieser Browser kann die Passwort-Anmeldung von NGC nicht ausführen: er gibt den öffentlichen Teil eines Passwort-Schlüssels nicht heraus. Bitte ein aktuelles Chrome oder Safari benutzen. Firefox kann es derzeit nicht.",
     en: "This browser cannot do NGC's password login: it does not hand out the public half of a password key. Please use a current Chrome or Safari. Firefox cannot do it at present.",
   },
@@ -314,6 +317,17 @@ for (const [locale, tag] of [["de-DE", "de"], ["en-US", "en"]]) {
         if (!screen.everywhere) {
           const gap = await shellGap(shell);
           test.skip(gap !== "", `this engine stops at browserFits (${gap}), so ${screen.key} is not reachable here`);
+        }
+        // THE SECOND WALL, and it is the one this case walked into on
+        // Playwright's WebKit on Linux (run 42215156995). shell/main.js picks
+        // between the two sentences on hasParty && !canAsk: where
+        // navigator.credentials.get is missing, canAsk is false and the
+        // passkeysoff sentence is the ONLY one reachable, whatever the anchor
+        // does. boot.noroute.password read that sentence and called it a wrong
+        // text; the text was right and the case was on the wrong screen.
+        if (screen.needsPasskeyRoute) {
+          const ask = await passkeyAskGap(shell);
+          test.skip(ask !== "", `this engine always lands in boot.noroute.passkeysoff - ${ask}`);
         }
         await screen.reach(shell);
         await shell.reload();
