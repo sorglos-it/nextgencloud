@@ -70,6 +70,23 @@ export default defineConfig({
   testDir: ".",
   fullyParallel: false,
   workers: 1,
+  // WIEDERHOLUNGEN NUR IM LAUF, und sie verstecken nichts: tools/ci-count-web.mjs
+  // zaehlt einen flatternden Fall ROT. Sie trennen zwei Dinge, die bis zum
+  // 7.11.2026 ununterscheidbar waren.
+  //
+  // MEASURED, two runs of the same commit on firefox (42232875187 and
+  // 42368451560): 22 red and 23 red - and only THREE of them the same case.
+  // 19 fell in the first only, 20 in the second only. A list that changes
+  // almost completely between two runs of one commit is not 23 broken cases;
+  // it is a handful of broken cases inside twenty timing fallers, and nobody
+  // can tell which is which from one run. workers is 1, so it is not two cases
+  // treading on each other.
+  //
+  // A retry says it out loud: a case that passes on the second go is a faller
+  // and gets counted as "flatternd"; a case that falls three times is a
+  // finding. The count stays red either way, so nothing goes green that was
+  // not green - only the two kinds stop sharing one number.
+  retries: process.env.CI ? 2 : 0,
   reporter: [["list"]],
   // THE BROWSER'S LANGUAGE IS PART OF THE FIXTURE, not of the machine.
   // Since the five languages arrived (public/assets/lang/, shell/lang.js) the
