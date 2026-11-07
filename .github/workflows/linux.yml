@@ -318,3 +318,18 @@ jobs:
         # needs no number to be wrong. The number goes in afterwards, with the
         # run it came from named beside it.
         run: node tools/ci-count-web.mjs "${{ runner.temp }}/web.json"
+      - name: spuren hochladen
+        # The traces are made (playwright.config.js, trace:
+        # "retain-on-failure") and were thrown away with the runner. Two webkit
+        # cases fail reproducibly with "Target page, context or browser has
+        # been closed" on their FIRST page.evaluate, and the log holds no crash
+        # line, no timeout and no timing: when a trace is the only record of
+        # what the page last did, keeping it is the difference between a cause
+        # and a guess. if: failure() only, so a green run uploads nothing.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-spuren-${{ matrix.engine }}
+          path: apps/web/tests/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
