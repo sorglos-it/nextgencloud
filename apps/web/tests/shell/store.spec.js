@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "@playwright/test";
-import { signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 import { buildPackage, manifest } from "../fixtures/pkg.js";
 import { vectors } from "../fixtures/vectors.js";
 
@@ -36,8 +36,8 @@ async function store(page, world = {}) {
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
-  await page.locator("#icons").getByRole("button", { name: "App-Store", exact: true }).click();
+  await expectDesktop(page);
+  await page.locator("#dock").getByRole("button", { name: "App-Store", exact: true }).click();
   await expect(page.locator(".store")).toBeVisible();
 }
 

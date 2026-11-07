@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The desktop: windows, taskbar, start menu, light and dark.
 //
@@ -15,7 +15,7 @@ test.beforeEach(async ({ shell }) => {
   // instead is asserted by shell/boot.spec.js, which runs everywhere.
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 test("the start menu lists only the apps this user may use", async ({ shell }) => {
@@ -151,7 +151,7 @@ test("tighter and airier change the font and the padding, and are kept", async (
   // Kept over a reload, like the design and the colour.
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   await expect(shell.locator("html")).toHaveAttribute("data-density", "luftig");
   expect(await shell.evaluate(() => getComputedStyle(document.body).fontSize)).toBe("15.5px");
 
@@ -162,7 +162,7 @@ test("tighter and airier change the font and the padding, and are kept", async (
   await expect(shell.locator("html")).not.toHaveAttribute("data-density", /.*/);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   await expect(shell.locator("html")).not.toHaveAttribute("data-density", /.*/);
   expect(await shell.evaluate(() => getComputedStyle(document.body).fontSize)).toBe("14px");
 });

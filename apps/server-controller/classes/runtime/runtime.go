@@ -42,8 +42,17 @@ type Engine interface {
 	RemoveImage(ctx context.Context, name, ref string) error
 	// Create makes the container c without starting it.
 	Create(ctx context.Context, c Container) error
-	// Start starts a container that was created.
-	Start(ctx context.Context, name string) error
+	// Start starts a container that was created, inside a cgroup that holds
+	// the three quantity limits of its app.
+	//
+	// The limits stand here, at every start, and not once at Create, and the
+	// compiler is what makes that so: a cgroup lives in a tmpfs and is gone
+	// after every restart of the machine, while the container is not. Whoever
+	// starts a container has to say the ceiling it runs under, every time -
+	// which is why this argument exists and why it cannot be left out. What
+	// happens when the kernel does not hold a limit is at the head of
+	// cgroup.go: the app does not start.
+	Start(ctx context.Context, name string, l Limits) error
 	// Stop ends the container, giving the service ten seconds first.
 	Stop(ctx context.Context, name string) error
 	// Remove takes a container that is not running away.
@@ -66,6 +75,15 @@ type Engine interface {
 	// joins its own cause - and an error without ErrKilled means the engine
 	// could not be run at all.
 	Exec(ctx context.Context, e Exec) (int, error)
+	// EndSurplus ends tasks of this app that run beside the container the
+	// engine knows, and answers with how many it ended. It is NOT an error
+	// when there were none - that is the ordinary case, and the answer is 0.
+	//
+	// It stands in this interface and not beside it because only the engine
+	// can say which container counts as the one: the number of its process
+	// comes from the engine, and everything else is weighed against it
+	// (surplus.go).
+	EndSurplus(ctx context.Context, name string) (int, error)
 }
 
 // Container is one container of one app.

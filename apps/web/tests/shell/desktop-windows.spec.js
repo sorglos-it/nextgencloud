@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // What a window does under the hand: dock it to an edge, pull it bigger,
 // lay the windows out, close them all, and make the desktop smaller under
@@ -13,7 +13,7 @@ test.beforeEach(async ({ shell }) => {
   // nothing here to look at. Measured, never assumed from the engine's name.
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 // The desktop, in the coordinates the window's style uses: the taskbar sits
@@ -43,12 +43,13 @@ async function place(win, left, top, width, height) {
     { left: left + "px", top: top + "px", width: width + "px", height: height + "px" });
 }
 
-// dragBarTo grabs the title bar 40 px in from its left - clear of the three
-// buttons on its right - and drags to a page position.
+// dragBarTo grabs the title bar 20 px in from its RIGHT end - clear of the
+// three buttons, which stand at its left since 2026-11-03 - and drags to a
+// page position.
 async function dragBarTo(shell, win, x, y) {
   const bar = win.locator(".titlebar");
   const g = await bar.boundingBox();
-  await shell.mouse.move(g.x + 40, g.y + g.height / 2);
+  await shell.mouse.move(g.x + g.width - 20, g.y + g.height / 2);
   await shell.mouse.down();
   await shell.mouse.move(x, y, { steps: 12 });
   const hint = await shell.evaluate(() => {
@@ -290,7 +291,9 @@ test("a double click on the title bar maximizes and restores, over and over", as
   const win = await openApp(shell, "Rechner");
   await place(win, 300, 200, 360, 260);
   const bar = win.locator(".titlebar");
-  const beat = { position: { x: 40, y: 18 } };
+  // 20 px in from the right end of a bar 360 wide: clear of the buttons, which
+  // stand at the left now.
+  const beat = { position: { x: 340, y: 18 } };
   for (let i = 0; i < 2; i++) {
     await bar.dblclick(beat);
     await shell.waitForTimeout(300);
@@ -399,7 +402,7 @@ test("a window cannot be pushed over any edge of the desktop", async ({ shell })
   // brings the pointer back to the middle of the desktop before letting go.
   const pushTo = async (x, y) => {
     const g = await win.locator(".titlebar").boundingBox();
-    await shell.mouse.move(g.x + 40, g.y + g.height / 2);
+    await shell.mouse.move(g.x + g.width - 20, g.y + g.height / 2);
     await shell.mouse.down();
     await shell.mouse.move(x, y, { steps: 12 });
     const b = await box();

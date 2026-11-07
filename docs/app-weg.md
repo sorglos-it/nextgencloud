@@ -393,6 +393,21 @@ ihn vorher und lehnt sonst ab. Eine Anlage lehnt einen Katalog mit niedrigerer F
 (`store.ErrRollback`). Ein neuer Katalog, der eine App dazunimmt, nennt also **alle** Apps und
 eine höhere Folge: ein Katalog ist das ganze Verzeichnis des Ladens, keine Ergänzung.
 
+**Und sie steht im Katalog, nicht in `seq`.** Auf der verteilten Anlage liegt neben dem
+Laden eine Datei `/root/store/seq`. Sie wird **nicht** mitgeschrieben, wenn
+`ngc-store catalog` läuft: am 29.10.2026 sagte sie **7**, während der ausgelieferte
+Katalog auf **Folge 9** stand. Wer die nächste Folge von dort abliest, unterschreibt einen
+Rückschritt, und jede Installation weist den Laden dann ab (`store.ErrRollback`), bis
+jemand höher unterschreibt. Die Folge liest man aus dem Katalog selbst:
+
+```sh
+# auf der Laden-Maschine
+python3 -c 'import json,base64;p=json.load(open("/var/www/store/catalog.json"))["payload"];\
+print(json.loads(base64.urlsafe_b64decode(p+"=="*2))["seq"])'
+```
+
+Das ist Punkt 96 des Buchs, Abschnitt „der Zustand des Ladens, und eine Falle darin".
+
 ### Prüfen, bevor es wehtut
 
 ```sh

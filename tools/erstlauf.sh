@@ -86,6 +86,23 @@ machine=""
 mstaged=${NGC_MACHINE_STAGED:-/root/release/dist}
 mulh=${NGC_MACHINE_ULH:-/root/release/ulh}
 mkey=${NGC_MACHINE_RELEASE_KEY:-}
+# The NAME the installation answers under. Without it erstlauf-maschine.sh takes
+# the IPv4 address of the default route, and docs/installation-kleines-system.md,
+# step 0, says why that is not the small case: the certificate carries the name
+# and nothing else, and a passkey hangs on rp.id, which is a NAME - over an
+# address no passkey can be made or used. Every run before 29.10.2026 therefore
+# installed on an address, and no run has ever measured the configuration a user
+# is told to build.
+mhost=${NGC_MACHINE_HOSTNAME:-}
+# The NODE name of the installation, the one the trust list knows it by. Phase B
+# otherwise calls ngc-all.sh with its own default "erstlauf", and on a machine
+# that is ALREADY installed under another name that rewrites api.json and locks
+# every user out: the services keep running, /api/v1/setup still answers 404,
+# nothing is logged, and every sign-in fails with "Anmeldung fehlgeschlagen"
+# (measured 30.10.2026 on VMID 310, Punkt 98; writing the name back repaired it
+# at once). ngc-all.sh keeps every KEY on a second run - it does not keep the
+# name, and the name is what the installation is recognised by.
+mname=${NGC_MACHINE_NAME:-}
 # Extra options for ssh and scp, for a target that is not in ~/.ssh/config -
 # a port, an identity, another config file. Taken from the environment so that
 # nothing here has to write into the user's ssh configuration.
@@ -114,6 +131,14 @@ while [ $# -gt 0 ]; do
 		;;
 	--machine-release-key)
 		mkey=${2:-}
+		shift 2
+		;;
+	--machine-hostname)
+		mhost=${2:-}
+		shift 2
+		;;
+	--machine-name)
+		mname=${2:-}
 		shift 2
 		;;
 	-h | --help)
@@ -212,7 +237,7 @@ else
 		# out of the script itself - not out of this file.
 		rwp=$(sed -n 's/.*"ReadWritePaths=\(.*\)".*/\1/p' "$script")
 		[ -n "$rwp" ] || broken 1 "$s1" "no ReadWritePaths= line found in ngc-api.sh of $ulh_ref"
-		for var in NGC_DATA NGC_TLS NGC_STATE_DIR; do
+		for var in NGC_DATA NGC_ETC NGC_TLS NGC_STATE_DIR; do
 			val=$(sed -n "s/^$var=\"\([^\"]*\)\".*/\1/p" "$script" | head -1)
 			[ -n "$val" ] && rwp=${rwp//\$\{$var\}/$val}
 		done
@@ -376,7 +401,7 @@ else
 	echo "erstlauf: phase B on $machine (its station lines are indented; the ones above come out of the sources):"
 	set +e
 	# shellcheck disable=SC2029
-	ssh $sshopts -- "$machine" "bash /tmp/erstlauf-maschine.sh --staged '$mstaged' --ulh '$mulh'${mkey:+ --test-release-key '$mkey'}" >"$mlog" 2>&1
+	ssh $sshopts -- "$machine" "bash /tmp/erstlauf-maschine.sh --staged '$mstaged' --ulh '$mulh'${mkey:+ --test-release-key '$mkey'}${mhost:+ --hostname '$mhost'}${mname:+ --name '$mname'}" >"$mlog" 2>&1
 	mrc=$?
 	set -e
 	sed 's/^/    /' "$mlog"
@@ -393,6 +418,45 @@ else
 	unmeasured_list="${unmeasured_list}$(grep '^station .*: UNMEASURABLE' "$mlog" | sed 's/^/    /')
 "
 	echo "erstlauf: the machine run on $machine ended with code $mrc: $nlines station(s), $mfail red, $munm unmeasurable"
+
+	# -------------------------------------------------------------------
+	# station 2a  die Oberflaeche antwortet VON AUSSEN
+	#
+	# THE ONE QUESTION A PROBE ON THE MACHINE CANNOT ASK, and it took a wall to
+	# notice. Station 2w in phase B curls the interface from the machine it runs
+	# on, and that goes through the loopback accept of every firewall there is -
+	# so it reported a healthy installation on a machine whose 443 answered
+	# NOBODY. The Proxmox template has carried input policy DROP with ssh as the
+	# only way in since 24.10.2026, no installer opens a port, and the six
+	# machines' per-role rules are in no repository. A browser got a connection
+	# timeout and the run was green (measured 29.10.2026, VMID 310, Punkt 96).
+	#
+	# This asks from HERE, over the network, which is where the person with the
+	# browser stands. It is a station of its own and not an extra line in 2w,
+	# because what it measures is a different thing: not "is it installed" but
+	# "can anyone reach it".
+	s2a="Oberflaeche antwortet von aussen"
+	mtarget=${machine#*@}
+	if ! command -v curl >/dev/null 2>&1; then
+		unmeasurable 2a "$s2a" "no curl here, so nothing can ask $mtarget over the network"
+	else
+		# The NAME, forced onto the address, for the reason step 0 of
+		# docs/installation-kleines-system.md gives: the certificate carries the
+		# name and nothing else, so asking the address asks a question the
+		# certificate cannot answer. --resolve does what a hosts file would.
+		aname=${mhost:-$mtarget}
+		o443=$(curl -sk --max-time 20 --resolve "$aname:443:$mtarget" \
+			-o /dev/null -w '%{http_code}' "https://$aname/" 2>/dev/null || echo 000)
+		o7443=$(curl -sk --max-time 20 --resolve "$aname:7443:$mtarget" \
+			-o /dev/null -w '%{http_code}' "https://$aname:7443/api/v1/setup" 2>/dev/null || echo 000)
+		if [ "$o443" = 000 ] || [ "$o7443" = 000 ]; then
+			fail 2a "$s2a" "from here $aname ($mtarget) answers '$o443' on 443 and '$o7443' on 7443, and 000 is no answer at all - the installation can be perfect and still be unreachable; the usual cause is the firewall of the template, which lets only 22 through, and no installer opens a port"
+		elif [ "$o443" != 200 ]; then
+			fail 2a "$s2a" "$aname answers $o443 on 443 from here, not 200"
+		else
+			pass 2a "$s2a" "from this machine, over the network and under its NAME: $aname gives $o443 on 443 and $o7443 on 7443 - a browser can reach both, and the browser needs both ($aname:7443 is in /config.json's apis[], which the browser calls itself)"
+		fi
+	fi
 fi
 
 # ---------------------------------------------------------------------------
