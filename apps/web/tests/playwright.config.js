@@ -139,7 +139,15 @@ export default defineConfig({
       env: {
         NGC_WEB_CONFIG: "../tests/web.json",
         NGC_WEB_ANCHOR: "../tests/trust-anchor.json",
-        ...(process.env.CI ? { PHP_CLI_SERVER_WORKERS: "4" } : {}),
+        //
+        // 4 -> 16, und das ist die zweite Stufe derselben Probe. Mit 4
+        // Arbeitern fielen 10 statt 23 (run 42373539773 gegen 42369907313),
+        // und ALLE 10 wieder an "page.goto: Test timeout of 30000ms" - die
+        // Form ist unveraendert, nur seltener. Das ist der Beleg, dass der
+        // Server die Ursache ist und 4 nur nicht reichen. Geht die Zahl mit 16
+        // gegen 0, ist es der Vorrat an Arbeitern; bleibt sie bei 10, ist es
+        // etwas anderes und diese Zeile hat ihr Argument verloren.
+        ...(process.env.CI ? { PHP_CLI_SERVER_WORKERS: "16" } : {}),
       },
     },
     {
