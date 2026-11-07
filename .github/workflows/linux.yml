@@ -265,7 +265,12 @@ jobs:
     # 41703511513): the suite was not hanging, it was nearly done. The longest
     # engine is 561 s, so this is a factor of 2.1 over the slowest measured
     # shard, on a machine that is not this runner.
-    timeout-minutes: 20
+    #
+    # 30 since 7.11.2026, and the number moved because the measurement did:
+    # playwright.config.js retries a failed case twice on CI, and the retries
+    # are paid for in this same job. Firefox needed 11.0 min with 23 red at run
+    # 42368451560, so retrying those puts roughly four minutes on top.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
