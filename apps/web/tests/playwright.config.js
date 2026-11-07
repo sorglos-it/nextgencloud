@@ -117,7 +117,30 @@ export default defineConfig({
       command: `"${php}" -d variables_order=EGPCS -S 127.0.0.1:${phpPort} -t ../public ../public/index.php`,
       url: `http://127.0.0.1:${phpPort}/config.json`,
       reuseExistingServer: false,
-      env: { NGC_WEB_CONFIG: "../tests/web.json", NGC_WEB_ANCHOR: "../tests/trust-anchor.json" },
+      // MEHRERE ARBEITER IM LAUF, und was sie beheben sollen ist gemessen:
+      // run 42369907313 hatte auf firefox 23 flatternde Faelle, 0 rot - und
+      // ALLE 23 scheiterten am gleichen Punkt, "page.goto: Test timeout of
+      // 30000ms". Keine gefallene Zusicherung: die Seite kam nicht. Beim
+      // zweiten Versuch kam sie jedesmal.
+      //
+      // php -S bedient EINE Anfrage auf einmal. Haengt eine Verbindung noch -
+      // und die Oberflaeche haelt Verbindungen offen -, dann wartet die
+      // naechste Navigation, bis der Fall nach 30 s aufgibt. Das passt zu
+      // allem, was gemessen ist: ein Arbeiter im Pruefsatz, also keine zwei
+      // Faelle, die sich treten, und trotzdem ein blockierter Server.
+      //
+      // PHP_CLI_SERVER_WORKERS forkt Arbeiter. Es braucht fork, also nur im
+      // Lauf: auf der Windows-Maschine kann PHP das nicht.
+      //
+      // ES IST EINE PROBE UND NOCH KEIN BEFUND. Bleiben die 23 danach weg,
+      // war der Server die Ursache; bleiben sie, ist diese Zeile falsch und
+      // gehoert wieder raus - dann ist die naechste Spur, WELCHE Verbindung
+      // offen bleibt.
+      env: {
+        NGC_WEB_CONFIG: "../tests/web.json",
+        NGC_WEB_ANCHOR: "../tests/trust-anchor.json",
+        ...(process.env.CI ? { PHP_CLI_SERVER_WORKERS: "4" } : {}),
+      },
     },
     {
       command: "node mock/api.js",
