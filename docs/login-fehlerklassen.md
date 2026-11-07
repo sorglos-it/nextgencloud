@@ -71,7 +71,7 @@ Spalte „Herkunft": **außen** = der Server hat ein Nein geschickt,
 | 21 | **„session: bad signature"** | `contracts/session.js:332` | innen (nackt) |
 | 22 | API-Zertifikat zur Uhrzeit der API nicht gültig | `contracts/session.js:352` | innen (nackt) |
 | 23 | „trust: invalid list" | `contracts/trust.js:238` | innen (nackt) |
-| 24 | „link: no connection" (Socket zu, falsches Unterprotokoll, Text statt Rahmen) | `net/link.js:80`, `:96` | innen (nackt) |
+| 24 | „link: no connection" (Socket zu, falsches Unterprotokoll, Text statt Rahmen) | `net/link.js:72`, `:73`, `:80`, `:96`, `:101`, `:102` – **sechs** Stellen, gezählt am 03.11.2026; hier standen zwei | innen (nackt) |
 | 25 | Noise-Handschlag scheitert (falscher Schlüssel, falscher Rahmen) | `contracts/noise.js:41`, `:276`–`:312` | innen (nackt) |
 
 ### Zwei Korrekturen am Befund – gültig für `origin/main` 0471b02d, VOR PR 164
@@ -269,9 +269,29 @@ Drei Teile, keiner rührt die Oberfläche an:
 
 1. **Je Klasse ein Fall am Entstehungsort**, wie es `contracts/session.spec.js`
    schon tut: der geworfene Text mit Gleichheit festgenagelt, in
-   `page.evaluate`. Für die Klassen ohne Fall (10, 11, 13, 14, 24, 25) kommen
-   solche Fälle dazu. Die Oberfläche erfährt nichts Neues, weil kein Wert sie
+   `page.evaluate`. Die Oberfläche erfährt nichts Neues, weil kein Wert sie
    erreicht.
+
+   **Korrektur an dieser Zeile, gemessen beim Bauen am 03.11.2026.** Hier stand
+   „für die Klassen ohne Fall (10, 11, 13, 14, 24, 25)". Es sind **neun**, nicht
+   sechs: auch 8, 9 und 12 hat keiner. Gemessen, indem jeder Satz im Prüfsatz
+   gesucht wurde, statt aus Schritt 1b zu schließen — dort steht, dass 15 bis 23
+   festgenagelt sind, und ich hatte 8, 9 und 12 stillschweigend dazugerechnet.
+   `login: this name has no passkey`, `login: no trust list` und
+   `keys: no passkey` kommen im ganzen Prüfsatz in **keiner** Zusicherung vor,
+   nur in Kommentaren (`shell/login.spec.js:376`, `:544`, `:553`,
+   `shell/world.spec.js:471`). Klasse 8 hat einen Fall über ihre **Folge** —
+   `shell/login.spec.js:363`, der Passkey-Knopf fällt nicht aufs Passwort
+   zurück — aber keinen über ihren Satz.
+
+   **Und zwei der neun haben keinen Satz, den man festnageln könnte.** Klasse 10
+   lässt den eigenen Fehler von Web Crypto fliegen (`auth/keys.js:31`, `:38`,
+   `:40`), Klasse 14 den `NotAllowedError` von WebAuthn (`auth/keys.js:95`, die
+   60-s-Frist). Der Text gehört dort der Engine und lautet je Engine anders. Ein
+   Fall könnte nur festhalten, dass der fremde Fehler **nicht** in einen eigenen
+   Satz geschluckt wird — und das ist eine Eigenschaft von Code, den es noch
+   nicht gibt, denn dort fängt niemand. Siehe den Kopf von
+   `contracts/keys.spec.js`.
 2. **Schalter an der Attrappe**, damit sich eine Klasse überhaupt herbeiführen
    lässt: `fault=badsig`, `fault=badlist`, `fault=nochain` neben dem
    bestehenden `fault=busy|away` (`mock/api.js:1116`). Die Attrappe liegt in
