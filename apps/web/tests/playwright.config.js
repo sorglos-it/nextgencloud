@@ -117,38 +117,30 @@ export default defineConfig({
       command: `"${php}" -d variables_order=EGPCS -S 127.0.0.1:${phpPort} -t ../public ../public/index.php`,
       url: `http://127.0.0.1:${phpPort}/config.json`,
       reuseExistingServer: false,
-      // MEHRERE ARBEITER IM LAUF, und was sie beheben sollen ist gemessen:
-      // run 42369907313 hatte auf firefox 23 flatternde Faelle, 0 rot - und
-      // ALLE 23 scheiterten am gleichen Punkt, "page.goto: Test timeout of
-      // 30000ms". Keine gefallene Zusicherung: die Seite kam nicht. Beim
-      // zweiten Versuch kam sie jedesmal.
+      // KEINE ARBEITER-ZEILE MEHR, und warum sie weg ist, gehoert hierhin:
+      // sie war eine Probe, und die Probe ist durchgefallen.
       //
-      // php -S bedient EINE Anfrage auf einmal. Haengt eine Verbindung noch -
-      // und die Oberflaeche haelt Verbindungen offen -, dann wartet die
-      // naechste Navigation, bis der Fall nach 30 s aufgibt. Das passt zu
-      // allem, was gemessen ist: ein Arbeiter im Pruefsatz, also keine zwei
-      // Faelle, die sich treten, und trotzdem ein blockierter Server.
+      // page.goto laeuft auf firefox im Lauf gelegentlich in den Zeitablauf
+      // (30 s), ohne dass eine Zusicherung fiel. Der Verdacht war php -S, das
+      // eine Anfrage auf einmal bedient. PHP_CLI_SERVER_WORKERS, je ein Lauf:
       //
-      // PHP_CLI_SERVER_WORKERS forkt Arbeiter. Es braucht fork, also nur im
-      // Lauf: auf der Windows-Maschine kann PHP das nicht.
+      //   1 Arbeiter  -> 23 flatternd   (42369907313)
+      //   4 Arbeiter  -> 10 flatternd   (42373539773)
+      //   16 Arbeiter -> 18 flatternd   (42374350103)
       //
-      // ES IST EINE PROBE UND NOCH KEIN BEFUND. Bleiben die 23 danach weg,
-      // war der Server die Ursache; bleiben sie, ist diese Zeile falsch und
-      // gehoert wieder raus - dann ist die naechste Spur, WELCHE Verbindung
-      // offen bleibt.
-      env: {
-        NGC_WEB_CONFIG: "../tests/web.json",
-        NGC_WEB_ANCHOR: "../tests/trust-anchor.json",
-        //
-        // 4 -> 16, und das ist die zweite Stufe derselben Probe. Mit 4
-        // Arbeitern fielen 10 statt 23 (run 42373539773 gegen 42369907313),
-        // und ALLE 10 wieder an "page.goto: Test timeout of 30000ms" - die
-        // Form ist unveraendert, nur seltener. Das ist der Beleg, dass der
-        // Server die Ursache ist und 4 nur nicht reichen. Geht die Zahl mit 16
-        // gegen 0, ist es der Vorrat an Arbeitern; bleibt sie bei 10, ist es
-        // etwas anderes und diese Zeile hat ihr Argument verloren.
-        ...(process.env.CI ? { PHP_CLI_SERVER_WORKERS: "16" } : {}),
-      },
+      // 4 sah wie ein Beleg aus und war einer von EINEM Lauf. 16 haette die
+      // Zahl weiter druecken muessen und hat sie verdoppelt. Damit ist nicht
+      // belegt, dass der Arbeitervorrat etwas damit zu tun hat - die drei
+      // Zahlen streuen um 10 bis 23, und je Einstellung gibt es genau eine
+      // Messung. Also raus mit der Zeile, statt eine Zahl zu waehlen, die
+      // einmal guenstig ausfiel.
+      //
+      // WER DAS WEITERSUCHT, braucht pro Einstellung mindestens drei Laeufe,
+      // sonst misst er wieder Streuung. Die naechste Spur ist nicht die Zahl
+      // der Arbeiter, sondern WELCHE Anfrage 30 s offen bleibt: der
+      // Zeitablauf trifft page.goto, also die erste Navigation eines Falls -
+      // was haelt den Server dort auf?
+      env: { NGC_WEB_CONFIG: "../tests/web.json", NGC_WEB_ANCHOR: "../tests/trust-anchor.json" },
     },
     {
       command: "node mock/api.js",
