@@ -193,7 +193,7 @@ func (s *Server) plan(d access.Decision) (appPlan, *wire.Close) {
 // ensure makes sure the container of the app runs. A container that could not
 // be started is the service unreachable, which is what service.Result names
 // for a program that could not be started at all.
-func (s *Server) ensure(ctx context.Context, app, name string) (*wire.Close, string) {
+func (s *Server) ensure(ctx context.Context, app, name string, l runtime.Limits) (*wire.Close, string) {
 	// THE RUNTIME DIRECTORY FIRST, AND BEFORE THE FIRST QUESTION TO THE
 	// ENGINE. /run/ngc/<name> is where rootless podman keeps what runs for
 	// this container, it is a tmpfs, and nothing of it survives a boot
@@ -221,7 +221,11 @@ func (s *Server) ensure(ctx context.Context, app, name string) (*wire.Close, str
 	if up {
 		return nil, ""
 	}
-	if err := s.d.Engine.Start(ctx, name); err != nil {
+	// The ceiling of the app, out of the manifest of this very channel. It is
+	// an argument and not something Start could look up, because a cgroup does
+	// not survive a restart of the machine and has to be written at every
+	// start (runtime.Engine.Start).
+	if err := s.d.Engine.Start(ctx, name, l); err != nil {
 		return refuse(wire.CodeUnreachable), ReasonContainer
 	}
 	return nil, ""
@@ -243,7 +247,8 @@ func (s *Server) runApp(ctx context.Context, ch *link.Channel, sess *e2e.Session
 	// ends with E_LICENSE and reaches no container at all. Task 17 brings the
 	// licence and this is the one place it goes; until then no app channel is
 	// refused for one, and no E_LICENSE leaves this package.
-	if cl, reason := s.ensure(ctx, d.App.ID, p.container); cl != nil {
+	if cl, reason := s.ensure(ctx, d.App.ID, p.container,
+		runtime.Limits{CPU: d.Manifest.CPU, Memory: d.Manifest.Memory}); cl != nil {
 		o.say(s, d.App.ID, reason, *cl)
 		return s.answer(ctx, ch, o, d.App.ID, sess, *cl)
 	}

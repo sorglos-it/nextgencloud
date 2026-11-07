@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/sorglos-it/nextgencloud/shared/config"
 	"github.com/sorglos-it/nextgencloud/shared/store"
@@ -78,7 +80,55 @@ var paths = struct {
 	// TestEnsureDataTightensTheModeOfADirectoryAlreadyThere).
 	mkdirAll func(path string, perm os.FileMode) error
 	mkdir    func(path string, perm os.FileMode) error
-	chmod    func(path string, mode os.FileMode) error
+	// cgroupRoot is the root of the cgroup v2 tree, /sys/fs/cgroup, under
+	// which this program makes one directory per app and writes the three
+	// quantity limits into it (cgroup.go). A case puts a directory of its own
+	// here: the real one is the kernel's, a test may not write in it, and the
+	// machine this is written on has no cgroup tree at all.
+	cgroupRoot string
+	// cgroupWrite writes one number into one cgroup file. It is held here and
+	// not called as os.WriteFile for the reason the whole of cgroup.go is
+	// about: the fault being guarded against is a limit that is ACCEPTED and
+	// then not held, and only a stand-in can act that way on demand - a
+	// regular file reads back whatever was written to it, so against os alone
+	// the readback in writeLimit would be a check of itself
+	// (TestEnsureCgroupRefusesWhenTheKernelDoesNotHoldTheLimit).
+	cgroupWrite func(path, value string) error
+	// cgroupJoin is what puts a call of podman into the cgroup of its app, so
+	// that everything that call makes runs under the app's ceiling
+	// (cgroup_linux.go, CLONE_INTO_CGROUP). It is held here for the plainest
+	// of reasons: the real one hands the kernel a handle on a real cgroup, and
+	// a case has a directory of its own in a temporary folder. Against the
+	// real call every such case would fail at the clone, so the step before it
+	// - which cgroup a call is given and which calls get none at all - could
+	// not be measured anywhere this is written. The real one is measured on a
+	// machine with a cgroup tree (docs, point on the hardening).
+	cgroupJoin func(attr *syscall.SysProcAttr, dir *os.File) (*syscall.SysProcAttr, error)
+	// cgroupDrop removes the cgroup of an app. It is held here because a
+	// cgroup directory is not an ordinary one: its files belong to the kernel,
+	// not to the filesystem, and a plain rmdir takes the directory WITH them.
+	// A case has ordinary files in their place, and against os.Remove it would
+	// measure that difference instead of the call (DropCgroup).
+	cgroupDrop func(path string) error
+	// procRoot is where the kernel keeps one directory per process. It is held
+	// here for the reason cgroupRoot is: the cases of this package run where
+	// there is no process of an app at all, and against the real /proc every
+	// case about WHICH tasks belong to a container would measure the process
+	// tree of the machine it runs on. A case lays out its own /proc/<pid>/stat
+	// in a temporary folder instead.
+	procRoot string
+	// killTask ends ONE task, and it takes the start time with the number
+	// because a number alone is not a process: the kernel hands numbers out
+	// again, and between "this one is surplus" and "end it" lies time. The
+	// real one opens a handle on the process first, so the signal cannot
+	// reach a different process that got the same number in between
+	// (surplus_linux.go). nil is never right here.
+	killTask func(pid int, start uint64) error
+	// sleep is the waiting between two looks into cgroup.procs. It is here so
+	// a case about KillCgroup takes no real time: a case that really waits is
+	// a case somebody switches off.
+	sleep func(d time.Duration)
+	chmod func(path string, mode os.FileMode) error
 }{
 	useradd:   "/usr/sbin/useradd",
 	userdel:   "/usr/sbin/userdel",
@@ -92,7 +142,50 @@ var paths = struct {
 	mkdirAll:  os.MkdirAll,
 	mkdir:     os.Mkdir,
 	chmod:     os.Chmod,
+
+	cgroupRoot:  cgroupRootDefault,
+	procRoot:    procRootDefault,
+	cgroupWrite: cgroupWrite,
+	cgroupJoin:  inCgroup,
+	cgroupDrop:  os.Remove,
+	sleep:       time.Sleep,
 }
+
+// procRootDefault is where the kernel mounts proc on every system NGC runs on.
+// It stands apart from the field above only so that a case can say what it
+// replaced.
+const procRootDefault = "/proc"
+
+// cgroupRootDefault is where a cgroup v2 tree is mounted on every system NGC
+// runs on. It stands apart from the field above only so that a case can say
+// what it replaced.
+const cgroupRootDefault = "/sys/fs/cgroup"
+
+// cgroupWrite is the real write of a cgroup file: no create, no truncate, no
+// mode - the file is the kernel's and already there, and it takes one value at
+// a time. os.WriteFile would do the same thing on Linux; it is spelled out
+// here so that what is sent to the kernel is one write of one number and
+// nothing else.
+func cgroupWrite(path, value string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(value)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// killTask is set HERE and not in the literal above, and that is not a matter
+// of taste: on Linux killTask calls readTask, readTask reads paths.procRoot,
+// and so the literal would refer to itself - "initialization cycle for paths".
+// The compiler refuses that, and it refuses it only for LINUX: the stand-in in
+// surplus_other.go calls nothing, so a build on Windows or macOS is green while
+// the only target that matters does not build at all. An init body is outside
+// the cycle check, and the value is in place before any case or any call runs.
+func init() { paths.killTask = killTask }
 
 // The sub id ranges of the apps: 65536 ids each, which is what a user namespace
 // of a rootless container needs, and the first range begins at 524288.

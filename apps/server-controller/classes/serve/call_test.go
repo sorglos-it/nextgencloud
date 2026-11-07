@@ -108,6 +108,9 @@ func (c *collector) logger() *slog.Logger { return slog.New(c) }
 // this file does not run.
 type noEngine struct{}
 
+func (noEngine) EndSurplus(context.Context, string) (int, error) {
+	panic("a service call does not deal with the surplus of earlier lives")
+}
 func (noEngine) LoadImage(context.Context, string, string) (string, error) {
 	panic("a service call does not load an image")
 }
@@ -117,7 +120,7 @@ func (noEngine) RemoveImage(context.Context, string, string) error {
 func (noEngine) Create(context.Context, runtime.Container) error {
 	panic("a service call does not create a container")
 }
-func (noEngine) Start(context.Context, string) error {
+func (noEngine) Start(context.Context, string, runtime.Limits) error {
 	panic("a service call does not start a container")
 }
 func (noEngine) Stop(context.Context, string) error {
@@ -144,6 +147,10 @@ type stub struct {
 	bounded  bool
 }
 
+// A service call never deals with the surplus of earlier lives: that is the
+// restore's business, and these cases are about one call.
+func (s *stub) EndSurplus(context.Context, string) (int, error) { return 0, nil }
+
 func (s *stub) Exec(ctx context.Context, e runtime.Exec) (int, error) {
 	s.calls++
 	s.got = e
@@ -168,6 +175,8 @@ func (s *stub) Exec(ctx context.Context, e runtime.Exec) (int, error) {
 // a status only where the command really ended with one, as runtime.Engine.Exec
 // has it.
 type local struct{ noEngine }
+
+func (local) EndSurplus(context.Context, string) (int, error) { return 0, nil }
 
 func (local) Exec(ctx context.Context, e runtime.Exec) (int, error) {
 	b, err := os.ReadFile(e.EnvFile)

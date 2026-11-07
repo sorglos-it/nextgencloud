@@ -1,12 +1,16 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The look in the start menu - accent colour and background - and the search
 // above it. Task 21 left all three measured by hand only.
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
+
+// The six the shell offers, written here once so a case can say "one of the
+// six" without a second list of hex values to keep right.
+const ACCENT_SIX = ["#2f7de1", "#16d1c3", "#e14f8a", "#f0a020", "#8b5cf6", "#22c55e"];
 
 const accent = (shell) => shell.evaluate(() =>
   getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
@@ -26,7 +30,7 @@ test("one of the six accent colours is taken and kept over a reload", async ({ s
   await expect(shell.locator('#smlook .swatches button[data-accent="#e14f8a"]')).toHaveClass(/on/);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await accent(shell)).toBe("#e14f8a");
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.locator('#smlook .swatches button[data-accent="#e14f8a"]')).toHaveClass(/on/);
@@ -56,7 +60,7 @@ test("one of the five backgrounds is taken and kept over a reload", async ({ she
   await expect(shell.locator('#smlook .wpgrid button[data-wallpaper="sunset"]')).toHaveClass(/on/);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await wallpaper(shell)).toBe(after);
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.locator('#smlook .wpgrid button[data-wallpaper="sunset"]')).toHaveClass(/on/);
@@ -123,4 +127,414 @@ test("Escape closes the menu, and the search starts empty the next time", async 
   // The field has the focus, so the next keystroke is a search and not a
   // keystroke into whatever window was in front.
   expect(await shell.evaluate(() => document.activeElement.id)).toBe("smsearch");
+});
+
+// A colour the user picks has to reach the app that is ALREADY open, not only
+// the next one. It is here and not in calc.spec.js because the colour is what
+// it is about; the calculator is only the app that happens to be at hand.
+//
+// MEASURED, and it is why the line in applyAccent exists: before that line the
+// shell went to #e14f8a and this frame stayed on #2f7de1. The app's frame has
+// an origin of its own and cannot read the shell's stylesheet, so the only way
+// in is the message appframe.js sends on a theme change - and that message
+// carries the accent too. An accent that calls no listener never leaves.
+test("a colour picked while an app is open reaches that app's frame", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const frame = shell.frameLocator(".appframe");
+  await expect(frame.locator("body")).toBeVisible();
+  const inFrame = () => frame.locator("body").evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
+  expect(await inFrame()).toBe("#2f7de1");
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Farbe Pink", exact: true }).click();
+  expect(await accent(shell)).toBe("#e14f8a");
+  await expect.poll(inFrame).toBe("#e14f8a");
+});
+
+// The six swatches carry the only thing a user can aim at - there is no colour
+// picker - so their names are measured in ALL FIVE languages and not only in
+// the one the suite otherwise runs in. A key that stands in four files and is
+// missing from the fifth does not show up in a German run at all.
+//
+// Türkis is the swatch under test because it is the one word that differs in
+// every language; "Orange" and "Pink" would pass with a file that was never
+// translated.
+//
+// THE NAME OF THE START BUTTON IS TRANSLATED TOO since 2026-11-01, so it is
+// named per language here. MEASURED, and it cost two red cases: these two
+// clicked "Start" and waited thirty seconds for it in Spanish and French.
+for (const [locale, want, start] of [
+  ["de-DE", "Farbe Türkis", "Start"],
+  ["en-US", "Color Turquoise", "Start"],
+  ["es-ES", "Color Turquesa", "Inicio"],
+  ["fr-FR", "Couleur Turquoise", "Démarrer"],
+  ["it-IT", "Colore Turchese", "Start"],
+]) {
+  test.describe(`in ${locale}`, () => {
+    test.use({ locale });
+    test("the second swatch is named in this language", async ({ shell }) => {
+      await shell.getByRole("button", { name: start, exact: true }).click();
+      const second = shell.locator("#smlook .swatches button").nth(1);
+      // The name as the BROWSER hands it out, not the string the source holds.
+      expect(await second.evaluate((e) => e.getAttribute("aria-label"))).toBe(want);
+    });
+  });
+}
+
+// The dock. Measured rather than described, because every number in it was
+// either computed (40, section 8 of the sheet) or read off LordOS (64).
+test("the dock holds the apps, magnifies one, and marks the open one", async ({ shell }) => {
+  const dock = shell.locator("#dock");
+  await expect(dock).toBeVisible();
+  const first = dock.locator(".dapp").first();
+  const size = async () => {
+    const r = await first.boundingBox();
+    return [Math.round(r.width), Math.round(r.height)];
+  };
+  const icon = async () => {
+    const r = await first.locator(".g").boundingBox();
+    return [Math.round(r.width), Math.round(r.height)];
+  };
+  expect(await size()).toEqual([40, 40]);
+  expect(await icon()).toEqual([40, 40]);
+  const ruheOben = (await first.locator(".g").boundingBox()).y;
+  await first.hover();
+  // The magnifier is a transition, so it is waited for and not slept through.
+  // What grows is the ICON; the BUTTON keeps its 40, because the row is full
+  // at 360 px and anything that grows the button pushes the row along.
+  await expect.poll(icon).toEqual([64, 64]);
+  expect(await size()).toEqual([40, 40]);
+  // And it grows UPWARD: the bottom edge stands still, the top edge rises by
+  // the whole 24. Measured and not described, because "it grows up" is the
+  // one thing a width tells you nothing about.
+  const lupe = await first.locator(".g").boundingBox();
+  expect(Math.round(ruheOben - lupe.y)).toBe(24);
+  expect(Math.round(lupe.y + lupe.height)).toBe(Math.round(ruheOben + 40));
+
+  // The dot is read off the register of open windows, so it has to appear and
+  // go away again with the window and not only once.
+  expect(await dock.locator(".dapp.on").count()).toBe(0);
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await expect(dock.locator(".dapp.on")).toHaveCount(1);
+  expect(await dock.locator(".dapp.on").getAttribute("aria-label")).toBe("Rechner");
+  await shell.locator(".wbtn.close").first().click();
+  await expect(dock.locator(".dapp.on")).toHaveCount(0);
+});
+
+// A dock carries icons and no names, so an app's name reaches it only as a
+// LABEL. The mock's list holds an app called "<img src=x onerror=alert(1)>Böse"
+// on purpose; this measures that the name arrives as text in an attribute and
+// never as markup - there must be no img in the dock at all.
+test("a hostile app name reaches the dock as text and not as markup", async ({ shell }) => {
+  const dock = shell.locator("#dock");
+  await expect(dock).toBeVisible();
+  const evil = dock.locator('.dapp[aria-label^="<img"]');
+  await expect(evil).toHaveCount(1);
+  expect(await evil.getAttribute("aria-label")).toBe("<img src=x onerror=alert(1)>Böse");
+  expect(await dock.locator("img").count()).toBe(0);
+});
+
+// The name of the app in front, in the band, and its menu.
+test("the band names the app in front, and forgets it again", async ({ shell }) => {
+  const btn = shell.locator("#appbtn");
+  // Nothing in front, nothing named: NGC has no app that is always running.
+  await expect(btn).toBeHidden();
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await expect(btn).toBeVisible();
+  await expect(btn).toHaveText("Rechner");
+
+  // A minimised window is not in front, so there is nothing to name.
+  await shell.locator(".wbtn.mini").first().click();
+  await expect(btn).toBeHidden();
+  await shell.locator(".task").first().click();
+  await expect(btn).toHaveText("Rechner");
+
+  // MEASURED, and it cost a wrong order in Win.close: the band went on naming
+  // a window that was gone, because markBar ran while desktop.focused still
+  // pointed at it. It runs after focusTopmost now.
+  await shell.locator(".wbtn.close").first().click();
+  await expect(btn).toBeHidden();
+});
+
+test("the app menu says what can be done with the window as it stands", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const drop = shell.locator("#appdrop");
+  await shell.locator("#appbtn").click();
+  await expect(drop).toBeVisible();
+  // Arranging is about ALL the windows, so with one window it is off.
+  await expect(drop.locator("button")).toHaveText(
+    ["Minimieren", "Maximieren", "Fenster anordnen", "Schließen"]);
+  await expect(drop.locator("button", { hasText: "Fenster anordnen" })).toBeDisabled();
+
+  // Escape closes it and gives the keyboard back to the button that opened it.
+  await shell.keyboard.press("Escape");
+  await expect(drop).toBeHidden();
+  expect(await shell.evaluate(() => document.activeElement.id)).toBe("appbtn");
+
+  // A maximised window offers to come back instead of to grow.
+  await shell.locator(".wbtn.maxi").first().click();
+  await shell.locator("#appbtn").click();
+  await expect(drop.locator("button").nth(1)).toHaveText("Wiederherstellen");
+  await drop.locator("button", { hasText: "Schließen" }).click();
+  await expect(drop).toBeHidden();
+  await expect(shell.locator(".win")).toHaveCount(0);
+});
+
+// The named gap of PR 172: the menu had Tab and Escape and no walk, so it was
+// the one menu in the shell that did not answer the keys every menu answers.
+test("the app menu walks with the arrow keys and steps over what is off", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const drop = shell.locator("#appdrop");
+  const here = () => shell.evaluate(() => document.activeElement.textContent);
+
+  // Down on the button OPENS the menu onto its first entry. Without this the
+  // menu cannot be reached at all without a mouse: there is nothing to Tab
+  // into before it is open, because the entries are built when it opens.
+  await shell.locator("#appbtn").focus();
+  await shell.keyboard.press("ArrowDown");
+  await expect(drop).toBeVisible();
+  expect(await here()).toBe("Minimieren");
+
+  // THE POINT OF THIS CASE: with one window "Fenster anordnen" is off, and the
+  // walk goes past it to Schließen instead of landing on a dead entry.
+  await shell.keyboard.press("ArrowDown");
+  expect(await here()).toBe("Maximieren");
+  await shell.keyboard.press("ArrowDown");
+  expect(await here()).toBe("Schließen");
+
+  // It comes round at both ends, and Home and End go to them.
+  await shell.keyboard.press("ArrowDown");
+  expect(await here()).toBe("Minimieren");
+  await shell.keyboard.press("ArrowUp");
+  expect(await here()).toBe("Schließen");
+  await shell.keyboard.press("Home");
+  expect(await here()).toBe("Minimieren");
+  await shell.keyboard.press("End");
+  expect(await here()).toBe("Schließen");
+
+  // Up on the button opens it onto the LAST entry, the other half of the rule.
+  await shell.keyboard.press("Escape");
+  await shell.keyboard.press("ArrowUp");
+  await expect(drop).toBeVisible();
+  expect(await here()).toBe("Schließen");
+
+  // And the entry under the keyboard is the one that runs.
+  await shell.keyboard.press("Enter");
+  await expect(shell.locator(".win")).toHaveCount(0);
+});
+
+// The mark alone has no name of its own, and 89 places in this suite aim at
+// this button by the name "Start". It is written out as a label since the word
+// came out of the band - MEASURED: without the label it was null, and 62 cases
+// went red in one run.
+test("the start button keeps its name without carrying the word", async ({ shell }) => {
+  const b = shell.locator("#startbtn");
+  expect(await b.getAttribute("aria-label")).toBe("Start");
+  expect((await b.textContent()).trim()).toBe("⊞");
+  await shell.getByRole("button", { name: "Start" }).click();
+  await expect(shell.locator("#startmenu")).toHaveClass(/open/);
+});
+
+// The band's own words, in all five languages. The mark at the left, the dock
+// and the four entries of the app menu were German strings in the source until
+// 2026-11-01 - the same defect as the colour names, found the same way.
+//
+// MEASURED here as the browser hands them out, and with the clock: it was
+// nailed to "de-DE", so a Spanish user got a German weekday and the German
+// order of day and month.
+for (const [locale, start, close, weekday] of [
+  ["de-DE", "Start", "Schließen", null],
+  ["en-US", "Start", "Close", null],
+  ["es-ES", "Inicio", "Cerrar", null],
+  ["fr-FR", "Démarrer", "Fermer", null],
+  ["it-IT", "Start", "Chiudi", null],
+]) {
+  test.describe(`band in ${locale}`, () => {
+    test.use({ locale });
+    test("the mark, the dock and the app menu speak this language", async ({ shell }) => {
+      expect(await shell.locator("#startbtn").getAttribute("aria-label")).toBe(start);
+      expect(await shell.locator("#dock").getAttribute("aria-label")).toBe("Dock");
+      await shell.getByRole("button", { name: start }).click();
+      await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+      await shell.locator("#appbtn").click();
+      const drop = shell.locator("#appdrop");
+      await expect(drop.locator("button").last()).toHaveText(close);
+
+      // The clock is this language's own date, not German's. The one thing
+      // asserted about its text is that it is NOT the German order with a
+      // year in it, which is what stood there before - the rest is the
+      // browser's business and changes with the engine's data.
+      const txt = (await shell.locator("#clock").textContent()).trim();
+      expect(txt).not.toMatch(/\d{4}/);
+      expect(txt).toMatch(/\d{1,2}:\d{2}/);
+      // The date and the time must not read as one word. MEASURED: without a
+      // space in the text it said "Nov 106:13 PM".
+      expect(txt).toMatch(/\s\d{1,2}:\d{2}/);
+      if (weekday) expect(txt).toContain(weekday);
+    });
+  });
+}
+
+// Every app badge wore the accent until 2026-11-01, so seven apps in the dock
+// were seven identical tiles. The tint is one of the shell's own six now, read
+// off the app's id.
+test("the apps do not all wear the same colour", async ({ shell }) => {
+  const tints = await shell.locator("#dock .dapp .g").evaluateAll(
+    (gs) => gs.map((g) => g.style.getPropertyValue("--tint")));
+  expect(tints.length).toBeGreaterThan(3);
+  // Not a count: with more than six apps two of them share a colour, and that
+  // is allowed. What is not allowed is one colour for all of them.
+  expect(new Set(tints).size).toBeGreaterThan(1);
+  for (const t of tints) expect(ACCENT_SIX).toContain(t);
+
+  // The same app is the same colour wherever it is drawn, and after a reload.
+  const ofApp = (where) => shell.locator(where).evaluate(
+    (g) => g.style.getPropertyValue("--tint"));
+  const dock = await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g');
+  await shell.getByRole("button", { name: "Start" }).click();
+  const menu = await shell.locator("#smlist .smitem")
+    .filter({ hasText: "Rechner" }).locator(".g")
+    .evaluate((g) => g.style.getPropertyValue("--tint"));
+  expect(menu).toBe(dock);
+  await shell.reload();
+  await signIn(shell);
+  await expectDesktop(shell);
+  expect(await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g')).toBe(dock);
+});
+
+// The mark at the left of the band is a mark, not a lit pill: it carried the
+// accent as a gradient with a drop shadow, the loudest thing on a quiet screen.
+test("the mark in the band is quiet until it is pointed at", async ({ shell }) => {
+  const paint = () => shell.locator("#startbtn").evaluate((e) => {
+    const c = getComputedStyle(e);
+    return { img: c.backgroundImage, col: c.backgroundColor, shadow: c.boxShadow };
+  });
+  const quiet = await paint();
+  expect(quiet.img).toBe("none");
+  expect(quiet.shadow).toBe("none");
+  expect(quiet.col).toBe("rgba(0, 0, 0, 0)");
+  await shell.locator("#startbtn").hover();
+  expect((await paint()).col).not.toBe("rgba(0, 0, 0, 0)");
+});
+
+// What the system says stands top right, under the band - where macOS and
+// Lord Flow put it. It stood centred at the BOTTOM, which is the spot the dock
+// took on 2026-11-01, so the news and the apps shared one corner.
+test("what the system says stands under the band, clear of the dock", async ({ shell }) => {
+  const vp = shell.viewportSize();
+  const bar = await shell.locator(".noticebar").boundingBox();
+  const band = await shell.locator("#taskbar").boundingBox();
+  const dock = await shell.locator("#dock").boundingBox();
+  // Under the band, not over it and not under the page's own top.
+  expect(bar.y).toBeGreaterThanOrEqual(band.height);
+  expect(Math.round(vp.width - (bar.x + bar.width))).toBe(8);
+  // And clear of the dock, which is the whole point.
+  expect(bar.y + bar.height).toBeLessThan(dock.y);
+});
+
+// THE WINDOW FRAME, section 6 of docs/gestaltung-lordos.md. Measured rather
+// than described: "the buttons are on the left" and "the title is centred"
+// are both claims about pixels, and both were wrong here before today.
+test("the window buttons stand at the left, close first, and the title is centred", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const win = shell.locator(".win");
+  await expect(win).toBeVisible();
+  // Wide enough that the middle is reachable at all: at 300 across, 120 px of
+  // buttons against a title of about 76 leaves 111 px a side, so a centred
+  // title would have to lie under a button. This asks for the centre where
+  // there IS a centre to ask for.
+  await win.evaluate((w) => { w.style.width = "800px"; });
+
+  const m = await win.evaluate((w) => {
+    const bar = w.querySelector(".titlebar");
+    const b = bar.getBoundingClientRect();
+    const t = bar.querySelector(".t").getBoundingClientRect();
+    const g = bar.querySelector(".g").getBoundingClientRect();
+    const btn = [...bar.querySelectorAll(".wbtn")];
+    return {
+      // The order as the BROWSER lays them out, read off the name each button
+      // answers to, so a renamed class cannot quietly pass this.
+      reihe: btn.map((x) => [x.getAttribute("aria-label"), Math.round(x.getBoundingClientRect().left - b.left)]),
+      // The icon and the title together are what the eye reads as "the title",
+      // so it is the pair that has to sit in the middle.
+      mitte: Math.round((g.left + t.right) / 2 - (b.left + b.width / 2)),
+      frei: Math.round(g.left - btn[btn.length - 1].getBoundingClientRect().right),
+    };
+  });
+  expect(m.reihe).toEqual([["Schließen", 0], ["Minimieren", 40], ["Maximieren", 80]]);
+  expect(Math.abs(m.mitte)).toBeLessThanOrEqual(1);
+  // And it never reaches under them.
+  expect(m.frei).toBeGreaterThan(0);
+});
+
+// Front and back are told apart by the SHADOW and no longer by a second
+// title colour - LordOS does it that way, and the colour that stood in for
+// the shadow is gone. The case asks both halves: the colours are the same,
+// and something still tells the two windows apart.
+test("the window in front is known by its shadow, not by a tint", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "App-Store", exact: true }).click();
+  await expect(shell.locator(".win")).toHaveCount(2);
+  await expect(shell.locator(".win.focus")).toHaveCount(1);
+
+  const m = await shell.evaluate(() => {
+    const vorn = document.querySelector(".win.focus");
+    const hinten = document.querySelector(".win:not(.focus)");
+    const lies = (w) => {
+      const bar = getComputedStyle(w.querySelector(".titlebar"));
+      return { bar: bar.backgroundColor, schatten: getComputedStyle(w).boxShadow };
+    };
+    return { vorn: lies(vorn), hinten: lies(hinten) };
+  });
+  expect(m.vorn.bar).toBe(m.hinten.bar);
+  expect(m.vorn.schatten).not.toBe(m.hinten.schatten);
+  // A shadow that is there and not the word "none", or the window in front
+  // would be told apart by having no shadow at all.
+  expect(m.vorn.schatten).not.toBe("none");
+  expect(m.hinten.schatten).not.toBe("none");
+});
+
+// Every button by the NAME it answers to, in a row, because the three were
+// wired by their place in the row (children[0], [1], [2]) and moving them to
+// the left handed each one the wrong job - close minimized. The place is a
+// matter of looks and may change again; what a button does must not travel
+// with it.
+test("each window button does its own job, whatever place it stands in", async ({ shell }) => {
+  const öffne = async () => {
+    await shell.getByRole("button", { name: "Start" }).click();
+    await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+    await expect(shell.locator(".win")).toHaveCount(1);
+  };
+  const win = shell.locator(".win");
+
+  await öffne();
+  await win.getByRole("button", { name: "Minimieren" }).click();
+  await expect(win).toHaveClass(/min/);
+  await expect(win).not.toHaveClass(/max/);
+  await shell.locator("#taskbar .task").first().click();
+  await expect(win).not.toHaveClass(/min/);
+
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).toHaveClass(/max/);
+  await expect(shell.locator(".win")).toHaveCount(1);
+
+  // The same button again, and it is still called "Maximieren" while the
+  // window is maximised - the app menu renames its entry to Wiederherstellen,
+  // this button does not. Named here rather than repaired: it is one of the
+  // German strings of the title bar that go into the language files together.
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).not.toHaveClass(/max/);
+
+  await win.getByRole("button", { name: "Schließen" }).click();
+  await expect(shell.locator(".win")).toHaveCount(0);
 });

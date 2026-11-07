@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // Getting through the desktop with the keyboard alone, and what a screen
 // reader is told. The people this is built for include the ones who never
@@ -12,7 +12,7 @@ import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 const active = (shell) => shell.evaluate(() => {
@@ -131,13 +131,17 @@ test("the three buttons of a window are tab stops, and the app is the next one",
     await win.getByRole("button", { name, exact: true }).focus();
     expect(await active(shell)).toBe(name);
   }
-  await win.getByRole("button", { name: "Minimieren", exact: true }).focus();
+  // The walk starts at the FIRST of the three, which is Schließen since the
+  // buttons moved to the left of the bar on 2026-11-03: they are first in the
+  // DOM as well, so the keyboard meets them in the order the eye does. This
+  // used to start at Minimieren and expect Maximieren, Schließen.
+  await win.getByRole("button", { name: "Schließen", exact: true }).focus();
   const stops = [];
   for (let i = 0; i < 2; i++) {
     await shell.keyboard.press("Tab");
     stops.push(await active(shell));
   }
-  expect(stops).toEqual(["Maximieren", "Schließen"]);
+  expect(stops).toEqual(["Minimieren", "Maximieren"]);
   // And the next press leaves the title bar and lands in the app.
   await shell.keyboard.press("Tab");
   await expect(win.locator(".appframe")).toBeFocused();
@@ -197,13 +201,13 @@ test("the glyph beside a name is not read out with it", async ({ shell }) => {
   // Every badge in the shell carries an icon of the shell's own (icon.js).
   // Without aria-hidden it would be announced along with the name, and an
   // app whose icon the shell does not know would read as "App Böse".
-  expect(await shell.evaluate(() => [...document.querySelectorAll(".dicon .g, .smitem .g, .win .g")]
+  expect(await shell.evaluate(() => [...document.querySelectorAll(".dapp .g, .smitem .g, .win .g")]
     .every((g) => g.getAttribute("aria-hidden") === "true"))).toBe(true);
   await shell.getByRole("button", { name: "Start" }).click();
   // The exact name is the name alone: the badge is not part of it.
   await expect(shell.getByRole("menuitem", { name: "Rechner", exact: true })).toHaveCount(1);
   await shell.keyboard.press("Escape");
-  await expect(shell.locator("#icons").getByRole("button", { name: "Rechner", exact: true })).toHaveCount(1);
+  await expect(shell.locator("#dock").getByRole("button", { name: "Rechner", exact: true })).toHaveCount(1);
 });
 
 test("the taskbar entry says which window it belongs to", async ({ shell }) => {
@@ -285,7 +289,14 @@ test("starting an app puts the focus in the window it opened", async ({ shell })
   await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
   const win = shell.locator(".win", { hasText: "Rechner" });
   await expect(win.locator(".appframe")).toBeFocused();
-  // Typing goes straight into the app, with nothing to click first.
+  // Typing goes straight into the app, with nothing to click first - but the
+  // app has to BE there to hear it. The frame takes the focus as soon as the
+  // element exists, while the document inside it is still loading, and a key
+  // pressed into that gap is lost: measured, this case went red inside the
+  // full suite and never on its own, because a loaded machine widens the gap.
+  // Waiting for the app's own keys is not a click and not a sleep - it is the
+  // moment a person would start typing, and it is what the case claims.
+  await expect(shell.frameLocator(".appframe").locator(".calc")).toBeVisible();
   await shell.keyboard.press("7");
   await expect(shell.frameLocator(".appframe").locator(".calc .v")).toHaveText("7");
   // A window the shell drew itself keeps the focus on the window, and from
@@ -294,7 +305,11 @@ test("starting an app puts the focus in the window it opened", async ({ shell })
   await shell.getByRole("menuitem", { name: "App-Store", exact: true }).click();
   await expect(shell.locator(".win", { hasText: "App-Store" })).toBeFocused();
   await shell.keyboard.press("Tab");
-  expect(await active(shell)).toBe("Minimieren");
+  // Schließen and not Minimieren since the buttons moved to the left of the
+  // title bar on 2026-11-03: the first button on the screen is the first one
+  // the keyboard reaches, which is the whole point of their being first in
+  // the DOM as well.
+  expect(await active(shell)).toBe("Schließen");
 });
 
 test("an app that opens no window gives the focus back instead of dropping it", async ({ shell }) => {

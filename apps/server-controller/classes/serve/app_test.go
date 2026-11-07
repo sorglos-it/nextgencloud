@@ -36,7 +36,7 @@ type appEngine struct {
 
 func (e *appEngine) Running(context.Context, string) (bool, error) { return e.running, nil }
 
-func (e *appEngine) Start(context.Context, string) error {
+func (e *appEngine) Start(context.Context, string, runtime.Limits) error {
 	e.starts.Add(1)
 	e.running = true
 	return nil

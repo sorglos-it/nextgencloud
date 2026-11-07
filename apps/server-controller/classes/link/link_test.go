@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -471,15 +472,30 @@ func runningPinging(t *testing.T, h frameHook, onPing func() bool, set func(*Con
 }
 
 // waitFor takes the end of Run, but not for ever: a link that should have
-// ended and does not would otherwise be the timeout of the whole run.
+// ended and does not would otherwise be the timeout of the whole run. A run
+// that does not end leaves its stacks behind: without them the next one of
+// these is another run instead of a finding.
 func waitFor(t *testing.T, ended <-chan error) error {
 	t.Helper()
 	select {
 	case err := <-ended:
 		return err
 	case <-time.After(30 * time.Second):
-		t.Fatal("Run did not end")
+		t.Fatalf("Run did not end\n%s", stacks())
 		return nil
+	}
+}
+
+// stacks are the stacks of all goroutines of this moment. It grows the buffer
+// until it is big enough, because a half dump names the wrong goroutine.
+func stacks() []byte {
+	buf := make([]byte, 64*1024)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return buf[:n]
+		}
+		buf = make([]byte, 2*len(buf))
 	}
 }
 

@@ -16,13 +16,27 @@
 // itself and the person in front of the window nothing. The action "zeit"
 // writes one line in each direction, on purpose, so that whoever follows the
 // way sees which of the two arrives where.
+//
+// WHAT 1.0.1 ADDED, AND WHY AN APP THAT NEEDS NO STATE GOT SOME. Up to 1.0.0
+// this app wrote nothing anywhere, and that made one question unmeasurable:
+// what happens to the DATA of an app when it is lifted to a new version. The
+// data directory is encrypted and belongs to the app's own user
+// (runtime.DataDirOf), and an app that keeps nothing in it cannot show
+// whether its data survived. So "zeit" now counts how often it was read and
+// keeps the count in $NGC_DATA/zugriffe. A count is the smallest thing that
+// is worth nothing to anyone and is still visibly lost with the directory.
 package classes
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,11 +51,22 @@ const (
 	msgUnknown  = "Unbekannte Aktion %q. Dieser Dienst kennt nur %q.\n"
 	actionZeit  = "zeit"
 	holdCommand = "hold"
+	// countFile is the one file this app keeps, directly under $NGC_DATA.
+	countFile = "zugriffe"
 	// timeFormat is RFC 3339 with seconds. The window shows what arrives and
 	// formats nothing itself, so the one place the shape of this line is
 	// decided is here.
 	timeFormat = time.RFC3339
+	// msgCount reaches an admin through the log of the controller when the
+	// count could not be written. It is not a reason to refuse the action: a
+	// clock that cannot count is still a clock.
+	msgCount = "Der Zugriffszähler in %s war nicht schreibbar: %v\n"
 )
+
+// errNoData is what count answers when the environment named no data
+// directory. Only a call from outside a container can get there: the
+// controller always sets NGC_DATA (service.EnvData).
+var errNoData = errors.New("NGC_DATA ist leer")
 
 // Main carries out one call of ngc-uhr and returns the exit status: 0 for
 // done, 1 for a call that failed, 2 for a call Main does not understand.
@@ -56,12 +81,14 @@ func Main(version string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
-	return answer(os.Getenv(service.EnvAction), version, time.Now(), stdout, stderr)
+	return answer(os.Getenv(service.EnvAction), version, os.Getenv(service.EnvData),
+		time.Now(), stdout, stderr)
 }
 
-// answer writes the reply to one action. now is an argument and not a call to
-// time.Now, so a case can measure the line this writes.
-func answer(action, version string, now time.Time, stdout, stderr io.Writer) int {
+// answer writes the reply to one action. now and dataDir are arguments and not
+// a call to time.Now and to the environment, so a case can measure the lines
+// this writes.
+func answer(action, version, dataDir string, now time.Time, stdout, stderr io.Writer) int {
 	if action == "" {
 		fmt.Fprintln(stderr, msgNoAction)
 		return 1
@@ -77,7 +104,58 @@ func answer(action, version string, now time.Time, stdout, stderr io.Writer) int
 	// is what cost the terminal app a round (see the package comment).
 	fmt.Fprintf(stderr, "ngc-uhr %s beantwortet %q\n", version, action)
 	fmt.Fprintln(stdout, now.Format(timeFormat))
+	// THE SECOND LINE, AND THE WINDOW READS IT BY ITS NUMBER. The shape of
+	// what this service answers is decided here and nowhere else (app.js
+	// splits on the newline and formats nothing): line one is the time, line
+	// two the count. A window that got only line one stands in front of an
+	// older service, which is a state it survives - it shows the time and
+	// nothing about the count.
+	n, err := count(dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, msgCount, dataDir, err)
+	}
+	fmt.Fprintln(stdout, n)
 	return 0
+}
+
+// count raises the number in dataDir/zugriffe by one and gives back the new
+// one.
+//
+// It answers a number in every case, and that is the decision in it: a
+// directory that cannot be read gives 1 - the first reading of a clock that
+// counts from now on - and the error goes to the admin's side. Refusing the
+// action instead was dropped: the data of this app is a counter, and a
+// counter is not worth an app that stops working.
+//
+// The file is written whole, under a second name and then renamed, so a
+// reader that arrives in the middle of it sees the old number and never half
+// a number. There is no lock: one container holds one service of one app, and
+// the controller runs one call of it at a time (service.Call).
+func count(dataDir string) (uint64, error) {
+	if dataDir == "" {
+		return 1, errNoData
+	}
+	path := filepath.Join(dataDir, countFile)
+	var n uint64
+	b, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		// A file this app did not write, or wrote and lost half of, is not
+		// worth an error of its own: it counts as no count.
+		n, _ = strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	case !errors.Is(err, fs.ErrNotExist):
+		return 1, err
+	}
+	n++
+	tmp := path + ".neu"
+	if err := os.WriteFile(tmp, []byte(strconv.FormatUint(n, 10)+"\n"), 0o600); err != nil {
+		return n, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return n, err
+	}
+	return n, nil
 }
 
 // hold waits until the container is stopped, so the image needs no program of
