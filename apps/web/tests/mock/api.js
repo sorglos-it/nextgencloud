@@ -1206,6 +1206,13 @@ export async function startMockAPI({ world, port, phpPort }) {
         if (brk !== null) breakAt = BREAKS.includes(brk) ? brk : "";
         // A fresh installation needs no session either: there is no user yet.
         // "1" takes the admin away, "0" puts the world buildWorld made back.
+        // WHICH NODE ANSWERS. "api-2" is the node that arrives with version 2
+        // of the trust list, so a shell that opens only version 1 cannot find
+        // the issuer of its certificate. It needs no session: it is a property
+        // of the installation and not of a caller.
+        const node = url.searchParams.get("node");
+        if (node === "api-2" && w.api2) w.api = w.api2;
+        if (node === "api-1" && w.api1) w.api = w.api1;
         const setup = url.searchParams.get("setup");
         if (setup === "1") startFresh(url.searchParams.get("offer") === "foreign");
         if (setup === "0") { fresh = null; restoreWorld(); }

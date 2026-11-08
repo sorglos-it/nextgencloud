@@ -289,8 +289,12 @@ check('config', 'apis of the test files', true,
     $c->apis === ['https://api-1.ngc.test:7443', 'https://api-2.ngc.test:7443']);
 check('config', 'rp of the test files', true,
     $c->rp === ['id' => 'ngc.example.org', 'origins' => ['https://ngc.example.org']]);
+// The anchor is no longer 0xAB repeated: apps/web/tests/trust-anchor.json
+// carries the hash derived from the mock world's own seeds. The value is
+// derived a second time, independently, in tests/contracts/anchor.spec.js -
+// this check only holds that Config::load hands it through unchanged.
 check('config', 'anchor of the test files', true,
-    $c->anchor === ['seq' => 1, 'hash' => 'q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s']);
+    $c->anchor === ['seq' => 1, 'hash' => 'J3qr4-1LBiBkYpH6_a_Z1xWiTfVkmDfSEfg_yfahMUQ']);
 
 @unlink($tmp . '/web.json');
 @unlink($tmp . '/anchor.json');
