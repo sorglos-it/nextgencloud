@@ -1,11 +1,11 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The look in the start menu - accent colour and background - and the search
 // above it. Task 21 left all three measured by hand only.
 test.beforeEach(async ({ shell }) => {
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 // The six the shell offers, written here once so a case can say "one of the
@@ -30,7 +30,7 @@ test("one of the six accent colours is taken and kept over a reload", async ({ s
   await expect(shell.locator('#smlook .swatches button[data-accent="#e14f8a"]')).toHaveClass(/on/);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await accent(shell)).toBe("#e14f8a");
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.locator('#smlook .swatches button[data-accent="#e14f8a"]')).toHaveClass(/on/);
@@ -60,7 +60,7 @@ test("one of the five backgrounds is taken and kept over a reload", async ({ she
   await expect(shell.locator('#smlook .wpgrid button[data-wallpaper="sunset"]')).toHaveClass(/on/);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await wallpaper(shell)).toBe(after);
   await shell.getByRole("button", { name: "Start" }).click();
   await expect(shell.locator('#smlook .wpgrid button[data-wallpaper="sunset"]')).toHaveClass(/on/);
@@ -405,7 +405,7 @@ test("the apps do not all wear the same colour", async ({ shell }) => {
   expect(menu).toBe(dock);
   await shell.reload();
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
   expect(await ofApp('#dock .dapp[data-app="org.sorglos.calculator"] .g')).toBe(dock);
 });
 
@@ -437,4 +437,192 @@ test("what the system says stands under the band, clear of the dock", async ({ s
   expect(Math.round(vp.width - (bar.x + bar.width))).toBe(8);
   // And clear of the dock, which is the whole point.
   expect(bar.y + bar.height).toBeLessThan(dock.y);
+});
+
+// THE WINDOW FRAME, section 6 of docs/gestaltung-lordos.md. Measured rather
+// than described: "the buttons are on the left" and "the title is centred"
+// are both claims about pixels, and both were wrong here before today.
+test("the window buttons stand at the left, close first, and the title is centred", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  const win = shell.locator(".win");
+  await expect(win).toBeVisible();
+  // Wide enough that the middle is reachable at all: at 300 across, 120 px of
+  // buttons against a title of about 76 leaves 111 px a side, so a centred
+  // title would have to lie under a button. This asks for the centre where
+  // there IS a centre to ask for.
+  await win.evaluate((w) => { w.style.width = "800px"; });
+
+  const m = await win.evaluate((w) => {
+    const bar = w.querySelector(".titlebar");
+    const b = bar.getBoundingClientRect();
+    const t = bar.querySelector(".t").getBoundingClientRect();
+    const g = bar.querySelector(".g").getBoundingClientRect();
+    const btn = [...bar.querySelectorAll(".wbtn")];
+    return {
+      // The order as the BROWSER lays them out, read off the name each button
+      // answers to, so a renamed class cannot quietly pass this.
+      reihe: btn.map((x) => [x.getAttribute("aria-label"), Math.round(x.getBoundingClientRect().left - b.left)]),
+      // The icon and the title together are what the eye reads as "the title",
+      // so it is the pair that has to sit in the middle.
+      mitte: Math.round((g.left + t.right) / 2 - (b.left + b.width / 2)),
+      frei: Math.round(g.left - btn[btn.length - 1].getBoundingClientRect().right),
+    };
+  });
+  expect(m.reihe).toEqual([["Schließen", 0], ["Minimieren", 40], ["Maximieren", 80]]);
+  expect(Math.abs(m.mitte)).toBeLessThanOrEqual(1);
+  // And it never reaches under them.
+  expect(m.frei).toBeGreaterThan(0);
+});
+
+// Front and back are told apart by the SHADOW and no longer by a second
+// title colour - LordOS does it that way, and the colour that stood in for
+// the shadow is gone. The case asks both halves: the colours are the same,
+// and something still tells the two windows apart.
+test("the window in front is known by its shadow, not by a tint", async ({ shell }) => {
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("menuitem", { name: "App-Store", exact: true }).click();
+  await expect(shell.locator(".win")).toHaveCount(2);
+  await expect(shell.locator(".win.focus")).toHaveCount(1);
+
+  const m = await shell.evaluate(() => {
+    const vorn = document.querySelector(".win.focus");
+    const hinten = document.querySelector(".win:not(.focus)");
+    const lies = (w) => {
+      const bar = getComputedStyle(w.querySelector(".titlebar"));
+      return { bar: bar.backgroundColor, schatten: getComputedStyle(w).boxShadow };
+    };
+    return { vorn: lies(vorn), hinten: lies(hinten) };
+  });
+  expect(m.vorn.bar).toBe(m.hinten.bar);
+  expect(m.vorn.schatten).not.toBe(m.hinten.schatten);
+  // A shadow that is there and not the word "none", or the window in front
+  // would be told apart by having no shadow at all.
+  expect(m.vorn.schatten).not.toBe("none");
+  expect(m.hinten.schatten).not.toBe("none");
+});
+
+// Every button by the NAME it answers to, in a row, because the three were
+// wired by their place in the row (children[0], [1], [2]) and moving them to
+// the left handed each one the wrong job - close minimized. The place is a
+// matter of looks and may change again; what a button does must not travel
+// with it.
+test("each window button does its own job, whatever place it stands in", async ({ shell }) => {
+  const öffne = async () => {
+    await shell.getByRole("button", { name: "Start" }).click();
+    await shell.getByRole("menuitem", { name: "Rechner", exact: true }).click();
+    await expect(shell.locator(".win")).toHaveCount(1);
+  };
+  const win = shell.locator(".win");
+
+  await öffne();
+  await win.getByRole("button", { name: "Minimieren" }).click();
+  await expect(win).toHaveClass(/min/);
+  await expect(win).not.toHaveClass(/max/);
+  await shell.locator("#taskbar .task").first().click();
+  await expect(win).not.toHaveClass(/min/);
+
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).toHaveClass(/max/);
+  await expect(shell.locator(".win")).toHaveCount(1);
+
+  // The same button again, and it is still called "Maximieren" while the
+  // window is maximised - the app menu renames its entry to Wiederherstellen,
+  // this button does not. Named here rather than repaired: it is one of the
+  // German strings of the title bar that go into the language files together.
+  await win.getByRole("button", { name: "Maximieren" }).click();
+  await expect(win).not.toHaveClass(/max/);
+
+  await win.getByRole("button", { name: "Schließen" }).click();
+  await expect(shell.locator(".win")).toHaveCount(0);
+});
+
+// THE FIXED STEPS of section 5 of docs/gestaltung-lordos.md. They were 38
+// loose numbers in shell.css and one token, so the same 13 stood written out
+// ten times and no step could be moved without hunting for every place that
+// happened to agree with it.
+//
+// What this measures is the promise that makes them steps at all: the density
+// moves the BODY and leaves them alone. A step wired to --fs by mistake would
+// travel with the density, which is what this case would catch - it reads the
+// DRAWN values, not the stylesheet.
+test("the font steps are fixed and the density moves only the body", async ({ shell }) => {
+  const stufen = () => shell.evaluate(() => {
+    const c = getComputedStyle(document.documentElement);
+    const lies = (n) => c.getPropertyValue(n).trim();
+    return {
+      body: getComputedStyle(document.body).fontSize,
+      caption: lies("--fs-caption"), callout: lies("--fs-callout"),
+      chrome: lies("--fs-chrome"), headline: lies("--fs-headline"),
+      title: lies("--fs-title"),
+    };
+  });
+  const fest = { caption: "11px", callout: "12px", chrome: "13px", headline: "15px", title: "17px" };
+
+  expect(await stufen()).toEqual({ body: "14px", ...fest });
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Eng", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "eng");
+  expect(await stufen()).toEqual({ body: "12.5px", ...fest });
+
+  await shell.getByRole("button", { name: "Luftig", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "luftig");
+  expect(await stufen()).toEqual({ body: "15.5px", ...fest });
+
+  // And the steps are actually WORN: the band is the shell's own chrome, one
+  // step under the text of a window on purpose. A token nobody reads would
+  // pass every check above and change nothing on the screen.
+  await shell.getByRole("button", { name: "Start" }).click();
+  expect(await shell.locator("#taskbar").evaluate((e) => getComputedStyle(e).fontSize)).toBe("13px");
+});
+
+test("the font travels with NGC instead of coming from the machine", async ({ shell }) => {
+  // WHAT THIS CASE IS FOR. The sizes above are fixed now, but a size only
+  // means something together with the shape it is measured in: 13px of Segoe
+  // UI, of Roboto and of San Francisco are three different widths, so one
+  // design was three pictures depending on the machine. Inter lies in the
+  // repository (assets/vendor/inter/, OFL 1.1) and is asked for FIRST.
+  //
+  // The last two numbers are the whole point and the reason this is not a
+  // source-code reading. A declared @font-face whose FILE never arrives fails
+  // silently: the browser drops to the next family and everything still
+  // looks fine. So the same string is measured twice, once with Inter in
+  // front of the stack and once with the old stack alone. If the file did not
+  // arrive, both spans are set in the same fallback and the two widths are
+  // EQUAL - which is the failure, and nothing else here would have shown it.
+  const gemessen = await shell.evaluate(async () => {
+    await document.fonts.ready;
+    const breite = (familie) => {
+      const s = document.createElement("span");
+      s.textContent = "Fenster Rechner Einstellungen 0123";
+      s.style.cssText = "position:absolute;left:-9999px;white-space:pre;font-size:40px;" +
+                        "font-family:" + familie;
+      document.body.append(s);
+      const w = s.getBoundingClientRect().width;
+      s.remove();
+      return w;
+    };
+    const alt = '"Segoe UI",system-ui,Roboto,sans-serif';
+    return {
+      erste: getComputedStyle(document.body).fontFamily.split(",")[0].replace(/["']/g, ""),
+      faces: [...document.fonts].filter((f) => f.family === "Inter")
+        .map((f) => ({ weight: f.weight, style: f.style, status: f.status })),
+      nutzbar: document.fonts.check("16px Inter"),
+      mitInter: breite('"Inter",' + alt),
+      ohneInter: breite(alt),
+    };
+  });
+
+  expect(gemessen.erste, "the stack asks for Inter first").toBe("Inter");
+  // ONE face and one only: Inter is a variable font, so 100-900 is the axis it
+  // really carries and the four weights this sheet asks for (400, 500, 600,
+  // 700) come out of that one file. A second face here would mean somebody
+  // added a static cut nobody needs.
+  expect(gemessen.faces).toEqual([{ weight: "100 900", style: "normal", status: "loaded" }]);
+  expect(gemessen.nutzbar, "the browser can really set text in it").toBe(true);
+  expect(gemessen.mitInter, "the file arrived, so the shape changed")
+    .not.toBe(gemessen.ohneInter);
 });

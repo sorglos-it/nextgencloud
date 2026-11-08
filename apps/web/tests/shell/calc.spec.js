@@ -1,4 +1,4 @@
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 
 // The calculator - org.sorglos.calculator - in the fenced frame every app runs
 // in.
@@ -24,7 +24,7 @@ test.beforeEach(async ({ shell }) => {
   // as well, so this engine could not open the frame either.
   await skipWithoutLogin(shell);
   await signIn(shell);
-  await expect(shell.locator("#taskbar")).toBeVisible();
+  await expectDesktop(shell);
 });
 
 // winOf finds a window by the name in its title bar. NOT by any text the window

@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { test, expect, signIn, skipWithoutLogin } from "../fixtures/page.js";
+import { test, expect, signIn, expectDesktop, skipWithoutLogin } from "../fixtures/page.js";
 import { serveApps } from "../fixtures/apps.js";
 
 // A gallery of the screens docs/gestaltung.md decides about, so the decisions
@@ -46,7 +46,7 @@ test("the desktop, the start menu and the three densities", async ({ page }) => 
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   // Point 7: nothing chosen, so the machine decides - and the fixture's
   // machine is set to light (playwright.config.js). Before this the desktop
   // came up dark here whatever the machine said.
@@ -75,7 +75,7 @@ test("the desktop on a phone", async ({ page }) => {
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   await shot(page, "08-handy-schreibtisch");
   // Point 1: the way to the apps that survives under 640 px.
   await page.getByRole("button", { name: "Start" }).click();
@@ -96,7 +96,7 @@ test("the desktop with no apps on it", async ({ page }) => {
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   await shot(page, "11-leerer-schreibtisch");
   await page.getByRole("button", { name: "Start" }).click();
   await shot(page, "12-leeres-startmenue");
@@ -112,7 +112,7 @@ test("a message over the window it belongs to", async ({ page }) => {
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   // Two windows, so the picture shows the thing the decision is about: the
   // message covers ONE of them and the other goes on being usable.
   for (const name of ["Rechner", "App-Store"]) {
@@ -136,7 +136,7 @@ test("a window pushed at the edge", async ({ page }) => {
   await page.goto("/");
   await skipWithoutLogin(page);
   await signIn(page);
-  await expect(page.locator("#taskbar")).toBeVisible();
+  await expectDesktop(page);
   await page.getByRole("button", { name: "Start" }).click();
   await page.getByRole("menuitem", { name: "Rechner", exact: true }).click();
   const win = page.locator(".win");
@@ -144,7 +144,9 @@ test("a window pushed at the edge", async ({ page }) => {
   // Point 2, and the picture is of the price: pushed hard past the bottom
   // right, the window is still whole and still has its three buttons.
   const g = await win.locator(".titlebar").boundingBox();
-  await page.mouse.move(g.x + 40, g.y + g.height / 2);
+  // 20 px in from the right end: the three buttons stand at the LEFT of the
+  // bar since 2026-11-03, so that is where the free part of it is.
+  await page.mouse.move(g.x + g.width - 20, g.y + g.height / 2);
   await page.mouse.down();
   await page.mouse.move(900, 1400, { steps: 12 });
   await shot(page, "15-fenster-am-rand");

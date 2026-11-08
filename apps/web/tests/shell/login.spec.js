@@ -532,3 +532,79 @@ test("no version means no line, rather than a line with nothing in it", async ({
   await expect(page.locator(".loginbox")).toBeVisible();
   await expect(page.locator(".poweredby")).toHaveCount(0);
 });
+
+// ---- the one sentence, for the classes nobody could bring about -----------
+//
+// docs/login-fehlerklassen.md measured it: 25 error classes run through
+// auth/login.js and 22 of them draw the SAME sentence. That is deliberate -
+// an answer that told them apart would say whether a name exists
+// (apps/server-api/classes/login/finish.go, deny()). Eighteen of the 22 could
+// not be brought about at all until now, so no case measured that the mask
+// keeps the promise for them; it was measured for a wrong password and for a
+// passkey button with no passkey, and taken on trust for the rest.
+//
+// The three cases below bring about three of those classes through the mock's
+// own test door (`break=`, mock/api.js) and measure two things at once: that
+// the person still reads exactly one sentence, and - from the door, not from
+// the screen - WHERE the attempt died.
+//
+// WHAT THE DOOR TELLS APART, exactly, so nobody expects more of it: whether
+// /login/finish arrived. That separates "the attempt died before the API" (a
+// refused challenge, a name with no passkey, an Argon2id that did not answer)
+// from "the API answered and the shell refused what came back" - which is the
+// whole of these three. WHICH of the three it was is known because the CASE
+// set it; the shell never says, and that is the point.
+//
+// THE DYING MUTANT FOR EACH: take the `breakAt` branch out of mock/api.js and
+// the login goes through, the desktop comes up, and the first expectation of
+// the case falls. Nothing about the shell has to be touched for that.
+for (const broken of [
+  { how: "badsig", what: "an API certificate signed by a key nobody holds" },
+  { how: "badlist", what: "a trust list the contract refuses" },
+  { how: "nochain", what: "a trust chain with no version in it" },
+]) {
+  test(`${broken.what} says only that the login failed`, async ({ shell }) => {
+    // The password route, as for every other failing login in this file: no
+    // X25519 and no desktop are needed, only a password key out of a seed.
+    await skipWithoutSeedKeys(shell);
+    await tellMock(shell, "break=" + broken.how);
+    const before = await askMock(shell, "ask=finishes");
+
+    await fillLogin(shell, USER_NAME, PASSWORD);
+
+    // What the person reads: the one sentence, and nothing of the class in it.
+    await expect(shell.getByRole("alert")).toHaveText("Anmeldung fehlgeschlagen.");
+    await expect(shell.locator("#taskbar")).toBeHidden();
+    // What the MACHINE reads, and it is the mock that says it rather than a
+    // flag this side set about its own work: the API was asked and answered.
+    // Without this line the case could not tell its own three apart from a
+    // login that never got off the ground.
+    expect(await askMock(shell, "ask=finishes"), "the API was asked and answered")
+      .not.toBe(before);
+
+    await tellMock(shell, "break=");
+  });
+}
+
+test("a broken step is only broken while it is set", async ({ shell }) => {
+  // THE COUNTER-CASE TO THE THREE ABOVE, and it is what makes them worth
+  // anything: a switch that was only ever SET and never turned away is a
+  // switch nobody has measured. Here it is set, cleared, and misspelled.
+  await skipWithoutLogin(shell);
+
+  // Set and cleared: the login works again afterwards.
+  await tellMock(shell, "break=badsig");
+  await tellMock(shell, "break=");
+  await fillLogin(shell, USER_NAME, PASSWORD);
+  await expect(shell.locator("#taskbar")).toBeVisible();
+
+  // Misspelled: a WORKING login, not a quietly different fault. A door that
+  // took "badsgi" for something would hand a case a green run it did not
+  // earn.
+  await shell.goto("/");
+  await standInOn(shell);
+  await skipWithoutShell(shell);
+  await tellMock(shell, "break=badsgi");
+  await fillLogin(shell, USER_NAME, PASSWORD);
+  await expect(shell.locator("#taskbar")).toBeVisible();
+});

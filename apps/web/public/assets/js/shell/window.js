@@ -91,14 +91,18 @@ export class Win {
     const g = el("span", "g", null);
     g.setAttribute("aria-hidden", "true");
     if (icon) fillGlyph(g, icon);
-    bar.append(g, el("span", "t", title));
+    // THE THREE BUTTONS STAND AT THE LEFT, and close is the first of them -
+    // LordOS section 6 of docs/gestaltung-lordos.md, and the one trait that
+    // tells a macOS window apart from every other at a glance. They were on
+    // the right in the order small, big, close. They are also first in the
+    // DOM, so the keyboard reaches them in the order they are seen in.
     const btns = el("div", "wbtns");
-    for (const [cls, label] of [["mini", "Minimieren"], ["maxi", "Maximieren"], ["close", "Schließen"]]) {
+    for (const [cls, label] of [["close", "Schließen"], ["mini", "Minimieren"], ["maxi", "Maximieren"]]) {
       const b = button("wbtn " + cls, cls === "mini" ? "—" : cls === "maxi" ? "▢" : "✕", label);
       b.title = label;
       btns.append(b);
     }
-    bar.append(btns);
+    bar.append(btns, g, el("span", "t", title));
     this.body = el("div", "body");
     this.el.append(bar, this.body);
     for (const dir of ["n", "e", "s", "w", "se", "sw"]) this.el.append(el("div", "rs " + dir));
@@ -132,9 +136,17 @@ export class Win {
       else this.focus();
     });
 
-    btns.children[0].addEventListener("click", (e) => { e.stopPropagation(); this.minimize(); });
-    btns.children[1].addEventListener("click", (e) => { e.stopPropagation(); this.toggleMax(); });
-    btns.children[2].addEventListener("click", (e) => { e.stopPropagation(); this.close(); });
+    // Each button is wired by its CLASS and not by its place in the row. It
+    // was children[0], [1] and [2], and moving the three to the left in the
+    // order of LordOS handed every one of them the wrong job: close
+    // minimized. Measured - "a maximised window offers to come back" went red
+    // with no window left to ask. The place a button stands in is a matter of
+    // looks and may change again; what it DOES must not travel with it.
+    for (const [cls, tun] of [["mini", () => this.minimize()], ["maxi", () => this.toggleMax()],
+                              ["close", () => this.close()]]) {
+      btns.querySelector(".wbtn." + cls)
+        .addEventListener("click", (e) => { e.stopPropagation(); tun(); });
+    }
     this.el.addEventListener("pointerdown", () => this.focus(), true);
     this.makeDraggable(bar);
     this.makeResizable();
