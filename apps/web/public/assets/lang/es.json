@@ -17,6 +17,7 @@
   "setup.password.missing": "Elija una contraseña.",
   "setup.password.different": "Las dos contraseñas no son iguales.",
   "setup.signin": "NGC está configurado. Inicie sesión ahora.",
+  "setup.notready": "Esta instalación todavía no se puede usar. El operador debe finalizar la configuración.",
   "boot.noroute.password": "Este navegador no puede realizar el inicio de sesión con contraseña de NGC: no entrega la parte pública de una clave de contraseña. Usa un Chrome o un Safari actual. Firefox no puede hacerlo actualmente.",
   "boot.noroute.passkeysoff": "En este navegador no es posible iniciar sesión: no puede hacerlo con contraseña y las claves de acceso están desactivadas aquí. Activa las claves de acceso en los ajustes del navegador o usa un Chrome o un Safari actual.",
   "boot.tooold": "Este navegador no puede crear las claves que NGC necesita para iniciar sesión. Usa un Chrome o un Safari actual.",

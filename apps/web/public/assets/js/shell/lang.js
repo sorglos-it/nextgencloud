@@ -110,6 +110,7 @@ export const BUILT_IN = Object.freeze({
   "setup.name.bad": "A login name may hold only lower-case letters, digits and . _ - and must begin with a letter or a digit.",
   "setup.password.missing": "Please choose a password.",
   "setup.password.different": "The two passwords are not the same.",
+  "setup.notready": "This installation is not ready to use yet. Its operator still has to finish the setup.",
   "setup.signin": "NGC is set up. Please sign in now.",
   // The six accent colours of the start menu. They are in here and not only
   // in the files for the reason the comment above gives: without a sentence
