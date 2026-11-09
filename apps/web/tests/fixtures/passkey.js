@@ -119,7 +119,21 @@ export async function putSoftwareAuthenticator(shell, who) {
 
       const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-      navigator.credentials.get = async (options) => {
+      // WebKit: Playwright's build has no WebAuthn at all - navigator
+      // .credentials is undefined there (measured 9.11.2026 on WebKit 27.2,
+      // at 127.0.0.1 AND at localhost, both secure contexts). So on that
+      // engine the one function below is INSTALLED and not replaced, and the
+      // container it sits in is made here. That is the same stand-in in both
+      // cases and it widens nothing: shell/main.js passkeyFits() asks for
+      // exactly this function, and everything on the checking side
+      // (contracts/proof.js over mock/api.js) stays untouched. What stays
+      // unmeasured on WebKit is one line more than elsewhere: that the
+      // ENGINE's own WebAuthn implementation would hand over the same bytes.
+      const credentials = navigator.credentials
+        || Object.defineProperty(navigator, "credentials", {
+             value: {}, configurable: true,
+           }).credentials;
+      credentials.get = async (options) => {
         const pk = options && options.publicKey;
         if (!pk) throw new DOMException("no publicKey request", "NotSupportedError");
         // The shell offers the credential IDs it was given. An authenticator
@@ -191,7 +205,13 @@ export async function putSoftwareAuthenticator(shell, who) {
 // refuses the way a real one does: NotAllowedError, nothing signed.
 export async function putEmptySoftwareAuthenticator(shell) {
   await shell.addInitScript(() => {
-    navigator.credentials.get = async () => {
+    // Installed and not replaced on WebKit; the reason stands at the sibling
+    // above.
+    const credentials = navigator.credentials
+      || Object.defineProperty(navigator, "credentials", {
+           value: {}, configurable: true,
+         }).credentials;
+    credentials.get = async () => {
       throw new DOMException("no credential for this request", "NotAllowedError");
     };
   });

@@ -124,6 +124,28 @@
   // that went nowhere is a command the person thinks they sent.
   input.disabled = true;
   ask.append(sign, input);
+
+  // putCursor puts the cursor in the field, so somebody who never touches a
+  // mouse can type a command and press Enter. It is called twice, once now and
+  // once one animation frame later, and the second call is the one that works
+  // on WebKit.
+  //
+  // WHY TWICE. The shell hands this frame the keyboard and then posts the
+  // app's document into it (shell/appframe.js). On WebKit the focus() made in
+  // the same turn as that fresh document fires no focus event and places no
+  // cursor at all, while the very same call one frame later sticks - MEASURED
+  // 9.11.2026 on WebKit 27.2: document.activeElement inside the frame is
+  // "BODY" right after the app asked for the field and "Eingabe" when it is
+  // asked for later; the focus() calls logged are the same in all three
+  // engines. On Chromium and Firefox the first call already sticks and the
+  // second one changes nothing (both green before and after). So the terminal
+  // had no cursor in Safari - a hole in the app, not in the test - and this is
+  // the smallest thing that closes it without a timer and without a number.
+  //
+  // The disabled check is the app's own rule: there is no cursor before there
+  // is a channel to type into.
+  const putCursor = () => { if (!input.disabled) input.focus(); };
+
   const hint = el("p", "hint", CONNECTING);
   box.append(out, ask, hint);
   document.body.append(box);
@@ -303,7 +325,8 @@
     tellSize();
     input.disabled = false;
     say(READY);
-    input.focus();
+    putCursor();
+    requestAnimationFrame(putCursor);
   }, () => {
     // ngc.open does not reject today - it hands the stream over at once and
     // the shell's refusal arrives as a close. This is here for the day it

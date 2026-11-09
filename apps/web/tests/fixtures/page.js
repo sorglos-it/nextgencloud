@@ -7,9 +7,26 @@ import { USER_NAME, PASSWORD, PKCS8 } from "./logins.js";
 // the protocol, and the dynamic import of /assets/... is script-src 'self'
 // and allowed - nothing here needs the policy switched off. A separate test
 // checks the policy itself (Task 26).
+//
+// dnsName: a case that needs WebAuthn asks for the server under its DNS NAME
+// instead of the suite's IP literal (baseURL), and gets it on the FIRST
+// navigation of the page - never by hopping there later.
+//
+// WHY NOT A HOP. The cases used to start at 127.0.0.1 and move to localhost
+// with a second page.goto. On @playwright/test 1.65.0 that hop kills the page
+// on WebKit: every document of this server carries
+// Cross-Origin-Opener-Policy: same-origin, so a cross-origin navigation away
+// from it asks WebKit for a new process, and playwright-core answers
+// "Error: Assertion error" out of WKPage._onTargetCreated
+// (assert(!this._provisionalPage), lib/coreBundle.js). MEASURED on 9.11.2026
+// with a six-line script and a bare node server: without the COOP header the
+// same hop is green, with it the same hop throws that exact line. So the
+// header is right, the hop is what has to go - and starting at the name needs
+// no hop at all.
 export const test = base.extend({
-  shell: async ({ page }, use) => {
-    await page.goto("/");
+  dnsName: [false, { option: true }],
+  shell: async ({ page, baseURL, dnsName }, use) => {
+    await page.goto(dnsName ? `${baseURL.replace("127.0.0.1", "localhost")}/` : "/");
     await use(page);
   },
 });

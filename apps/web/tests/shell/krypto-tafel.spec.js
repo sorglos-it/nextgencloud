@@ -40,6 +40,16 @@ import { putSoftwareAuthenticator } from "../fixtures/passkey.js";
 // timeout that reads like a missing capability.
 test.describe.configure({ timeout: 180_000 });
 
+// The page stands at the server's DNS NAME from its first navigation on, and
+// not at the suite's IP literal: WebAuthn wants a name, not an address. It
+// used to hop there with a second page.goto, and that hop kills the page on
+// WebKit since @playwright/test 1.65.0 - every document of this server carries
+// Cross-Origin-Opener-Policy: same-origin, so a cross-origin navigation away
+// from it asks WebKit for a new process and playwright-core answers
+// "Error: Assertion error" (WKPage._onTargetCreated). The reason and the
+// measurement stand at the option in fixtures/page.js.
+test.use({ dnsName: true });
+
 // ---- part A: the capability table -----------------------------------------
 
 // Every cell is its own function in the page, with its own key material, and
@@ -435,14 +445,15 @@ test("kommt eine Anmeldung durch - Passwort und Passkey getrennt", async ({ shel
   // for the NEXT document - it has to be set BEFORE the navigation, and the
   // navigation has to be waited out before the mask is read.
   //
-  // At localhost and not 127.0.0.1: WebAuthn wants a name, not an address.
-  const here = new URL(shell.url());
+  // The page already stands at localhost (test.use dnsName above), so the
+  // reload is all that is left of the old move: addInitScript reaches the next
+  // document, and that is what has to be waited out.
   await putSoftwareAuthenticator(shell, PASSKEY_NAME);
-  await shell.goto(`http://localhost:${here.port}/`);
-  // Cleared AFTER the move, because what is cleared is the store of THIS
+  await shell.reload();
+  // Cleared AFTER the reload, because what is cleared is the store of THIS
   // origin: a browser that has never seen this installation.
   await shell.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
-  await shell.goto(`http://localhost:${here.port}/`);
+  await shell.reload();
 
   const atMask = await settled(shell);
   console.log(`ANMELDUNG ${e} | Schirm vor Passkey | ${JSON.stringify(atMask)}`);
@@ -521,10 +532,9 @@ test("traegt der Passkey-Weg ohne die CFRG-Kurven (Weg 1c)", async ({ shell }, i
 
   await withoutCFRG(shell);
   await putSoftwareAuthenticator(shell, PASSKEY_NAME);
-  const here = new URL(shell.url());
-  await shell.goto(`http://localhost:${here.port}/`);
+  await shell.reload();
   await shell.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
-  await shell.goto(`http://localhost:${here.port}/`);
+  await shell.reload();
 
   // THE FIXTURE CHECKS THAT IT WORKED, before anything is read off it: the
   // engine must now look like webkit - no CFRG curves, P-256 intact. A run in
