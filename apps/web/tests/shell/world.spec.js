@@ -1210,6 +1210,17 @@ test.describe("the trust list of the world", () => {
   });
 });
 
+// The mock's test door, for the one case below. shell/login.spec.js has the
+// same four lines; a shared helper for two callers is one file more than this
+// is worth.
+async function tellMock(shell, query) {
+  const ok = await shell.evaluate(async (q) => {
+    const res = await fetch("/api/v1/mock?" + q, { method: "POST", cache: "no-store" });
+    return res.ok;
+  }, query);
+  expect(ok, "the mock took the instruction").toBe(true);
+}
+
 test.describe("the boot", () => {
   test("without the stand-in the shell opens the trust list on the session it just got",
     async ({ shell }) => {
@@ -1222,9 +1233,26 @@ test.describe("the boot", () => {
       // (shell/trustlist.spec.js says why), so the alarm is what has to stand
       // here. THAT is the measurement: with the stand-in there is no alarm at
       // all, because nothing opens a trust list on the real session.
-      await signIn(shell, { standIn: false });
-      await expect(shell.locator("#trustalarm")).toBeVisible();
-      await expect(shell.locator("#trustalarmtext")).toHaveText(ALARM);
-      await expect(shell.locator("#taskbar")).toHaveCount(0);
+      //
+      // AND IT HAS TO BE ASKED FOR NOW. Since mock/seeded.js the mock builds
+      // its keys from seeds that stand in the repository and the anchor is
+      // derived from exactly those (tools/trust-anchor.mjs), so the chain FITS
+      // the anchor and there is no alarm left to see. That fit is a gain of
+      // its own (contracts/anchor.spec.js) and stays; this one case asks the
+      // mock for a version 1 it built with keys of its own instead
+      // (mock/api.js, `ownlist`). It is signed properly, so what refuses it is
+      // the anchor - the measurement is written down at ownChain().
+      await tellMock(shell, "break=ownlist");
+      try {
+        await signIn(shell, { standIn: false });
+        await expect(shell.locator("#trustalarm")).toBeVisible();
+        await expect(shell.locator("#trustalarmtext")).toHaveText(ALARM);
+        await expect(shell.locator("#taskbar")).toHaveCount(0);
+      } finally {
+        // One server answers the whole run, and the switch stays set until it
+        // is cleared: a case that left it on would take the files after it with
+        // it.
+        await tellMock(shell, "break=");
+      }
     });
 });
