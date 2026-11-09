@@ -280,6 +280,14 @@ class Desktop {
     // reader that the shell would then break.
     this.list.setAttribute("role", "menu");
     this.list.setAttribute("aria-label", "Alle Apps");
+    // AND THE BOX ITSELF IS NO TAB STOP. #smlist scrolls, and a scroll
+    // container is reachable with Tab in its own right since Firefox 136
+    // ("focusable scroll containers"). MEASURED on 09.11.2026 with
+    // Playwright's Firefox 159: one Tab out of the search field landed on the
+    // list BOX, not on a tile, so the list was two tab stops and the first of
+    // them answered no key at all. tabIndex = -1 keeps it out of the walk and
+    // still lets moveActive() focus a tile.
+    this.list.tabIndex = -1;
     // A role="menu" is walked with the arrow keys and is ONE stop on the way
     // through with Tab. Round 1 found the shell saying "menu" and doing
     // neither: the arrows did nothing, and every tile was a tab stop of its

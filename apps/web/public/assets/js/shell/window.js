@@ -8,6 +8,31 @@
 import { el, button, text } from "./dom.js";
 import { fillGlyph } from "./icon.js";
 
+// A DRAG WHOSE pointerup NEVER ARRIVED. Both drags below hold the pointer with
+// setPointerCapture, so the moves keep coming when the pointer leaves the
+// handle - and the capture is given back on pointerup. If that pointerup never
+// arrives, the capture is never given back: every later pointerup and click on
+// the page is retargeted to the handle and lost.
+//
+// MEASURED on 09.11.2026, Playwright's Firefox 159: a resize released OUTSIDE
+// the viewport delivers no pointerup at all. The window sat at its smallest
+// size, the close button was visible and on top at its own centre - and the
+// click on it arrived at .rs.se, so the window could not be closed any more.
+// Releasing the button outside the browser window does the same thing to a
+// person.
+//
+// The next PRESS is the one event that is certain to come, so that is where a
+// drag still standing is ended. One listener for both drags, because the fault
+// is the capture and not what either drag does with it.
+let liveDrag = null;
+document.addEventListener("pointerdown", (e) => {
+  const d = liveDrag;
+  if (!d || d.target === e.target || d.target.contains(e.target)) return;
+  liveDrag = null;
+  try { d.target.releasePointerCapture(d.pointerId); } catch { /* already given back */ }
+  d.end(e);
+}, true);
+
 // The smallest a window may get. Below that the title bar's three buttons
 // stop fitting and the window can no longer be closed by clicking.
 //
@@ -21,6 +46,8 @@ import { fillGlyph } from "./icon.js";
 // The fallbacks are what the stylesheet says today. They are reached only if
 // the stylesheet did not load at all, and then the window would be unstyled
 // anyway - a number here is better than NaN.
+
+
 const MIN_FALLBACK = { w: 240, h: 150 };
 let measuredMin = null;
 
@@ -364,6 +391,7 @@ export class Win {
       // Pointer capture keeps the moves coming even when the pointer leaves
       // the title bar - without it a fast drag loses the window.
       try { bar.setPointerCapture(e.pointerId); } catch { /* not every pointer can be captured */ }
+      liveDrag = { target: bar, pointerId: e.pointerId, end };
       e.preventDefault();
     });
 
@@ -418,6 +446,7 @@ export class Win {
     const end = (e) => {
       if (!dragging) return;
       dragging = false;
+      liveDrag = null;
       this.desktop.snapHint.style.display = "none";
       try { bar.releasePointerCapture(e.pointerId); } catch { /* never captured */ }
       if (snap) {
@@ -452,6 +481,7 @@ export class Win {
         ox = this.el.offsetLeft; oy = this.el.offsetTop;
         ow = this.el.offsetWidth; oh = this.el.offsetHeight;
         try { h.setPointerCapture(e.pointerId); } catch { /* not every pointer can be captured */ }
+        liveDrag = { target: h, pointerId: e.pointerId, end };
         e.preventDefault();
         e.stopPropagation();
       });
@@ -483,6 +513,7 @@ export class Win {
       });
       const end = (e) => {
         on = false;
+        liveDrag = null;
         try { h.releasePointerCapture(e.pointerId); } catch { /* never captured */ }
       };
       h.addEventListener("pointerup", end);
