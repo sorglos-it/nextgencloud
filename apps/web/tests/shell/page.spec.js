@@ -1,4 +1,21 @@
+import { readFileSync } from "node:fs";
 import { test, expect } from "@playwright/test";
+
+// The anchor is NOT written out a second time here. It stood in this file as
+// the placeholder q6urq6ur... (0xAB repeated) until this round, while commit
+// e3b4cffb had long since put the anchor derived from the seeds into
+// trust-anchor.json - the same drift PR #164 found in the PHP check
+// (apps/web/tests/php/config-test.php:297). This case has never run in CI, so
+// nobody saw it.
+//
+// Reading the file is the right fix and not the lazy one: what this case is
+// for is that the server HANDS OUT what the file holds. The guard against a
+// WRONG anchor in the file is contracts/anchor.spec.js, which derives it a
+// second time from the seeds and holds it against the file. One number, one
+// place.
+const ANCHOR = JSON.parse(
+  readFileSync(new URL("../trust-anchor.json", import.meta.url), "utf8"),
+);
 
 test("the shell page carries the headers and the anchor", async ({ page }) => {
   const res = await page.goto("/");
@@ -13,7 +30,7 @@ test("the shell page carries the headers and the anchor", async ({ page }) => {
   await expect(page.locator("#root")).toBeAttached();
 
   const cfg = await (await page.request.get("/config.json")).json();
-  expect(cfg.anchor).toEqual({ seq: 1, hash: "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s" });
+  expect(cfg.anchor).toEqual(ANCHOR);
   expect(cfg.rp.id).toBe("ngc.example.org");
   expect(cfg.apis).toEqual(["https://api-1.ngc.test:7443", "https://api-2.ngc.test:7443"]);
 });

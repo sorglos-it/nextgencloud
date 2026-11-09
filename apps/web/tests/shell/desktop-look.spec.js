@@ -40,7 +40,17 @@ test("the accent colour is the one the focus ring and the Start button use", asy
   await shell.getByRole("button", { name: "Start" }).click();
   await shell.getByRole("button", { name: "Farbe Grün", exact: true }).click();
   await shell.keyboard.press("Escape");
+  // THE RING IS DRAWN BY :focus-visible, so the focus has to come from the
+  // KEYBOARD. .focus() out of script does not match it in every engine:
+  // MEASURED on 09.11.2026 with Playwright's Firefox 159, which carries the
+  // last gesture - the swatch click above - over to a programmatic focus and
+  // so draws no ring at all (outline-color answered the text colour,
+  // rgb(29, 29, 31)). Tab asks the question the person asks, and the Start
+  // button is the first thing Tab reaches (shell/desktop-keyboard.spec.js).
   await shell.getByRole("button", { name: "Start" }).focus();
+  await shell.keyboard.press("Shift+Tab");
+  await shell.keyboard.press("Tab");
+  await expect(shell.getByRole("button", { name: "Start" })).toBeFocused();
   const ring = await shell.evaluate(() => getComputedStyle(document.activeElement).outlineColor);
   // #22c55e
   expect(ring).toBe("rgb(34, 197, 94)");

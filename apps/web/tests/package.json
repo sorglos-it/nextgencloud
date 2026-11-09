@@ -7,6 +7,6 @@
     "install-browsers": "playwright install --with-deps chromium firefox webkit"
   },
   "devDependencies": {
-    "@playwright/test": "1.55.1"
+    "@playwright/test": "1.65.0"
   }
 }

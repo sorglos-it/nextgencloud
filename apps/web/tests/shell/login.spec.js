@@ -136,11 +136,20 @@ async function press(shell, button) {
   await attemptOver(shell);
 }
 
-// atLocalhost moves the page to the same server under its DNS name, which is
-// what WebAuthn needs (see the note at the top), and hands back the page.
+// atLocalhost checks that the page really stands on the same server under its
+// DNS name, which is what WebAuthn needs (see the note at the top). The page
+// is put there by the fixture option dnsName (fixtures/page.js), on its FIRST
+// navigation - this used to move it with a second page.goto, and that hop
+// kills the page on WebKit since @playwright/test 1.65.0. The reason stands at
+// the option.
 async function atLocalhost(shell) {
-  const here = new URL(shell.url());
-  await shell.goto(`http://localhost:${here.port}/`);
+  expect(new URL(shell.url()).hostname, "the page stands at the DNS name").toBe("localhost");
+  // The reload is what the hop used to do on the side, and the authenticator
+  // needs it: addInitScript reaches the NEXT document, and the mask the
+  // fixture already drew was built before it. shell/main.js passkeyFits()
+  // decides on the passkey button at boot, so without this the button is
+  // simply not there (measured: three red cases waiting for it, 9.11.2026).
+  await shell.reload();
   await expect(shell.getByLabel("Benutzername")).toBeVisible();
 }
 
@@ -315,6 +324,10 @@ const AUTHENTICATORS = [
   },
 ];
 
+// The passkey cases live at the DNS name from their first navigation on.
+test.describe("at the DNS name", () => {
+test.use({ dnsName: true });
+
 for (const a of AUTHENTICATORS) {
   test(`a passkey signs the certificate, on a browser that has never been here, with ${a.what}`,
     async ({ shell }) => {
@@ -398,6 +411,8 @@ for (const a of AUTHENTICATORS) {
     await done();
   });
 }
+
+}); // at the DNS name
 
 test("a password login is told to switch to passkeys", async ({ shell }) => {
   await skipWithoutLogin(shell);

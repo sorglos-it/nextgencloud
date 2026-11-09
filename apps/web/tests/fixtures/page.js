@@ -7,9 +7,26 @@ import { USER_NAME, PASSWORD, PKCS8 } from "./logins.js";
 // the protocol, and the dynamic import of /assets/... is script-src 'self'
 // and allowed - nothing here needs the policy switched off. A separate test
 // checks the policy itself (Task 26).
+//
+// dnsName: a case that needs WebAuthn asks for the server under its DNS NAME
+// instead of the suite's IP literal (baseURL), and gets it on the FIRST
+// navigation of the page - never by hopping there later.
+//
+// WHY NOT A HOP. The cases used to start at 127.0.0.1 and move to localhost
+// with a second page.goto. On @playwright/test 1.65.0 that hop kills the page
+// on WebKit: every document of this server carries
+// Cross-Origin-Opener-Policy: same-origin, so a cross-origin navigation away
+// from it asks WebKit for a new process, and playwright-core answers
+// "Error: Assertion error" out of WKPage._onTargetCreated
+// (assert(!this._provisionalPage), lib/coreBundle.js). MEASURED on 9.11.2026
+// with a six-line script and a bare node server: without the COOP header the
+// same hop is green, with it the same hop throws that exact line. So the
+// header is right, the hop is what has to go - and starting at the name needs
+// no hop at all.
 export const test = base.extend({
-  shell: async ({ page }, use) => {
-    await page.goto("/");
+  dnsName: [false, { option: true }],
+  shell: async ({ page, baseURL, dnsName }, use) => {
+    await page.goto(dnsName ? `${baseURL.replace("127.0.0.1", "localhost")}/` : "/");
     await use(page);
   },
 });
@@ -185,11 +202,13 @@ export async function sessionKeyGaps(shell) {
       return "";
     };
 
-    // shell/main.js browserFits(): THESE TWO CALLS AND NOTHING ELSE. It is the
-    // only gate between a page load and the mask, so for the one question "does
-    // the shell come up" these two calls really are the whole action - the only
-    // place in this file where generateKey alone is an honest answer. Every
-    // other question below builds on it and asks for more.
+    // shell/main.js browserFits(), AND IT ASKS WHAT THAT GATE ASKS. It used to
+    // be the two generateKey calls and nothing else, mirroring a gate that
+    // stopped there - and on Playwright's WebKit on Linux both calls are taken
+    // while deriveBits answers no, so this probe said "the shell comes up"
+    // about an engine that can open no session (run 42215156995). The gate now
+    // uses both curves; so does this. Every other question below builds on it
+    // and asks for more.
     let signing = null, own = null, peer = null;
     const curves = await walk([
       ["Ed25519 generateKey", async () => {
@@ -200,6 +219,20 @@ export async function sessionKeyGaps(shell) {
         own = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
         peer = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
         return !!(own && own.privateKey && peer && peer.publicKey);
+      }],
+      // The step the gate stopped short of, and the two sides have to AGREE:
+      // a bent deriveBits hands out two different secrets and a length check
+      // alone would take it.
+      ["Ed25519 sign and check, the gate's own", async () => {
+        const sig = await crypto.subtle.sign({ name: "Ed25519" }, signing.privateKey, message);
+        return (await crypto.subtle.verify({ name: "Ed25519" }, signing.publicKey, sig, message)) === true;
+      }],
+      ["X25519 deriveBits", async () => {
+        const mine = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: peer.publicKey }, own.privateKey, 256));
+        const theirs = new Uint8Array(await crypto.subtle.deriveBits(
+          { name: "X25519", public: own.publicKey }, peer.privateKey, 256));
+        return mine.length === 32 && theirs.length === 32 && mine.every((b, i) => b === theirs[i]);
       }],
     ]);
 
@@ -455,6 +488,24 @@ export async function handshakeGap(shell) {
 export async function fixedKeyGap(shell) {
   const g = await sessionKeyGaps(shell);
   return g.x25519 || g.x25519FromDocument;
+}
+
+// CAN THIS ENGINE BE ASKED FOR A PASSKEY AT ALL - the question shell/main.js
+// passkeyFits() asks, and the one three cases assumed instead of measuring.
+//
+// MEASURED (run 42215156995, Playwright's WebKit on Linux): navigator.credentials
+// is undefined there, so shell/main.js takes hasParty && !canAsk and draws
+// boot.noroute.passkeysoff - NOT boot.noroute.password and NOT the mask with the
+// passkey button. Three cases held up the third ending on an engine that can
+// only reach the fourth, and read their own wrong door as a product fault.
+//
+// It asks for the CALL the path makes (navigator.credentials.get), not for
+// window.PublicKeyCredential: on WebKit the second one is an object while the
+// first is undefined, so a gate on PublicKeyCredential would say yes and be
+// wrong. Same reason as passkeyFits itself.
+export async function passkeyAskGap(shell) {
+  const ok = await shell.evaluate(() => typeof navigator?.credentials?.get === "function");
+  return ok ? "" : "navigator.credentials.get is not a function in this engine";
 }
 
 // ---- the skips -----------------------------------------------------------

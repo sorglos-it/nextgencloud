@@ -231,3 +231,105 @@ jobs:
           FUZZTIME: ${{ github.event.inputs.fuzztime || '5' }}
           SHARD: ${{ matrix.shard }}
         run: bash tools/ci-fuzz.sh
+
+  # ---------------------------------------------------------------- web
+  # The Playwright suite ran in NO step of this file until 3.11.2026, and that
+  # was measured, not assumed: neither "playwright" nor "web/tests" appeared
+  # anywhere here, and tools/check.sh runs only the two node/php one-liners.
+  # So every green number for the web shell came from a run somebody started by
+  # hand on the Windows machine. This job is the other half for the browser.
+  #
+  # All three engines run, and the numbers are reported PER ENGINE, because a
+  # single total hides what the strand measured on 3.11.2026: on webkit 1 of 22
+  # cases of the login suite actually runs and 21 switch themselves off, so a
+  # total of "22 passed, 0 failed" would read as three engines when it is one.
+  # The skips are legitimate (Playwright's firefox cannot build an Ed25519
+  # public half out of a PKCS#8 seed, its webkit cannot generateKey at all) -
+  # but they are skips, and a skipped case is not a case that ran.
+  #
+  # The floor is what keeps a silently empty run from passing: playwright, like
+  # go test, exits 0 for a run in which everything switched itself off.
+  web:
+    # One job per engine, and the reason is measured: all three in one job ran
+    # 25 minutes into the timeout without reaching the counter (run
+    # 41703511513, 3.11.2026 - php 8.3.6 and all three browsers installed
+    # fine, the suite itself did not finish). Sharded, each engine also
+    # reports its own numbers under its own name, which is what this job is
+    # for: a single total hides which engine carried it.
+    name: web shell (${{ matrix.engine }})
+    runs-on: ubuntu-24.04
+    # 20 minutes, and the number is measured, not chosen: a full suite per
+    # engine on the Windows machine takes 542 s (chromium), 469 s (firefox),
+    # 561 s (webkit) at a7d7b384 - 1572 s together, which is also why all
+    # three in one job died 1.2 minutes past a 25-minute limit (run
+    # 41703511513): the suite was not hanging, it was nearly done. The longest
+    # engine is 561 s, so this is a factor of 2.1 over the slowest measured
+    # shard, on a machine that is not this runner.
+    #
+    # 30 since 7.11.2026, and the number moved because the measurement did:
+    # playwright.config.js retries a failed case twice on CI, and the retries
+    # are paid for in this same job. Firefox needed 11.0 min with 23 red at run
+    # 42368451560, so retrying those puts roughly four minutes on top.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: php und node-pakete
+        run: |
+          php -v
+          npm ci
+        working-directory: apps/web/tests
+      - name: browser holen
+        # Only the engine of this shard, not all three: the other two would be
+        # downloaded and never started.
+        run: npx playwright install --with-deps ${{ matrix.engine }}
+        working-directory: apps/web/tests
+      - name: laufen
+        env:
+          # A port of its own PER SHARD, as the config asks for: the three
+          # shards are three runners today, but a run that finds a server
+          # already answering measures another working tree, and that is
+          # exactly the trap the config was written against. 8161/8171/8181
+          # keep them apart whatever the runner does.
+          NGC_WEB_TEST_PORT: ${{ matrix.engine == 'chromium' && '8161' || matrix.engine == 'firefox' && '8171' || '8181' }}
+          # The reporter writes to a FILE, not to stdout. Measured in run
+          # 41716631146: all three shards died at the counter with
+          # "Unexpected token 'G', \"GitCommitI\"..." - playwright prints its
+          # own git-commit-info line to stdout before the JSON, so a plain
+          # redirect produces a file that is not JSON. The counter caught it
+          # because an unreadable report is red there; a counter that only
+          # looked for failures would have found none and said nothing.
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/web.json
+        run: npx playwright test --project=${{ matrix.engine }} --reporter=json || true
+        working-directory: apps/web/tests
+      - name: zaehlen
+        # No number yet ON PURPOSE. A floor is a measured value, and the real
+        # per-engine counts of this suite on Linux have never been read - the
+        # suite has only ever run on the Windows machine. Until the first run
+        # here prints them, the only bar is "not a single case ran", which
+        # needs no number to be wrong. The number goes in afterwards, with the
+        # run it came from named beside it.
+        run: node tools/ci-count-web.mjs "${{ runner.temp }}/web.json"
+      - name: spuren hochladen
+        # The traces are made (playwright.config.js, trace:
+        # "retain-on-failure") and were thrown away with the runner. Two webkit
+        # cases fail reproducibly with "Target page, context or browser has
+        # been closed" on their FIRST page.evaluate, and the log holds no crash
+        # line, no timeout and no timing: when a trace is the only record of
+        # what the page last did, keeping it is the difference between a cause
+        # and a guess. if: failure() only, so a green run uploads nothing.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-spuren-${{ matrix.engine }}
+          path: apps/web/tests/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

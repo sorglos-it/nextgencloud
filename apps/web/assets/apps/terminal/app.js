@@ -124,6 +124,52 @@
   // that went nowhere is a command the person thinks they sent.
   input.disabled = true;
   ask.append(sign, input);
+
+  // putCursor puts the cursor in the field, so somebody who never touches a
+  // mouse can type a command and press Enter. It ASKS AND THEN LOOKS, and asks
+  // again next frame when the cursor did not arrive.
+  //
+  // WHY IT HAS TO LOOK, measured and not guessed. The shell hands this frame
+  // the keyboard and then posts the app's document into it
+  // (shell/appframe.js), and a focus() made before the browser has really
+  // given the frame the keyboard is refused OUTRIGHT. On WebKit 27.2, 9.11.2026,
+  // Linux and Windows alike: for 100 to 600 ms after the document was written
+  // nothing in this document can be focused - not this field, and not a
+  // freshly made input of its own either, so it is the frame being refused and
+  // not the field - and when it ends, nothing fires. Probed and empty: window
+  // focus/blur/pageshow, document and body focus/focusin, visibilitychange,
+  // and the focus event of the frame element in the shell's own document.
+  // There is no event to wait for.
+  //
+  // So what stood here - one call, plus one more an animation frame later -
+  // was a guess at a moment, and on the WebKit of the suite it guessed wrong
+  // every single time: 10 runs, 10 red. Logged on the fixed version, the
+  // cursor arrives on the second to sixth frame, which is why no fixed number
+  // of frames is the answer.
+  //
+  // THIS IS NOT A RACE, because it ends on a condition and not on a moment: it
+  // stops when the cursor IS in the field, and it stops asking the moment
+  // anything else holds it - so it cannot give up early, and it cannot take
+  // the field away from a button the person pressed. Nowhere is the body, the
+  // root element or nothing at all, and which of the three it is differs
+  // between engines, so all three count as nowhere.
+  //
+  // shortcut: a window that is never given the keyboard goes on asking once a
+  // frame for as long as it stands open - one refused focus() a frame. If that
+  // ever matters, the shell would have to say when a frame has the keyboard,
+  // and today it has no event of its own to say it from.
+  //
+  // The disabled check is the app's own rule: there is no cursor before there
+  // is a channel to type into.
+  const putCursor = () => {
+    if (input.disabled) return;
+    const a = document.activeElement;
+    if (a === input) return;
+    if (a !== null && a !== document.body && a !== document.documentElement) return;
+    input.focus();
+    requestAnimationFrame(putCursor);
+  };
+
   const hint = el("p", "hint", CONNECTING);
   box.append(out, ask, hint);
   document.body.append(box);
@@ -303,7 +349,7 @@
     tellSize();
     input.disabled = false;
     say(READY);
-    input.focus();
+    putCursor();
   }, () => {
     // ngc.open does not reject today - it hands the stream over at once and
     // the shell's refusal arrives as a close. This is here for the day it

@@ -931,6 +931,12 @@ export async function startMockAPI({ world, port, phpPort }) {
   //   nochain  - the trust chain is there and EMPTY (204, which is what this
   //              path answers for a version nobody has): auth/login.js:101,
   //              "login: no trust list".
+  //   ownlist  - the trust chain carries a version 1 this mock built with keys
+  //              of its own and signed PROPERLY. Its bytes are not the bytes
+  //              the test server's anchor is of, so trust.open answers
+  //              "trust: does not match the anchor" and the shell draws the
+  //              trust alarm. ownChain below carries the measurement that says
+  //              why a different signer alone would not do it.
   //
   // AFTER A SETUP `badlist` IS OUT OF ORDER, said rather than hidden: a setup
   // that goes through makes the version the ADMIN signed this world's chain
@@ -938,15 +944,71 @@ export async function startMockAPI({ world, port, phpPort }) {
   // notices, because the stand-in auth/login.js:99-104 parses the version and
   // follows no signature; after PR 164 it would. The cases below run no setup.
   let breakAt = "";
-  const BREAKS = ["badsig", "badlist", "nochain"];
-  // The key that is NOT in the trust list, for badsig. Built once and on
-  // demand, so a run that never asks for it pays nothing.
+  const BREAKS = ["badsig", "badlist", "nochain", "ownlist"];
+  // The key of this mock's own, for badsig and for ownlist. Built once and on
+  // demand, so a run that never asks for it pays nothing. EXTRACTABLE, because
+  // ownlist below has to put the public half INTO a list; that changes nothing
+  // about a signature, and badsig goes on measuring the same thing.
   let strangeKey = null;
-  async function strangeSigner() {
+  async function strangeKeys() {
     if (strangeKey === null) {
-      strangeKey = await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
+      const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+      strangeKey = {
+        priv: pair.privateKey,
+        pub: new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)),
+      };
     }
-    return strangeKey.privateKey;
+    return strangeKey;
+  }
+  async function strangeSigner() {
+    return (await strangeKeys()).priv;
+  }
+
+  // ownChain writes a version 1 this mock built WITH KEYS OF ITS OWN and
+  // signed properly. It is for the one case that has to see the anchor refuse
+  // a chain over a real login (shell/world.spec.js, "without the stand-in").
+  //
+  // WHY THE SIGNER ALONE IS NOT ENOUGH, measured in node on 09.11.2026 with
+  // the mock world and contracts/trust.js:
+  //
+  //   hash of the served version 1      277aabe3...3144  (= trust-anchor.json)
+  //   same payload, signed by a strange key  277aabe3...3144  - UNCHANGED
+  //   version 1 with this key in the list    moved, and to a DIFFERENT place
+  //                                          every run: 7de60cf9...f963 here,
+  //                                          7961e57d...7582 when this was
+  //                                          measured again on a second
+  //                                          machine. The key comes out of
+  //                                          generateKey, so no value of it is
+  //                                          reproducible - that it moves is.
+  //
+  // trust.hash digests the PAYLOAD and nothing of the proof (trust.js:263), so
+  // a bare change of signer does not move the anchor at all - it draws
+  // "trust: unknown signer" instead, which is a fault of the signature and not
+  // of the anchor. Putting the key into the list is what moves the bytes. The
+  // same measurement, against an anchor DERIVED from this version, opens
+  // cleanly: so what the case sees is the anchor refusing, not a bad signature.
+  async function ownChain() {
+    const key = await strangeKeys();
+    const mine = await trust.parseList(trust.encodeList(w.list));
+    // An admin OF THIS VERSION has to have signed it (trust.open), so the key
+    // takes the place of an admin's password key rather than standing beside
+    // the list.
+    const admin = mine.users.find((u) => u.roles.includes(trust.ROLE_ADMIN)
+      && u.keys[0].kind === proof.KIND_PASSWORD);
+    admin.keys[0].pub = key.pub;
+    admin.keys[0].id = await sign.keyID(key.pub);
+    const payload = trust.encodeList(mine);
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" },
+      key.priv, sign.message(sign.PURPOSE_TRUST_LIST, payload)));
+    return utf8(JSON.stringify({
+      versions: [{
+        payload: b64encode(payload),
+        proof: {
+          kind: proof.KIND_PASSWORD, kid: await sign.keyID(key.pub),
+          sig: b64encode(sig), authData: "", clientData: "",
+        },
+      }],
+    }));
   }
 
   // brokenChain writes a chain whose one version is signed with the key that
@@ -1340,6 +1402,7 @@ export async function startMockAPI({ world, port, phpPort }) {
       // instead of failing the request.
       if (breakAt === "nochain") { res.writeHead(204, { "Cache-Control": "no-store" }); res.end(); return; }
       if (breakAt === "badlist") { sendJSON(res, 200, await brokenChain()); return; }
+      if (breakAt === "ownlist") { sendJSON(res, 200, await ownChain()); return; }
       sendJSON(res, 200, w.chainBytes);
       return;
     }
