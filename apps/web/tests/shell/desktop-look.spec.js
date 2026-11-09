@@ -548,3 +548,91 @@ test("each window button does its own job, whatever place it stands in", async (
   await win.getByRole("button", { name: "Schließen" }).click();
   await expect(shell.locator(".win")).toHaveCount(0);
 });
+
+// THE FIXED STEPS of section 5 of docs/gestaltung-lordos.md. They were 38
+// loose numbers in shell.css and one token, so the same 13 stood written out
+// ten times and no step could be moved without hunting for every place that
+// happened to agree with it.
+//
+// What this measures is the promise that makes them steps at all: the density
+// moves the BODY and leaves them alone. A step wired to --fs by mistake would
+// travel with the density, which is what this case would catch - it reads the
+// DRAWN values, not the stylesheet.
+test("the font steps are fixed and the density moves only the body", async ({ shell }) => {
+  const stufen = () => shell.evaluate(() => {
+    const c = getComputedStyle(document.documentElement);
+    const lies = (n) => c.getPropertyValue(n).trim();
+    return {
+      body: getComputedStyle(document.body).fontSize,
+      caption: lies("--fs-caption"), callout: lies("--fs-callout"),
+      chrome: lies("--fs-chrome"), headline: lies("--fs-headline"),
+      title: lies("--fs-title"),
+    };
+  });
+  const fest = { caption: "11px", callout: "12px", chrome: "13px", headline: "15px", title: "17px" };
+
+  expect(await stufen()).toEqual({ body: "14px", ...fest });
+
+  await shell.getByRole("button", { name: "Start" }).click();
+  await shell.getByRole("button", { name: "Eng", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "eng");
+  expect(await stufen()).toEqual({ body: "12.5px", ...fest });
+
+  await shell.getByRole("button", { name: "Luftig", exact: true }).click();
+  await expect(shell.locator("html")).toHaveAttribute("data-density", "luftig");
+  expect(await stufen()).toEqual({ body: "15.5px", ...fest });
+
+  // And the steps are actually WORN: the band is the shell's own chrome, one
+  // step under the text of a window on purpose. A token nobody reads would
+  // pass every check above and change nothing on the screen.
+  await shell.getByRole("button", { name: "Start" }).click();
+  expect(await shell.locator("#taskbar").evaluate((e) => getComputedStyle(e).fontSize)).toBe("13px");
+});
+
+test("the font travels with NGC instead of coming from the machine", async ({ shell }) => {
+  // WHAT THIS CASE IS FOR. The sizes above are fixed now, but a size only
+  // means something together with the shape it is measured in: 13px of Segoe
+  // UI, of Roboto and of San Francisco are three different widths, so one
+  // design was three pictures depending on the machine. Inter lies in the
+  // repository (assets/vendor/inter/, OFL 1.1) and is asked for FIRST.
+  //
+  // The last two numbers are the whole point and the reason this is not a
+  // source-code reading. A declared @font-face whose FILE never arrives fails
+  // silently: the browser drops to the next family and everything still
+  // looks fine. So the same string is measured twice, once with Inter in
+  // front of the stack and once with the old stack alone. If the file did not
+  // arrive, both spans are set in the same fallback and the two widths are
+  // EQUAL - which is the failure, and nothing else here would have shown it.
+  const gemessen = await shell.evaluate(async () => {
+    await document.fonts.ready;
+    const breite = (familie) => {
+      const s = document.createElement("span");
+      s.textContent = "Fenster Rechner Einstellungen 0123";
+      s.style.cssText = "position:absolute;left:-9999px;white-space:pre;font-size:40px;" +
+                        "font-family:" + familie;
+      document.body.append(s);
+      const w = s.getBoundingClientRect().width;
+      s.remove();
+      return w;
+    };
+    const alt = '"Segoe UI",system-ui,Roboto,sans-serif';
+    return {
+      erste: getComputedStyle(document.body).fontFamily.split(",")[0].replace(/["']/g, ""),
+      faces: [...document.fonts].filter((f) => f.family === "Inter")
+        .map((f) => ({ weight: f.weight, style: f.style, status: f.status })),
+      nutzbar: document.fonts.check("16px Inter"),
+      mitInter: breite('"Inter",' + alt),
+      ohneInter: breite(alt),
+    };
+  });
+
+  expect(gemessen.erste, "the stack asks for Inter first").toBe("Inter");
+  // ONE face and one only: Inter is a variable font, so 100-900 is the axis it
+  // really carries and the four weights this sheet asks for (400, 500, 600,
+  // 700) come out of that one file. A second face here would mean somebody
+  // added a static cut nobody needs.
+  expect(gemessen.faces).toEqual([{ weight: "100 900", style: "normal", status: "loaded" }]);
+  expect(gemessen.nutzbar, "the browser can really set text in it").toBe(true);
+  expect(gemessen.mitInter, "the file arrived, so the shape changed")
+    .not.toBe(gemessen.ohneInter);
+});

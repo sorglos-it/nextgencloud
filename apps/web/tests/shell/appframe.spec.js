@@ -205,3 +205,93 @@ test("an app reaches its own service through ngc.js", async ({ shell }) => {
   // what a terminal is; before it, the fixture app asked one question.
   await expect(frame.locator(".out")).toContainText("cp: missing destination");
 });
+
+// ------------------------------------------------- the shell's colours
+//
+// WHAT THIS MEASURES AND WHY IT IS THREE CASES. The shell hands an app eight
+// colour marks (shell/appframe.js, APP_COLORS). Each case is one thing that
+// can be wrong with that, and none of them can stand in for another:
+//
+//   1. they arrive at all, and they are the shell's own values;
+//   2. a value that is no colour is DROPPED, so the check is really there and
+//      really this strict - this is the case that would have been green before
+//      30.10.2026 against a shell that checked nothing;
+//   3. they follow a change of design while the window is open, which is the
+//      part that lives in frame-boot.js and in nothing else.
+const MARKS = [
+  "--accent", "--win-bg", "--win-fg", "--win-border",
+  "--title-bg", "--field-bg", "--muted", "--alarm",
+];
+
+// marksOf reads the eight computed values off whichever document it is given.
+// Computed and not declared: what is asked is what the browser paints with,
+// which is the only thing that settles who won the cascade.
+function marksOf(where) {
+  return where.locator("html").evaluate((root, names) => {
+    const s = getComputedStyle(root);
+    const out = {};
+    for (const n of names) out[n] = s.getPropertyValue(n).trim();
+    return out;
+  }, MARKS);
+}
+
+test("the shell's colours are in the app, and they are the shell's own", async ({ shell }) => {
+  await openTerminal(shell);
+  const frame = shell.frameLocator(".appframe");
+  await expect(frame.getByRole("textbox", { name: "Eingabe" })).toBeVisible();
+
+  const mine = await marksOf(shell);
+  const theirs = await marksOf(frame);
+  // Every one of the eight, and the same value on both sides. The app's own
+  // stylesheet declares these marks too, so a green line here is also the
+  // answer to "whose declaration won".
+  expect(theirs).toEqual(mine);
+  // And they really are colours, not an empty string on both sides - which
+  // would make the line above true and say nothing.
+  for (const m of MARKS) expect(mine[m]).toMatch(/^#[0-9a-f]{6}$/);
+});
+
+test("a value that is no colour does not reach the app", async ({ shell }) => {
+  // "red" is a colour to CSS and passes setProperty, and it is NOT #rrggbb.
+  // That is exactly the gap the old pattern left open in every app.
+  await shell.evaluate(() => {
+    document.documentElement.style.setProperty("--accent", "red");
+  });
+  await openTerminal(shell);
+  const frame = shell.frameLocator(".appframe");
+  await expect(frame.getByRole("textbox", { name: "Eingabe" })).toBeVisible();
+
+  const theirs = await marksOf(frame);
+  // Not the word, and not empty either: the app keeps the fallback out of its
+  // own stylesheet. A colour that is wrong by a shade, rather than a value
+  // nobody checked.
+  expect(theirs["--accent"]).not.toBe("red");
+  expect(theirs["--accent"]).toMatch(/^#[0-9a-f]{6}$/);
+  // The other seven are untouched by this, so they still come from the shell.
+  const mine = await marksOf(shell);
+  for (const m of MARKS) {
+    if (m !== "--accent") expect(theirs[m]).toBe(mine[m]);
+  }
+});
+
+test("the colours in the app follow a change of design", async ({ shell }) => {
+  await openTerminal(shell);
+  const frame = shell.frameLocator(".appframe");
+  await expect(frame.getByRole("textbox", { name: "Eingabe" })).toBeVisible();
+  const before = await marksOf(frame);
+
+  await shell.locator("#themebtn").click();
+  // The shell itself changed; what is waited for is the APP catching up, which
+  // is the message and frame-boot.js and not this click.
+  await expect
+    .poll(async () => (await marksOf(frame))["--win-bg"])
+    .not.toBe(before["--win-bg"]);
+
+  const mine = await marksOf(shell);
+  const theirs = await marksOf(frame);
+  expect(theirs).toEqual(mine);
+  // The window stayed the window it was: the app was not reloaded and not
+  // replaced, which is the thing that would make the line above true for the
+  // wrong reason.
+  await expect(frame.getByRole("textbox", { name: "Eingabe" })).toBeVisible();
+});

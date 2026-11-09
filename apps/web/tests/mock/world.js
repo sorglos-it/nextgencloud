@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { b64decode, b64encode, utf8 } from "../../public/assets/js/contracts/b64.js";
 import * as trust from "../../public/assets/js/contracts/trust.js";
+import { SEED, ed25519FromSeed, x25519FromSeed } from "./seeded.js";
 import * as sign from "../../public/assets/js/contracts/sign.js";
 import * as proof from "../../public/assets/js/contracts/proof.js";
 import * as core from "../../public/assets/js/contracts/core.js";
@@ -145,10 +146,16 @@ export async function buildWorld() {
   // is a list the shell's own parser accepts.
   const list = await trust.parseList(b64decode(genesis.chain[0].payload));
 
-  const apiSign = await ed25519();
-  const apiNoise = await x25519();
-  const ctlNoise = await x25519();
-  const listSigner = await ed25519();
+  // FROM SEEDS AND NOT FROM generateKey, and this is the whole reason the
+  // anchor check could never be exercised: every run used to build fresh
+  // random keys, so version 1 carried different bytes each time and its hash
+  // with them. A fixed anchor file therefore COULD NOT match -- which is why
+  // apps/web/tests/trust-anchor.json held a filler pattern and why the cases
+  // had to bypass the anchor with standInOn. mock/seeded.js says the rest.
+  const apiSign = await ed25519FromSeed(SEED.apiSign1);
+  const apiNoise = await x25519FromSeed(SEED.apiNoise1);
+  const ctlNoise = await x25519FromSeed(SEED.ctlNoise);
+  const listSigner = await ed25519FromSeed(SEED.listV1);
 
   const seed = seedOf(PASSWORD, KDF);
   const userPub = await proof.publicFromSeed(seed);
@@ -196,17 +203,75 @@ export async function buildWorld() {
   // follows the chain from the anchor (that is task 20). What it does buy is
   // that session.parseTrustChain and proof.validateProof read it as the
   // document they will read in operation.
-  const listSig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" },
-    listSigner.priv, sign.message(sign.PURPOSE_TRUST_LIST, payload)));
-  const chain = utf8(JSON.stringify({
-    versions: [{
-      payload: b64encode(payload),
-      proof: {
-        kind: proof.KIND_PASSWORD, kid: await sign.keyID(listSigner.pub),
-        sig: b64encode(listSig), authData: "", clientData: "",
-      },
-    }],
-  }));
+  // SIGNED BY AN ADMIN OF THE LIST, and not by a key of its own. Version 1 of
+  // a chain signs itself, and contracts/trust.js open() lets only an admin OF
+  // THAT VERSION have signed it. The world used to sign with a fresh key that
+  // stood in no version, so version 1 could not be opened against an anchor at
+  // all -- which is the other half of why the cases had to bypass the anchor
+  // check. anna is ROLE_ADMIN and her password key is in the list, so she is
+  // who signs here.
+  //
+  // THROUGH proof.privateFromSeed AND NOT THROUGH A SECOND IMPORT OF THE SAME
+  // SEED. The public key in the list comes out of proof.publicFromSeed(seed)
+  // above, so the private half comes out of the same function rather than out
+  // of a second, hand-rolled PKCS#8 wrapper in the mock -- a number in a mock
+  // that mirrors a number of the contract comes from the same source as the
+  // real one.
+  //
+  // Measured on 03.11.2026, and said here because the wrong cause was written
+  // down first: the hand-rolled import produced the SAME key and a VALID
+  // signature. It was not the reason version 1 would not open against the
+  // anchor. That reason was in the test, not here -- trust.open wants a chain
+  // whose proofs have been through session.parseTrustChain, where sig is bytes,
+  // and the case handed it the base64 text straight out of the JSON.
+  // contracts/trustchain.spec.js carries the rest of it.
+  const annaPriv = await proof.privateFromSeed(seed);
+  const annaKid = await sign.keyID(userPub);
+  const signWith = async (bytes) => ({
+    kind: proof.KIND_PASSWORD, kid: annaKid,
+    sig: b64encode(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" },
+      annaPriv, sign.message(sign.PURPOSE_TRUST_LIST, bytes)))),
+    authData: "", clientData: "",
+  });
+
+  const v1 = { payload: b64encode(payload), proof: await signWith(payload) };
+
+  // VERSION 2 EXISTS SO THAT A LIST THAT GROWS CAN BE MEASURED AT ALL. Until
+  // this round the mock served ONE version, so the property this whole repair
+  // is about -- a list that grows, and a node that is only in a later version
+  // -- was never present in the test world. A mock without growth cannot show
+  // a fault that comes from growth.
+  //
+  // api-2 is added here and in no earlier version. A shell that pins version 1
+  // does not know it; one that follows the chain to its newest version does.
+  const grown = await trust.parseList(payload);
+  grown.seq = 2;
+  // The BYTES of version 1, not its base64 form: trust.hash holds the payload
+  // against enc.Bytes, and a string there is no payload. Cost me one run.
+  grown.prev = await trust.hash({ payload, proof: v1.proof });
+  const api2Sign = await ed25519FromSeed(SEED.apiSign2);
+  const api2Noise = await x25519FromSeed(SEED.apiNoise2);
+  // Sorted by id, as the list demands of nodes: api-2 sorts after api-1.
+  // Every field encodeNode reads, and not only the interesting ones: it asks
+  // for name, url, tls, rootUsers and rootRoles as well, and an object that
+  // leaves one of them out makes encodeList throw "cannot encode this list"
+  // without saying which field it was. Cost me a run.
+  // Every field validAPINode asks for, and two of them are not optional for an
+  // API node: a real tunnel URL (validTunnelURL) and a 32-byte TLS pin. An
+  // empty url and an empty tls make parseList answer "trust: invalid list"
+  // without naming the field -- it cost me two runs and a probe in the page to
+  // find, so it is written down here.
+  grown.nodes = [...grown.nodes, {
+    kind: trust.NODE_API, id: "api-2", name: "api-2",
+    sign: api2Sign.pub, noise: api2Noise.pub,
+    url: "wss://api-2.test:7443/tunnel",
+    tls: (await x25519FromSeed(SEED.apiTls2)).pub,
+    rootUsers: [], rootRoles: [],
+  }].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const payload2 = trust.encodeList(grown);
+  const v2 = { payload: b64encode(payload2), proof: await signWith(payload2) };
+
+  const chain = utf8(JSON.stringify({ versions: [v1, v2] }));
 
   return {
     list,
@@ -224,6 +289,15 @@ export async function buildWorld() {
       [BOTH_NAME, { id: DORA_ID, totp: false }],
     ]),
     api: { id: "api-1", sign: apiSign, noise: apiNoise },
+    // BOTH IDENTITIES, so a case can have the mock answer as the node that
+    // version 1 of the list does NOT carry. That is the whole point of the
+    // second version: a shell pinned to version 1 finds no issuer for an
+    // api-2 certificate and draws the login mask's one sentence, which is the
+    // fault this repair is about. The test door (/api/v1/mock?node=api-2)
+    // switches it per case; the default stays api-1 so that a fault in the
+    // chain stays distinguishable from a fault in a window.
+    api1: { id: "api-1", sign: apiSign, noise: apiNoise },
+    api2: { id: "api-2", sign: api2Sign, noise: api2Noise },
     // The key the version above is signed with. It is handed out for ONE
     // thing: mock/api.js builds a DELIBERATELY BROKEN list with it (the
     // `break=badlist` switch of its test door), and signing that one properly

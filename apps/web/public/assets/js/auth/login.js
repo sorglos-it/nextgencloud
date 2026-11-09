@@ -88,28 +88,30 @@ function wireProof(p) {
   };
 }
 
-// openTrustFromChain is A STAND-IN and says so. Task 20 opens the list
-// against the anchor of /config.json and follows it version by version; this
-// fetches version 1 and holds it against the contract - every field, every
-// key id - but follows it from no anchor. What it is used for is the one
-// thing this task needs it for: the signing key of the API node, so
-// session.verifyAPI can do its real work on the API certificate. When
-// shell/trustlist.js lands, main.js hands its opened list in here instead and
-// this function goes.
-async function openTrustFromChain() {
-  const chain = await http.trustChain(1);
-  if (chain === null || chain.versions.length === 0) throw new Error("login: no trust list");
-  const signed = chain.versions[0];
-  return { list: await trust.parseList(signed.payload), signed };
-}
-
 // login runs the six steps and hands back what the desktop needs. It throws
 // http.ApiError for everything the API said no to, NeedTOTP where a second
 // factor is missing, and an ordinary Error for everything else; the mask
 // turns all but two of them into the same one sentence.
 //
-// openTrust is the seam for task 20 and defaults to the stand-in above.
-export async function login({ name, password, totp, wantPasskey, openTrust = openTrustFromChain }) {
+// openTrust OPENS THE TRUST LIST AND HAS NO DEFAULT. There used to be a
+// stand-in here that fetched version 1 and used it -- the OLDEST version of a
+// list that grows. MEASURED at the six-VM plant on 30.10.2026: version 1
+// carries one API node, api-2 arrives with version 2, so a certificate api-2
+// signed found no issuer, session.verifyAPI threw, and the mask drew its one
+// sentence. With lbmethod=byrequests over two nodes that fell on the FIRST
+// attempt of every login and on no second one.
+//
+// The appearance was the cheap half. The expensive half is that a list from
+// version 1 also overlooks whatever a later version REVOKED: in a plant where
+// a node is ever removed, the same mask goes on accepting its certificate.
+// That is why the stand-in is gone rather than wired up at its one caller --
+// a default here is a trap that springs in the next plant, and whoever forgets
+// to pass now gets an error instead of the oldest version.
+//
+// It is called with { again: true } once, and only after verifyAPI found no
+// issuer: see below.
+export async function login({ name, password, totp, wantPasskey, openTrust }) {
+  if (typeof openTrust !== "function") throw new Error("login: no way to open the trust list");
   const challenge = await http.loginStart(name);
   // Pressed "log in with a passkey" where this name has none: the attempt
   // stops HERE, before a session key, a certificate or an Argon2id run is
@@ -174,10 +176,35 @@ export async function login({ name, password, totp, wantPasskey, openTrust = ope
   if (challenge.totp) finish.totp = totp;
   const result = await http.loginFinish(utf8(JSON.stringify(finish)));
 
-  const opened = await openTrust();
-  // The real check of the API's certificate: signed by an API node of the
-  // list, bound to this very certificate, and valid at the API's own clock.
-  const api = await session.verifyAPI(result.api, opened.list, payload, challenge.now);
+  // THE RACE, and the one thing "newest version" has to answer that "oldest
+  // version" never did: the certificate can come from a node that joined the
+  // list after this browser fetched it. The window is the time between the
+  // node signing and the chain arriving here.
+  //
+  // So the list is walked AGAIN, exactly once, and only where the issuer was
+  // not found. Exactly once and not in a loop: a failure that makes the
+  // browser fetch chains for as long as somebody likes is a lever, not a
+  // repair. The count is a local of THIS attempt and deliberately not a field
+  // that outlives the page or the session -- one that did could be added up
+  // over several attempts until the bound meant nothing.
+  //
+  // What is NOT loosened: the second walk is verified against the anchor like
+  // the first one (shell/trustlist.js, bootstrap), and an issuer that stands
+  // in NO version stays a failure. The rule pulls a list forward; it never
+  // accepts an unknown signer.
+  let opened = await openTrust();
+  let api = null;
+  for (let walk = 0; ; walk++) {
+    try {
+      // The real check of the API's certificate: signed by an API node of the
+      // list, bound to this very certificate, and valid at the API's own clock.
+      api = await session.verifyAPI(result.api, opened.list, payload, challenge.now);
+      break;
+    } catch (e) {
+      if (walk > 0) throw e;
+      opened = await openTrust({ again: true });
+    }
+  }
   const link = await new Link().connect(socketURL(), keys.dh, api.dh);
   return {
     link,

@@ -271,6 +271,86 @@ Dichte hängt (`docs/gestaltung.md` Punkt 5), und 14 Pixel sind das, was gemesse
 Die Stufen bleiben `12,5` eng und `15,5` luftig. Wer das auf 13 ziehen will, zieht eine Zahl an
 einer Stelle — aber dann sind alle Messungen der Oberfläche neu zu machen.
 
+### Stand am 04.11.2026: die Stufen stehen als Marken
+
+In `shell.css` standen **38 lose Zahlen und eine einzige Marke** (`--fs`). Dieselbe 13 war zehnmal
+ausgeschrieben, die 12 siebenmal — eine Stufe ließ sich nicht verschieben, ohne jede Stelle zu
+suchen, die zufällig mit ihr übereinstimmte. Jetzt gibt es fünf Marken: `--fs-caption` (11),
+`--fs-callout` (12), `--fs-chrome` (13), `--fs-headline` (15), `--fs-title` (17).
+
+**`--fs-chrome` heißt nicht `--fs`, und das ist Absicht.** LordOS nennt seine 13er-Stufe `--fs` und
+macht sie zur Grundschrift; NGC steht auf 14, und daran hängt die Dichte. Die 13 ist hier die Größe
+der **Hülle** — Band, Menüs, Aufschriften —, die bewusst eine Stufe unter dem Text in einem Fenster
+sitzt. Zwei verschiedene Dinge dürfen nicht denselben Namen tragen.
+
+Drei Funde beim Umbau, alle gemessen:
+
+1. **12,5 war nie eine Stufe.** Sie stand neunmal da, und 12,5 ist die Grundschrift der Dichte
+   „eng" — jemand hat „etwas kleiner als der Text" als Zahl hingeschrieben. Diese neun Stellen sind
+   Zweittext und lesen jetzt `--fs-callout`.
+2. **Zwei Stellen rechneten in `rem`** (`.85rem` = 13,6 px). Das folgt der Schriftgröße des Browsers
+   und damit weder der Stufe noch der Dichte: dieser eine Text wäre stehen geblieben, während ein
+   Mensch alles andere enger stellt. Auch sie lesen `--fs-callout`.
+3. **Vier Zahlen sind kein Text, sondern Zeichen** und bleiben, wo sie stehen: die Marke im Band
+   (16), die Symbole in der Ablage (16), der Buchstabe auf dem App-Schild im Startmenü (18) und die
+   Zeichen auf den Fensterknöpfen (14). Wie groß eine Zeichnung ist, hat mit der Schriftstufe
+   nichts zu tun.
+
+Beim reinen Einführen der Marken wurde **keine einzige Zahl bewegt**: 42 sichtbare Elemente vorher
+und nachher gemessen, kein Unterschied. Erst der zweite Schritt — 12,5 und die drei Überschriften
+auf die Stufen — verändert das Bild, und zwar absichtlich.
+
+### Die Familie: Inter reist mit, entschieden am 04.11.2026
+
+Thomas hat entschieden: **Inter liegt im Repo.** `apps/web/public/assets/vendor/inter/`, SIL OFL 1.1,
+Fassung 4.1, eine Datei (`InterVariable.woff2`, 352 240 Bytes), Herkunft und Prüfsummen in deren
+`SOURCE.md`. `shell.css` fragt sie als Erste, der alte Stapel bleibt dahinter stehen.
+
+**Warum überhaupt eine mitgelieferte Schrift.** Bis hierher folgte die Oberfläche der Schrift, die
+die Maschine gerade hatte: dasselbe Blatt war Segoe UI unter Windows, Roboto unter Android und San
+Francisco auf einem Mac. Das sind drei Bilder einer Gestaltung — und jede Zahl in Abschnitt 5 gilt
+nur für eines davon, weil 13 px in drei Schriften drei verschiedene Breiten sind.
+
+**Eine Datei für vier Gewichte.** Inter ist eine variable Schrift; die Achse 100–900 trägt die 400,
+500, 600 und 700, die dieses Blatt verlangt, in denselben 352 KB. Kursiv ist **nicht** dabei:
+`shell.css` enthält kein einziges `italic` (gemessen, `grep -c` ergibt 0).
+
+**Vom Hersteller und nicht von Google Fonts, und das ist die Entscheidung.** Beide Wege waren offen
+und beide sind gemessen: Googles Teilsätze `latin` + `latin-ext` sind 48 256 + 85 068 Bytes, also
+siebenmal kleiner, und für die fünf Sprachen reicht `latin` völlig — von den **71** verschiedenen
+Zeichen in `de/en/es/fr/it.json` liegt **kein einziges** außerhalb. Genommen ist trotzdem die Datei
+des Herstellers: Googles Teilsätze nennen keine Inter-Fassung, sondern eine Baunummer (`v20`), und
+niemand außerhalb Googles kann sie nachrechnen. Eine Schriftdatei liest das Schriftwerk des
+Browsers — das ist eine Angriffsfläche, und wer diese Bytes geliefert hat, muss nachprüfbar sein.
+**Sicherheit vor Geschwindigkeit**, und die Geschwindigkeit kostet es einmal je
+Browser-Zwischenspeicher: der `assets/`-Block sendet kein `Cache-Control`, Apache beantwortet den
+zweiten Aufruf mit 304.
+
+Nebenbei fällt damit auch der Aufruf an `fonts.gstatic.com` weg, der einem Dritten die Adresse jedes
+Menschen verraten hätte, der diesen Desktop öffnet.
+
+**Was keine der beiden Quellen liefert: eine veröffentlichte Prüfsumme.** Die GitHub-API gibt für
+dieses Release `digest: None`, `fonts.gstatic.com` gibt gar nichts. Bei `noble-hashes` kam sie von
+der npm-Registry selbst. Beide Wege hängen hier allein an TLS; die Prüfsummen in `SOURCE.md` sind
+unsere eigenen und bemerken einen *späteren* Austausch, sie beweisen nicht den ersten. Die der
+`LICENSE` ist dafür doppelt belegt — dieselben 4380 Bytes aus dem Archiv **und** aus
+`raw.githubusercontent.com`.
+
+**Die Apps hinter dem Rahmen erreicht die Schrift nicht**, und das bleibt so: ihre Richtlinie lässt
+nur `font-src data:` zu (`classes/Page.php`, `FRAME_CSP`). Mit `'self'` dürfte eine App unseren
+Server um jede Adresse bitten, und ein Aufruf ist ein Weg, etwas hinauszutragen. Eine App, die Inter
+will, trägt sie in ihrem eigenen `ui-tar`. Damit steht `-apple-system` weiter in
+`apps/web/assets/apps/calculator/app.css`, `.../terminal/app.css` und `docs/prototype.html` — alle
+hinter der Rahmengrenze oder in fremder Hand.
+
+**Offen geblieben, gemessen und nicht erledigt:** `tools/release/extra-web.txt` müsste `LICENSE` und
+`SOURCE.md` nennen, weil kein Verweis sie erreicht (die Schrift selbst erreicht `closure.go` von
+allein — es folgt `url(…)` in einem Stilblatt; gemessen: 80 Dateien, 64 erreicht, 0 fehlend, 0
+nackt). Die Zeilen gehen heute nicht grün: `TestRealArchiveIsClosed` prüft die Liste gegen
+`origin/web`, einen Zweig vom 12.10.2026 und **1154 Commits hinter main**, der die Dateien nicht
+kennt. Sie gehören in denselben Schritt, der `origin/web` nachzieht. Bis dahin enthält kein Paket
+die Schrift überhaupt.
+
 Zweiter Text nimmt `--muted`. **Keine Großbuchstaben** in Abschnittsköpfen: „Inhalt", nicht
 „INHALT".
 

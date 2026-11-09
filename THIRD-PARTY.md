@@ -1,7 +1,7 @@
 # Fremdcode in NGC
 
-Übernommen per `go mod vendor` (Ordner `vendor/`) beziehungsweise, für JavaScript, als Kopie unter
-`apps/web/public/assets/vendor/`. Jede Lizenz ist mit der AGPL-3.0 vereinbar. Sicherheitsupdates ziehen wir selbst
+Übernommen per `go mod vendor` (Ordner `vendor/`) beziehungsweise, für alles, was der Browser holt –
+JavaScript und die Schrift –, als Kopie unter `apps/web/public/assets/vendor/`. Jede Lizenz ist mit der AGPL-3.0 vereinbar. Sicherheitsupdates ziehen wir selbst
 nach: `go get <modul>@<version>`, `go mod vendor`, `govulncheck -tags modules ./...`, Eintrag hier anpassen.
 
 **Jedes Modul hier wird von einem Teil wirklich aufgerufen.** Bis zum 18.10.2026 war das anders:
@@ -67,6 +67,42 @@ Wer aktualisiert, macht dieselbe Prüfung und trägt die neuen Prüfsummen dort 
 
 Am 18.10.2026 gegen die Registry geprüft: **2.4.0 ist dort die neueste Fassung** (veröffentlicht
 27.08.2026), also ist hier nichts nachzuziehen.
+
+## Schriften, von Hand kopiert
+
+| Ordner | Schrift | Version | Lizenz | Wofür | Übernommen |
+|---|---|---|---|---|---|
+| `apps/web/public/assets/vendor/inter/` | Inter | 4.1 | SIL OFL 1.1 | die Schrift des Desktops (`assets/css/shell.css`, `@font-face`); ohne sie folgt die Oberfläche der Schrift, die die Maschine gerade hat | 2026-11-04 |
+
+Quelle ist das veröffentlichte `Inter-4.1.zip` der Releases von <https://github.com/rsms/inter>,
+**nicht** `fonts.gstatic.com`: Googles Teilsätze sind siebenmal kleiner, nennen aber keine
+Inter-Fassung, sondern eine Baunummer, und niemand außerhalb Googles kann sie nachrechnen. Eine
+Schriftdatei liest das Schriftwerk des Browsers – Sicherheit vor Geschwindigkeit.
+
+**Hier ist eine Zusage weniger als bei noble-hashes, und das ist der Unterschied, auf den es
+ankommt:** Weder die GitHub-Releases von Inter noch `fonts.gstatic.com` veröffentlichen eine
+Prüfsumme (die GitHub-API gibt für dieses Release `digest: None`). Es gibt kein `dist.integrity`
+wie bei der npm-Registry; beide Wege hängen allein an TLS. Die Prüfsummen in
+`apps/web/public/assets/vendor/inter/SOURCE.md` sind unsere eigenen und bemerken einen *späteren*
+Austausch, sie beweisen nicht den ersten. Die der `LICENSE` ist dafür doppelt belegt – dieselben
+4380 Bytes aus dem Archiv **und** aus `raw.githubusercontent.com`.
+
+**Die Schrift reist von allein, ihre Lizenz noch nicht.** Gemessen am 04.11.2026 mit
+`Closure` über `apps/web/` dieses Zweigs: 80 Dateien im Baum, 64 erreicht, **0 fehlend, 0 nackt**,
+und `public/assets/vendor/inter/InterVariable.woff2` ist **erreicht** – `closure.go` folgt `url(…)`
+in einem Stilblatt, also trägt jedes Paket die Schrift, ohne dass sie irgendwo benannt wird.
+`LICENSE` und `SOURCE.md` sind dagegen Waisen, genau wie die beiden von noble-hashes, und gehören
+damit in `tools/release/extra-web.txt`.
+
+**Dort stehen sie noch nicht, und der Grund ist gemessen:** `TestRealArchiveIsClosed` prüft die
+Liste gegen `origin/web`, und dieser Zweig ist vom 12.10.2026 und **1154 Commits hinter main**. Er
+kennt die beiden Dateien nicht, also wäre jede Zeile dafür heute eine „stale line" – genau das, was
+die Prüfung finden soll. Die Zeilen gehören in denselben Schritt, der `origin/web` nachzieht; wer
+das tut, nimmt sie mit, sonst reist die OFL 1.1 nicht mit der Schrift, die sie deckt. Bis dahin
+enthält überhaupt kein Paket die Schrift, weil jedes Paket aus `origin/web` gebaut wird.
+
+Welche Datei kopiert ist, warum nicht die kursive, die SHA-256 jeder einzelnen und wie man
+dieselbe Prüfung wiederholt: `apps/web/public/assets/vendor/inter/SOURCE.md`.
 
 ## Mitgebracht
 
