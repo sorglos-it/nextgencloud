@@ -756,6 +756,17 @@ button.b.on{border-color:var(--accent);background:var(--accent);color:#fff}
    every transition that reads --motion. The magnifier in the dock is switched
    off as well and not merely made instant - sheet section 11 says so, and a
    jump from 40 to 64 with no duration is a flicker, not a calmer screen. */
+/* THE ROW HAS TO FIT IN ITS OWN MAX-WIDTH. 8 px of padding on each side put
+   16 + 7*40 + 6*8 = 344 px of row into the 342 px of content box that
+   max-width:calc(100vw - 16px) leaves at a 360 px screen once the 1 px border
+   on each side is counted. MEASURED on 09.11.2026 with Playwright's Firefox
+   159: the row needed 344 of the 342 it had, and the dock scrolled - Chromium
+   rounds the same layout to 342 and showed nothing. 6 px of side padding
+   brings it to 340 and the dock stands still again. */
+@media (max-width: 420px){
+  #dock{padding:8px 6px}
+}
+
 @media (prefers-reduced-motion: reduce){
   :root{ --motion: 0ms; }
   .dapp:hover .g,.dapp:focus-visible .g{transform:none}
