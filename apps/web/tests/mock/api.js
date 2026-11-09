@@ -973,7 +973,13 @@ export async function startMockAPI({ world, port, phpPort }) {
   //
   //   hash of the served version 1      277aabe3...3144  (= trust-anchor.json)
   //   same payload, signed by a strange key  277aabe3...3144  - UNCHANGED
-  //   version 1 with this key in the list    7de60cf9...f963  - moved
+  //   version 1 with this key in the list    moved, and to a DIFFERENT place
+  //                                          every run: 7de60cf9...f963 here,
+  //                                          7961e57d...7582 when this was
+  //                                          measured again on a second
+  //                                          machine. The key comes out of
+  //                                          generateKey, so no value of it is
+  //                                          reproducible - that it moves is.
   //
   // trust.hash digests the PAYLOAD and nothing of the proof (trust.js:263), so
   // a bare change of signer does not move the anchor at all - it draws
