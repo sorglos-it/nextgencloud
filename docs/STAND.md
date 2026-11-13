@@ -51,6 +51,40 @@ veröffentlicht, die letzte **0.2.2** vom 23.10.2026.
 **Überholt aus der alten Fassung:** `Updater: nil` ist weg — `run.go:667` verdrahtet den Updater.
 Frage 1 aus `docs/thomas-entscheidet.md` ist damit erledigt.
 
+## Schon entschieden — nicht neu aufmachen
+
+**Warum Go und nicht Rust?** Beantwortet und gemessen: **Buchpunkt 67**
+(`docs/vertraege-v1.2.md`), 20.10.2026. Der Versuch liegt im Repo unter `versuch-rust/` — als
+Beleg, **nicht** als Bestandteil; `tools/check.sh` kennt den Ordner nicht.
+
+`shared/sign` (136 Zeilen Go, Ed25519) ein zweites Mal in Rust, gegen dieselbe Vektordatei:
+**32 OK, 0 FAIL**, die Vektordatei aus Rust neu gebaut ist Byte für Byte die aus Go.
+**Rust kann den Vertrag also treffen — und genau das ist das Argument dagegen:**
+
+| für diesen **einen** Vertrag | Kisten/Module | Fremdzeilen |
+|---|---|---|
+| Rust (`cargo vendor`) | **41** | **577 163** |
+| Go, ganzes NGC heute | 12 | — |
+
+Go bringt Ed25519, SHA-256, base64url und strenges JSON in der Standardbibliothek mit; für
+`shared/sign` ist die Zahl **null**. Die Hausregel „Fremdcode wird ins Repo kopiert und selbst
+gepflegt" ist der Engpass, nicht die Bitgleichheit. **Wer Rust in NGC will, muss zuerst diese
+Regel abschaffen.**
+
+Zwei Befunde aus dem Versuch, die schwerer wiegen als die Sprachfrage und für **jede** künftige
+Fremdsprache gelten:
+
+- **`serde_json` nimmt ein doppeltes JSON-Mitglied eine Ebene tiefer an**, das Go ablehnt
+  (`{"inner":{"a":1,"a":2}}` → Rust: `a=2`, Go: Fehler). `core`, `store` und `wire` ruhen auf
+  dieser Zusage.
+- **`wire.ValidText` ist an Gos Unicode-Tabellen gebunden** (`shared/wire/wire.go:282`, „Unicode
+  17.0 with Go 1.27"). Eine Fremdsprache bringt eine dritte Tabellenfassung mit, die
+  gleichzuhalten ist.
+
+**Rust ist trotzdem nicht aus dem Projekt:** der Recovery-Modus ist bewusst in Rust geplant
+(`docs/recovery-modus.md`, `lib/rust/`, `#![forbid(unsafe_code)]`) — ein Stück, das nur Schlüssel
+anfasst und keinen der eingefrorenen Verträge nachbauen muss. Das ist **Punkt 68**, nicht 67.
+
 ## Nächster Schritt
 
 Die Landkarte ist **`docs/was-fehlt.md`** (30.10.2026): 64 Einträge, davon **15 sperren**, 32
